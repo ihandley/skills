@@ -1,0 +1,15 @@
+{
+  "name": "ihandley-skills",
+  "version": "0.1.0",
+  "description": "Ian Handley's agent skills.",
+  "author": {
+    "name": "Ian Handley",
+    "url": "https://github.com/ihandley"
+  },
+  "repository": "https://github.com/ihandley/skills",
+  "license": "MIT",
+  "keywords": [
+    "skills"
+  ],
+  "skills": []
+}

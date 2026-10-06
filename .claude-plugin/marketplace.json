@@ -1,0 +1,19 @@
+{
+  "name": "ihandley",
+  "owner": {
+    "name": "Ian Handley",
+    "url": "https://github.com/ihandley"
+  },
+  "description": "Ian Handley's agent skills, as an installable Claude Code plugin.",
+  "plugins": [
+    {
+      "name": "ihandley-skills",
+      "source": "./",
+      "description": "Ian Handley's agent skills.",
+      "category": "productivity",
+      "keywords": [
+        "skills"
+      ]
+    }
+  ]
+}
