@@ -26,4 +26,4 @@ Python 3, for the dash check.
 - The point or decision is in the first sentence.
 - No em dash or en dash appears, and `scripts/check-dashes` exits 0.
 - Facts, uncertainty, and requests match the source.
-- No praise or filler sign-off remains.
+- No praise remains.
