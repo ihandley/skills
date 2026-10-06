@@ -1,0 +1,3 @@
+interface:
+  display_name: "Deslop"
+  short_description: "Scrub AI artifacts from a diff"

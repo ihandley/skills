@@ -13,6 +13,7 @@
     "agents"
   ],
   "skills": [
+    "./skills/engineering/deslop",
     "./skills/engineering/init-ai"
   ]
 }
