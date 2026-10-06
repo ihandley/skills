@@ -14,4 +14,5 @@ None yet.
 
 Reachable by you or by the agent when the task fits.
 
+- **[deslop](./deslop/SKILL.md)**: Scrub AI-generated comments, over-defensive checks, and type escapes from a branch diff before commit or PR.
 - **[init-ai](./init-ai/SKILL.md)**: Write or update a minimal `AGENTS.md` from verified commands, conventions, and gotchas, plus a `CLAUDE.md` stub. Shows the draft and asks before writing.
