@@ -9,7 +9,10 @@
   "repository": "https://github.com/ihandley/skills",
   "license": "MIT",
   "keywords": [
-    "skills"
+    "skills",
+    "agents"
   ],
-  "skills": []
+  "skills": [
+    "./skills/engineering/init-ai"
+  ]
 }

@@ -14,4 +14,4 @@ None yet.
 
 Reachable by you or by the agent when the task fits.
 
-None yet.
+- **[init-ai](./init-ai/SKILL.md)**: Write or update a minimal `AGENTS.md` from verified commands, conventions, and gotchas, plus a `CLAUDE.md` stub. Shows the draft and asks before writing.

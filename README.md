@@ -52,7 +52,7 @@ None yet.
 
 **Model-invoked**
 
-None yet.
+- **[init-ai](./skills/engineering/init-ai/SKILL.md)**: Write or update a minimal `AGENTS.md` from verified commands, conventions, and gotchas, plus a `CLAUDE.md` stub. Shows the draft and asks before writing.
 
 ### Productivity
 
