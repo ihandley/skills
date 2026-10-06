@@ -14,6 +14,7 @@
   ],
   "skills": [
     "./skills/engineering/deslop",
-    "./skills/engineering/init-ai"
+    "./skills/engineering/init-ai",
+    "./skills/productivity/terse"
   ]
 }

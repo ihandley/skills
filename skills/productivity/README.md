@@ -14,4 +14,4 @@ None yet.
 
 Reachable by you or by the agent when the task fits.
 
-None yet.
+- **[terse](./terse/SKILL.md)**: Rewrite or draft Slack, email, Jira, Confluence, and pull-request text to minimize length and maximize signal.
