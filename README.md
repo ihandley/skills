@@ -66,3 +66,4 @@ None yet.
 **Model-invoked**
 
 - **[terse](./skills/productivity/terse/SKILL.md)**: Rewrite or draft Slack, email, Jira, Confluence, and pull-request text to minimize length and maximize signal.
+- **[stepper](./skills/productivity/stepper/SKILL.md)**: Keep a short list of outstanding commitments in view across a long investigation.
