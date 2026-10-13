@@ -710,8 +710,6 @@ def _select_branch(ctx: dict, node: dict) -> dict | None:
             return chosen
     if not _children(ctx, node["id"]) or _eligible(ctx, node):
         return node
-    if _blocking_descendants(ctx, node, ("pending", "active", "blocked", "deferred")):
-        return node
     return None
 
 

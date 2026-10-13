@@ -560,7 +560,7 @@ An active item must not sit under a deferred ancestor. `focus` on a descendant w
 
 Verifying the active item chooses the next active item by walking parent links. The walk is the same at every depth. `MAX_DEPTH` is checked only when an item is added. A deeper tree, loaded or produced by raising the constant, uses this same walk.
 
-1. Scan the finished item's siblings in `order`, skipping the finished item. A `pending` sibling with no children becomes active. A `pending` sibling with unresolved descendants is entered, and the same rule selects inside it. The branch is not skipped because it has children.
+1. Scan the finished item's siblings in `order`, skipping the finished item. A `pending` sibling with no children becomes active. A `pending` sibling is entered when it contains a `pending` leaf or an eligible parent, and the same rule selects inside it. A branch with no such item is skipped, even when it contains blocked or deferred descendants. If the scan finds nothing, no item is active.
 2. When no sibling branch is selected and every descendant of the parent is verified or cancelled, the parent becomes `active` if it is `pending`. The parent is not verified.
 3. When the parent does not become active, repeat the same walk from the parent.
 4. `blocked` and `deferred` nodes are not selected and are not entered. That matches the flat list, which also skips them.

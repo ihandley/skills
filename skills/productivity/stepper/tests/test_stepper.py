@@ -940,12 +940,16 @@ class StepperTests(unittest.TestCase):
         stored["items"][0]["status"] = "pending"
         stored["items"][1]["status"] = "pending"
         deep = [
-            ("AC-3a", "AC-3", "pending"),
-            ("AC-3a-1", "AC-3a", "active"),
-            ("AC-3a-2", "AC-3a", "pending"),
-            ("AC-3a-2-1", "AC-3a-2", "pending"),
+            ("AC-3a", "AC-3", "pending", 0),
+            ("AC-3a-1", "AC-3a", "active", 0),
+            ("AC-3a-9", "AC-3a", "pending", 1),
+            ("AC-3a-9-1", "AC-3a-9", "blocked", 0),
+            ("AC-3a-8", "AC-3a", "deferred", 2),
+            ("AC-3a-8-1", "AC-3a-8", "pending", 0),
+            ("AC-3a-2", "AC-3a", "pending", 3),
+            ("AC-3a-2-1", "AC-3a-2", "pending", 0),
         ]
-        for item_id, parent_id, status in deep:
+        for item_id, parent_id, status, order in deep:
             stored["items"].append(
                 {
                     "id": item_id,
@@ -953,8 +957,8 @@ class StepperTests(unittest.TestCase):
                     "completion_criteria": item_id,
                     "status": status,
                     "evidence": None,
-                    "blocked_reason": None,
-                    "order": 0,
+                    "blocked_reason": "waiting" if status == "blocked" else None,
+                    "order": order,
                     "parent_id": parent_id,
                 }
             )
@@ -962,7 +966,65 @@ class StepperTests(unittest.TestCase):
         code, stepped = self.cli("verify", "--session", "cursor:aaa", "AC-3a-1", "--evidence", "deep ok")
         self.assertEqual(code, 0)
         self.assertEqual(self.item(stepped, "AC-3a-2-1")["status"], "active")
+        self.assertEqual(self.item(stepped, "AC-3a-9")["status"], "pending")
+        self.assertEqual(self.item(stepped, "AC-3a-8-1")["status"], "pending")
         self.assertEqual(self.item(stepped, "AC-4")["status"], "pending")
+
+    def test_selection_skips_a_parent_with_blocked_or_deferred_children(self):
+        self.capture()
+        self.cli("focus", "--session", "cursor:aaa", "AC-4")
+        self.cli("focus", "--session", "cursor:aaa", "AC-3")
+        code, added = self.cli(
+            "add",
+            "--session",
+            "cursor:aaa",
+            "--parent",
+            "AC-3",
+            "--item",
+            "AC-3a: blocked child",
+            "--item",
+            "AC-3b: deferred child",
+            "--item",
+            "AC-3c: verified child",
+            "--item",
+            "AC-3d: cancelled child",
+        )
+        self.assertEqual(code, 0)
+        self.assertEqual(self.item(added, "AC-3")["status"], "active")
+        self.cli("focus", "--session", "cursor:aaa", "AC-3a")
+        self.cli("block", "--session", "cursor:aaa", "AC-3a", "--reason", "waiting")
+        self.cli("defer", "--session", "cursor:aaa", "AC-3b")
+        self.cli("focus", "--session", "cursor:aaa", "AC-3c")
+        self.cli("verify", "--session", "cursor:aaa", "AC-3c", "--evidence", "done")
+        self.cli("cancel", "--session", "cursor:aaa", "AC-3d")
+        self.cli("add", "--session", "cursor:aaa", "--item", "AC-5: later leaf")
+        self.cli("focus", "--session", "cursor:aaa", "AC-4")
+        code, skipped = self.cli("verify", "--session", "cursor:aaa", "AC-4", "--evidence", "sent")
+        self.assertEqual(code, 0)
+        self.assertEqual(self.item(skipped, "AC-5")["status"], "active")
+        self.assertEqual(self.item(skipped, "AC-3")["status"], "pending")
+        self.cli("unblock", "--session", "cursor:aaa", "AC-3a")
+        code, descended = self.cli("verify", "--session", "cursor:aaa", "AC-5", "--evidence", "sent")
+        self.assertEqual(self.item(descended, "AC-3a")["status"], "active")
+        self.assertEqual(self.item(descended, "AC-3")["status"], "pending")
+        self.cli("cancel", "--session", "cursor:aaa", "AC-3b")
+        code, eligible = self.cli("verify", "--session", "cursor:aaa", "AC-3a", "--evidence", "unblocked")
+        self.assertEqual(code, 0)
+        self.assertEqual(self.item(eligible, "AC-3")["status"], "active")
+        self.assertNotEqual(self.item(eligible, "AC-3")["status"], "verified")
+
+    def test_selection_leaves_no_active_item_when_nothing_actionable_remains(self):
+        self.capture()
+        self.cli("add", "--session", "cursor:aaa", "--parent", "AC-4", "--item", "AC-4a: blocked")
+        self.cli("add", "--session", "cursor:aaa", "--parent", "AC-4", "--item", "AC-4b: deferred")
+        self.cli("focus", "--session", "cursor:aaa", "AC-4a")
+        self.cli("block", "--session", "cursor:aaa", "AC-4a", "--reason", "waiting")
+        self.cli("defer", "--session", "cursor:aaa", "AC-4b")
+        code, done = self.cli("verify", "--session", "cursor:aaa", "AC-3", "--evidence", "sent")
+        self.assertEqual(code, 0)
+        self.assertTrue(all(item["status"] != "active" for item in done["context"]["items"]))
+        self.assertEqual(self.item(done, "AC-4")["status"], "pending")
+        self.assertEqual(done["progress"]["active_path"], [])
 
     def cli_home(self, *args):
         proc = subprocess.run(
