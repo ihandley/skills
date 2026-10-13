@@ -48,7 +48,7 @@ Skills for daily code work.
 
 **User-invoked**
 
-None yet.
+- **[chad-learn](./skills/engineering/chad-learn/SKILL.md)**: Reconstruct existing code in the order it could have been built, one decision at a time. Writes only a learning journal.
 
 **Model-invoked**
 
