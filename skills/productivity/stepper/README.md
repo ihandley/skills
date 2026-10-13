@@ -24,6 +24,8 @@ Stepper **never starts tracking a detected list without your confirmation**. If 
 
 Explicit tracking is a good starting point while proactive hook integration is being validated.
 
+Sub-steps stay under the acceptance criterion they belong to. Ask to track them as sub-steps of that item. Stepper keeps two levels of children, preserves ids such as `AC-3b-1`, and does not mark the parent verified when the children are finished.
+
 ## Requirements
 
 - Python 3 (standard library only; no pip dependencies)

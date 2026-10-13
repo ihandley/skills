@@ -778,6 +778,192 @@ class StepperTests(unittest.TestCase):
             path = self.root / path
         self.assertIn(".stepper/", path.read_text())
 
+    def item(self, data, item_id):
+        return next(item for item in data["context"]["items"] if item["id"] == item_id)
+
+    def test_legacy_flat_context_has_no_parent_and_keeps_its_reminder(self):
+        self.capture()
+        path = self.root / ".stepper" / "contexts" / "default.json"
+        stored = json.loads(path.read_text())
+        for item in stored["items"]:
+            item.pop("parent_id", None)
+        path.write_text(json.dumps(stored, indent=2) + "\n")
+        before = path.read_bytes()
+        code, data = self.cli("status", "--session", "cursor:aaa")
+        self.assertEqual(code, 0)
+        self.assertEqual(path.read_bytes(), before)
+        self.assertEqual(data["progress"]["top_level"], {"resolved": 0, "total": 2})
+        self.assertEqual(data["progress"]["active_path"], ["AC-3"])
+        self.assertIn("AC-3 active", data["reminder"])
+        self.assertNotIn("top-level", data["reminder"])
+        code, verified = self.cli("verify", "--session", "cursor:aaa", "AC-3", "--evidence", "sent")
+        self.assertEqual(code, 0)
+        self.assertEqual(self.item(verified, "AC-4")["status"], "active")
+        self.assertIsNone(self.item(verified, "AC-4")["parent_id"])
+
+    def test_substeps_keep_ids_and_do_not_move_focus(self):
+        self.capture()
+        code, added = self.cli(
+            "add",
+            "--session",
+            "cursor:aaa",
+            "--parent",
+            "AC-3",
+            "--item",
+            "AC-3b: check the reset token",
+            "--item",
+            "AC-3a: check the template",
+        )
+        self.assertEqual(code, 0)
+        self.assertEqual(self.item(added, "AC-3")["status"], "active")
+        self.assertEqual(self.item(added, "AC-3a")["parent_id"], "AC-3")
+        self.assertEqual(self.item(added, "AC-3b")["parent_id"], "AC-3")
+        code, nested = self.cli(
+            "add",
+            "--session",
+            "cursor:aaa",
+            "--parent",
+            "AC-3b",
+            "--item",
+            "AC-3b-1: check the token expiry",
+            "--item",
+            "look at the logs",
+        )
+        self.assertEqual(code, 0)
+        self.assertEqual(self.item(nested, "AC-3b-1")["parent_id"], "AC-3b")
+        generated = next(item for item in nested["context"]["items"] if item["id"].startswith("item-"))
+        self.assertEqual(generated["parent_id"], "AC-3b")
+        self.assertEqual(nested["progress"]["active_path"], ["AC-3"])
+        self.assertEqual(nested["progress"]["top_level"], {"resolved": 0, "total": 2})
+        code, tree = self.cli("status", "--session", "cursor:aaa", "--tree")
+        self.assertEqual(code, 0)
+        ac3 = next(node for node in tree["tree"] if node["id"] == "AC-3")
+        self.assertEqual(ac3["children_total"], 2)
+        self.assertEqual([child["id"] for child in ac3["children"]], ["AC-3b", "AC-3a"])
+        code, limited = self.cli(
+            "add",
+            "--session",
+            "cursor:aaa",
+            "--parent",
+            "AC-3b-1",
+            "--item",
+            "AC-3b-1-a: too deep",
+        )
+        self.assertEqual(code, 1)
+        self.assertIn("exceeds MAX_DEPTH 2", limited["error"])
+        code, duplicate = self.cli(
+            "add",
+            "--session",
+            "cursor:aaa",
+            "--parent",
+            "AC-3",
+            "--item",
+            "AC-3a: again",
+        )
+        self.assertEqual(code, 1)
+        self.assertIn("already exists", duplicate["error"])
+
+    def test_focus_reactivates_a_deferred_ancestor(self):
+        self.capture()
+        self.cli("add", "--session", "cursor:aaa", "--parent", "AC-3", "--item", "AC-3a: template")
+        self.cli("defer", "--session", "cursor:aaa", "AC-3a")
+        self.cli("defer", "--session", "cursor:aaa", "AC-3")
+        code, focused = self.cli("focus", "--session", "cursor:aaa", "AC-3a")
+        self.assertEqual(code, 0)
+        self.assertEqual(self.item(focused, "AC-3")["status"], "pending")
+        self.assertEqual(self.item(focused, "AC-3a")["status"], "active")
+        self.assertEqual(focused["progress"]["active_path"], ["AC-3", "AC-3a"])
+
+    def test_next_item_enters_a_pending_sibling_branch(self):
+        self.capture()
+        self.cli(
+            "add",
+            "--session",
+            "cursor:aaa",
+            "--parent",
+            "AC-3",
+            "--item",
+            "AC-3a: template",
+            "--item",
+            "AC-3b: token",
+        )
+        self.cli("add", "--session", "cursor:aaa", "--parent", "AC-3b", "--item", "AC-3b-1: expiry")
+        self.cli("focus", "--session", "cursor:aaa", "AC-3a")
+        code, stepped = self.cli("verify", "--session", "cursor:aaa", "AC-3a", "--evidence", "template ok")
+        self.assertEqual(code, 0)
+        self.assertEqual(self.item(stepped, "AC-3b-1")["status"], "active")
+        self.assertEqual(self.item(stepped, "AC-4")["status"], "pending")
+        self.assertIn("AC-3 → AC-3b → AC-3b-1 active", stepped["reminder"])
+        code, parent = self.cli("verify", "--session", "cursor:aaa", "AC-3b-1", "--evidence", "expiry ok")
+        self.assertEqual(self.item(parent, "AC-3b")["status"], "active")
+        self.assertNotEqual(self.item(parent, "AC-3b")["status"], "verified")
+        code, mid = self.cli("verify", "--session", "cursor:aaa", "AC-3b", "--evidence", "token ok")
+        self.assertEqual(self.item(mid, "AC-3")["status"], "active")
+        code, done = self.cli("verify", "--session", "cursor:aaa", "AC-3", "--evidence", "reset ok")
+        self.assertEqual(self.item(done, "AC-3")["status"], "verified")
+        self.assertEqual(self.item(done, "AC-4")["status"], "active")
+        self.assertEqual(done["progress"]["top_level"], {"resolved": 1, "total": 2})
+
+    def test_parent_verification_cancel_and_reopen(self):
+        self.capture()
+        self.cli("add", "--session", "cursor:aaa", "--parent", "AC-3", "--item", "AC-3a: template")
+        self.cli("add", "--session", "cursor:aaa", "--parent", "AC-3", "--item", "AC-3b: token")
+        code, blocked = self.cli("verify", "--session", "cursor:aaa", "AC-3", "--evidence", "too soon")
+        self.assertEqual(code, 1)
+        self.assertIn("cannot verify AC-3 until", blocked["error"])
+        code, cancelled = self.cli("cancel", "--session", "cursor:aaa", "AC-3")
+        self.assertEqual(code, 1)
+        self.assertIn("cannot cancel AC-3 until", cancelled["error"])
+        self.cli("defer", "--session", "cursor:aaa", "AC-3a")
+        code, deferred = self.cli("verify", "--session", "cursor:aaa", "AC-3", "--evidence", "too soon")
+        self.assertEqual(code, 1)
+        self.assertIn("AC-3a", deferred["error"])
+        self.cli("focus", "--session", "cursor:aaa", "AC-3a")
+        code, reopened = self.cli("status", "--session", "cursor:aaa")
+        self.assertEqual(self.item(reopened, "AC-3a")["status"], "active")
+        self.assertEqual(self.item(reopened, "AC-3")["status"], "pending")
+        self.cli("verify", "--session", "cursor:aaa", "AC-3a", "--evidence", "template ok")
+        self.cli("verify", "--session", "cursor:aaa", "AC-3b", "--evidence", "token ok")
+        code, ready = self.cli("verify", "--session", "cursor:aaa", "AC-3", "--evidence", "reset ok")
+        self.assertEqual(code, 0)
+        self.assertEqual(self.item(ready, "AC-3")["status"], "verified")
+        code, child = self.cli(
+            "add", "--session", "cursor:aaa", "--parent", "AC-3", "--item", "AC-3c: later"
+        )
+        self.assertEqual(code, 1)
+        self.assertIn("because it is verified", child["error"])
+
+    def test_walk_follows_a_branch_deeper_than_the_add_limit(self):
+        self.capture()
+        path = self.root / ".stepper" / "contexts" / "default.json"
+        stored = json.loads(path.read_text())
+        stored["items"][0]["status"] = "pending"
+        stored["items"][1]["status"] = "pending"
+        deep = [
+            ("AC-3a", "AC-3", "pending"),
+            ("AC-3a-1", "AC-3a", "active"),
+            ("AC-3a-2", "AC-3a", "pending"),
+            ("AC-3a-2-1", "AC-3a-2", "pending"),
+        ]
+        for item_id, parent_id, status in deep:
+            stored["items"].append(
+                {
+                    "id": item_id,
+                    "description": item_id,
+                    "completion_criteria": item_id,
+                    "status": status,
+                    "evidence": None,
+                    "blocked_reason": None,
+                    "order": 0,
+                    "parent_id": parent_id,
+                }
+            )
+        path.write_text(json.dumps(stored, indent=2) + "\n")
+        code, stepped = self.cli("verify", "--session", "cursor:aaa", "AC-3a-1", "--evidence", "deep ok")
+        self.assertEqual(code, 0)
+        self.assertEqual(self.item(stepped, "AC-3a-2-1")["status"], "active")
+        self.assertEqual(self.item(stepped, "AC-4")["status"], "pending")
+
     def cli_home(self, *args):
         proc = subprocess.run(
             [sys.executable, str(STEPPER), *args],
