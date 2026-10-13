@@ -38,9 +38,10 @@ class StepperTests(unittest.TestCase):
         data = json.loads(proc.stdout) if proc.stdout.strip() else None
         return proc.returncode, data
 
-    def hook(self, platform, payload):
+    def hook(self, platform, payload, workspace=True):
         body = dict(payload)
-        body["workspace_roots"] = [str(self.root)]
+        if workspace:
+            body["workspace_roots"] = [str(self.root)]
         proc = subprocess.run(
             [sys.executable, str(STEPPER), "hook", "--platform", platform, "--tag", "stepper"],
             input=json.dumps(body),
@@ -299,6 +300,68 @@ class StepperTests(unittest.TestCase):
         self.assertIn("AC-3", offer["followup_message"])
         self.assertIn("AC-4", offer["followup_message"])
         self.assertNotIn("AC-1", offer["followup_message"])
+
+    def test_claude_tracking_prompt_registers_session_and_resume_repeats_key(self):
+        sessions = self.root / ".stepper" / "sessions"
+        code, _data, out = self.hook(
+            "claude",
+            {
+                "hook_event_name": "UserPromptSubmit",
+                "session_id": "5155e88d-741e-4fcb-9fbb-5e86a3830714",
+                "cwd": str(self.root),
+                "prompt": "What is the weather?",
+            },
+            workspace=False,
+        )
+        self.assertEqual(code, 0)
+        self.assertEqual(out, "")
+        self.assertEqual(list(sessions.glob("*.json")), [])
+        code, submitted, _out = self.hook(
+            "claude",
+            {
+                "hook_event_name": "UserPromptSubmit",
+                "session_id": "5155e88d-741e-4fcb-9fbb-5e86a3830714",
+                "cwd": str(self.root),
+                "prompt": "Track these with stepper",
+            },
+            workspace=False,
+        )
+        text = submitted["hookSpecificOutput"]["additionalContext"]
+        self.assertEqual(text, "Stepper session: claude:5155e88d-741e-4fcb-9fbb-5e86a3830714. Pass --session claude:5155e88d-741e-4fcb-9fbb-5e86a3830714 on every stepper command.")
+        self.assertEqual(len(list(sessions.glob("*.json"))), 1)
+        self.assertEqual(list((self.root / ".stepper" / "contexts").glob("*.json")), [])
+        code, _data, out = self.hook(
+            "claude",
+            {
+                "hook_event_name": "SessionEnd",
+                "session_id": "5155e88d-741e-4fcb-9fbb-5e86a3830714",
+                "cwd": str(self.root),
+            },
+            workspace=False,
+        )
+        self.assertEqual(out, "")
+        code, resumed, _out = self.hook(
+            "claude",
+            {
+                "hook_event_name": "SessionStart",
+                "source": "resume",
+                "session_id": "5155e88d-741e-4fcb-9fbb-5e86a3830714",
+                "cwd": str(self.root),
+            },
+            workspace=False,
+        )
+        self.assertEqual(resumed["hookSpecificOutput"]["additionalContext"], text)
+        code, _data, out = self.hook(
+            "claude",
+            {
+                "hook_event_name": "UserPromptSubmit",
+                "session_id": "5155e88d-741e-4fcb-9fbb-5e86a3830714",
+                "cwd": str(self.root),
+                "prompt": "What is the weather?",
+            },
+            workspace=False,
+        )
+        self.assertEqual(out, "")
 
     def test_claude_stop_offers_once_without_a_prior_session(self):
         sessions = self.root / ".stepper" / "sessions"
