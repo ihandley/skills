@@ -1,8 +1,8 @@
 # Stepper Architecture Proposal
 
-Status: approved and implemented.
+Status: v1 approved and implemented. The hierarchy revision below is awaiting approval. Do not implement it until that revision is approved.
 
-The deterministic architecture in this document is the implementation contract. The notes below record behavior that live Cursor execution did not confirm.
+The deterministic architecture in this document is the implementation contract. The notes below record behavior that live Cursor execution did not confirm. The hierarchy section is a proposal, not a change to the shipped v1 contract.
 
 ## Implementation notes
 
@@ -469,6 +469,155 @@ No unrelated skill or repository-wide runtime dependency will be changed.
 - Conservative keyword classification can miss unusual wording or produce one unnecessary follow-up.
 - Unit and fixture tests do not establish real platform integration.
 
+## Hierarchy
+
+v1 is a flat list: one active item, and `order` is that item's place in the single list. An item has no parent. The identifier grammar accepts `AC-3` and `item-1`. It rejects `AC-3a`, `AC-3b`, and `AC-3b-1`.
+
+v2 adds sub-steps without turning Stepper into a planner. The user names the parent. The CLI stores the link, checks depth, and calculates progress. Nothing walks a description and invents children.
+
+### Data model
+
+Each item gains one field:
+
+```json
+"parent_id": null
+```
+
+`null` is a top-level item. A string is the id of another item in the same context. Children stay in the same `items` array. There is no nested JSON tree on disk, so a later depth increase does not move records or rename files.
+
+`order` becomes the order among items with the same `parent_id`. Existing flat items already have `parent_id` absent and an `order` that matches their list position. On read, a missing `parent_id` is `null`. The context `version` stays `1`. A v1 file is valid. The next mutating command writes `parent_id` on every item. `status` does not rewrite the file. There is no migration command and no new directory.
+
+Validation:
+
+- `parent_id` is `null` or the id of an item in this context.
+- An item is not its own parent.
+- Walking parents never repeats an id.
+- Ids are unique in the context.
+- Depth is the number of parent hops. A top-level item has depth 0. `AC-3b` under `AC-3` has depth 1. `AC-3b-1` under `AC-3b` has depth 2.
+
+`MAX_DEPTH = 2` is the only depth limit. Depth 2 is a top-level item plus two levels of children, which is the `AC-3 → AC-3b → AC-3b-1` example. A command that would create depth 3 fails with:
+
+```text
+cannot add AC-3b-1-a under AC-3b-1: depth 3 exceeds MAX_DEPTH 2
+```
+
+The item is not added. Nothing is reparented, flattened, or dropped. Raising `MAX_DEPTH` later is a one-constant change. Stored `parent_id` values already allow the deeper chain.
+
+### Identifiers
+
+The identifier grammar becomes:
+
+```text
+^[A-Za-z][A-Za-z0-9]*(?:-[A-Za-z0-9]+)+$
+```
+
+That accepts the ids v1 already stores (`AC-3`, `item-1`) and the ids this revision has to preserve (`AC-3a`, `AC-3b`, `AC-3b-1`). The same pattern parses `AC-3b-1: description`, so the label is not cut at `AC-3`.
+
+The id does not encode the parent. `AC-3b-1` added without `--parent` is top-level. `add --parent` is the only way to place it. Generated ids stay `item-N` from `next_seq`, and only when the user supplies no id. The CLI does not invent `AC-3a` from a parent's name.
+
+### Command
+
+`add` grows one flag:
+
+```text
+add --session S --parent AC-3 --item "AC-3b: check the reset token" --item "AC-3a: check the template"
+```
+
+`--parent` may be omitted. Those items stay top-level, as `add` works today. `capture` does not take `--parent`. A new context is still a flat list of top-level items.
+
+`add --parent` appends pending children in the order written. It does not change which item is active. It fails when the parent is missing, verified, or cancelled, when an id is duplicated, or when the new depth would exceed `MAX_DEPTH`.
+
+Agent phrasing maps onto that one flag:
+
+| Request | Command |
+| --- | --- |
+| Track these as sub-steps of AC-3 | `add --parent AC-3` |
+| Add these under AC-3b | `add --parent AC-3b` |
+| Mark AC-3b-1 verified | `verify AC-3b-1 --evidence TEXT` |
+| Show overall progress | `status` |
+| Show the full tree | `status --tree` |
+| What's left to finish AC-3 | `status --tree`, then the AC-3 subtree |
+
+Hooks do not learn a new event. They do not receive the tree. Proactive detection still stores a flat candidate. Hierarchy starts only when the user names a parent and the agent calls `add --parent`.
+
+### Active item
+
+At most one item is `active`.
+
+Adding children leaves the active item where it is. If `AC-3` is active and gains children, `AC-3` stays active until a later `focus` or `verify`. That is the one case an item with unresolved children is active. The status path still starts at `AC-3`, so the parent commitment stays visible.
+
+`focus` of a leaf demotes the previous active item to `pending` and activates the leaf. The parent is not given a second status. Its place in the work is the ancestor path.
+
+`focus` of an item that still has a pending, active, or blocked descendant fails:
+
+```text
+AC-3 has unresolved children; focus a leaf
+```
+
+The CLI does not choose a child on the user's behalf.
+
+Verifying the active item chooses the next active item in this order:
+
+1. The next `pending` sibling that has no children, in `order`.
+2. When no such sibling remains and every descendant of the parent is verified or cancelled, the parent becomes `active` if it is `pending`. The parent is not verified.
+3. When the parent does not become active, repeat from the parent's siblings upward.
+4. A blocked or deferred item is skipped, as it is today.
+
+So finishing `AC-3b-1` makes `AC-3b` active when `AC-3b` has nothing else outstanding. Finishing the last child of `AC-3` makes `AC-3` active. `AC-4` waits until `AC-3` itself is verified, deferred, or cancelled. Verifying a non-active item still does not move the active item.
+
+A parent may be verified from `pending` or `active` once it is eligible. Eligibility means every descendant is `verified` or `cancelled`. The command still requires non-empty `--evidence`. Child evidence is not copied up.
+
+These descendants keep the parent ineligible:
+
+- `pending`, `active`, and `blocked`
+- `deferred`
+
+The error names the ids:
+
+```text
+cannot verify AC-3 until AC-3b is resolved
+```
+
+`cancelled` and `verified` descendants do not block the parent. A parent with only cancelled children can be verified, or cancelled, like any other eligible item.
+
+`defer` and `cancel` of a parent do not change descendants. They fail while any descendant is `pending`, `active`, or `blocked`, and they name those ids. The user resolves those descendants first. A parent may be deferred or cancelled while its remaining descendants are already `verified`, `cancelled`, or `deferred`.
+
+`block` stays legal only from `active`. It does not cascade. After the active item is blocked, no other item becomes active, which is the v1 rule.
+
+Verified and cancelled items stay terminal. v2 does not un-verify an item or strip its evidence. Reopening means a `deferred` item is focused, or a `blocked` item is unblocked or focused. That descendant is outstanding again, so a parent that was only eligible returns to ineligible. If that parent was the active item, `focus` on the child demotes the parent to `pending`. A verified parent rejects `add --parent` and rejects any transition of its descendants.
+
+### Progress
+
+Overall progress counts top-level items only. A top-level item is resolved when its own status is `verified` or `cancelled`. Finished children do not mark the parent resolved and are not added into the overall numerator.
+
+Each parent separately reports direct children: resolved direct children over direct children. Grandchildren appear on their own parent. They are not added again to the grandparent's fraction or to the overall fraction.
+
+`status` adds:
+
+```json
+"progress": {
+  "top_level": {"resolved": 0, "total": 2},
+  "active_path": ["AC-3", "AC-3b", "AC-3b-1"]
+}
+```
+
+`active_path` is the active item and its ancestors, root first. A flat context has a one-element path. `status` without `--session` adds the same `top_level` counts to each context summary and omits the path.
+
+`status --tree` adds a nested `tree` built from `parent_id` and sibling `order`. Each node has `id`, `status`, `children_resolved`, `children_total`, and `children`. The concise status omits `tree`.
+
+A flat context's reminder text stays the v1 sentence. A context that has any child uses one shorter reminder: the active path, the top-level counts, and the direct-child counts of the active item's parent when that parent exists. It does not list every descendant. Stop hooks and session-start hooks keep using that reminder, so hierarchy does not add a tree to the prompt.
+
+Context completion is unchanged and still looks at every item: each item is `verified` or `cancelled`, and at least one is `verified`. The parent gate makes that equivalent to every top-level item being resolved, because a parent cannot be verified or cancelled while a required descendant is open.
+
+### Decisions that need to stay visible
+
+- An active item may temporarily have unresolved children, because `add` must not move focus.
+- The CLI then makes an eligible parent active so the branch is verified before the next top-level item. That parent has children, and it is active only because those children are resolved.
+- There is no un-verify. Reopening is the existing return from `deferred` or `blocked`.
+- A deferred child blocks parent verification. Cancelling the child is the way to remove it from scope.
+- `item-N` is the generated id. A hierarchical id appears only when the user supplies it.
+- Detection stays flat. "Track these as sub-steps of AC-3" is an explicit `add`, not a parsed capture.
+
 ## Approval gate
 
 This revision was approved before implementation. The shipped choices are:
@@ -480,3 +629,15 @@ This revision was approved before implementation. The shipped choices are:
 - Deterministic candidate parsing, with one extra turn only when the candidate is in the final message
 - Non-empty evidence as a structural check
 - Corrupt files preserved in place and never silently replaced
+
+## Hierarchy approval gate
+
+Do not implement the hierarchy section until it is approved. The proposed choices are:
+
+- `parent_id` on each item, with missing values read as `null` and no version bump
+- `MAX_DEPTH = 2`, rejected rather than flattened
+- User-supplied ids preserved, including `AC-3a` and `AC-3b-1`; generated ids remain `item-N`
+- `add --parent` as the only new command surface
+- One active item, unchanged by adding children, advancing to an eligible parent before the next branch
+- Parent verification and parent cancel or defer blocked while a required descendant is open
+- Overall progress counted from top-level items only, with `status --tree` for the rest
