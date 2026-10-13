@@ -14,7 +14,7 @@ metadata:
 
 Stepper keeps one small list of outstanding commitments. The CLI in this directory is the source of truth. Do not create, edit, or delete files under `.stepper/`.
 
-Run `python3 <this-skill>/stepper.py`. Pass `--session` on every command that changes state. The session key looks like `cursor:<conversation_id>` or `claude:<session_id>`. A hook registers it. If a hook message starts with `Stepper session:`, copy that key. If you do not have a key, say so. Do not invent one.
+Run `python3 <this-skill>/stepper.py`. Pass `--session` on every command that changes state. The session key looks like `cursor:<conversation_id>` or `claude:<session_id>`. Copy it only from a hook message that starts with `Stepper session:`. Do not construct a key from a transcript path, filename, or any other UUID. Do not ask the user to approve a key you constructed. If that hook message is absent, say that the hook did not provide a session key, and stop.
 
 ## Capture
 

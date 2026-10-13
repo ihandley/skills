@@ -966,6 +966,16 @@ def event_allowed(event: str, platform: str) -> bool:
     return False
 
 
+def hook_root(payload: dict) -> Path:
+    roots = payload.get("workspace_roots") or []
+    if roots:
+        return Path(str(roots[0])).expanduser().resolve()
+    cwd = payload.get("cwd")
+    if isinstance(cwd, str) and cwd.strip():
+        return Path(cwd).expanduser().resolve()
+    return Path.cwd()
+
+
 def session_key_from(payload: dict, platform: str) -> str | None:
     if platform == "cursor":
         ident = payload.get("conversation_id") or payload.get("session_id")
@@ -1047,12 +1057,20 @@ def handle_hook(root: Path, platform: str, payload: dict) -> dict | None:
         source = payload.get("source")
         if platform == "claude" and source not in (None, "startup", "resume", "compact"):
             return None
-        if not holds or ctx["paused"]:
-            return None
-        if not has_outstanding(ctx) and not any(item["status"] == "deferred" for item in ctx["items"]):
-            return None
-        text = reminder(ctx) + "\n" + session_line(key)
-        return _hook_json(platform, event, text)
+        if holds and ctx is not None and not ctx["paused"]:
+            if has_outstanding(ctx) or any(item["status"] == "deferred" for item in ctx["items"]):
+                text = reminder(ctx) + "\n" + session_line(key)
+                return _hook_json(platform, event, text)
+        # A restarted Claude session loses the earlier prompt injection. Repeat
+        # the key when this session already registered, without tracking text.
+        if (
+            platform == "claude"
+            and source in ("resume", "compact")
+            and load_session(root, key) is not None
+            and not (ctx and ctx["paused"])
+        ):
+            return _hook_json(platform, event, session_line(key))
+        return None
 
     sess = load_session(root, key)
 
@@ -1484,8 +1502,7 @@ def main(argv: list[str] | None = None) -> int:
                 return 0
             if not isinstance(payload, dict):
                 return 0
-            roots = payload.get("workspace_roots") or []
-            root = Path(roots[0]).resolve() if roots else Path.cwd()
+            root = hook_root(payload)
             try:
                 with locked(root, block=False):
                     output = handle_hook(root, args.platform, payload)

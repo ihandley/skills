@@ -142,7 +142,7 @@ Stepper stores state under `.stepper/` in the **working repository**, separate f
 - A **new** conversation does not automatically take over an existing context. Ask it to continue that tracked work explicitly; takeover requires your authorization.
 - A crashed session may retain its lease until you explicitly transfer it.
 
-Hooks and the agent pass the session identifier to the CLI. **Do not invent a session key or manually edit files in `.stepper/`.**
+Hooks pass the session identifier to the agent. The agent copies the `Stepper session:` line and does not construct a key from a transcript path. **Do not manually edit files in `.stepper/`.**
 
 ## CLI reference
 
@@ -166,7 +166,7 @@ The agent should supply the actual session key exposed by the hook, not the plac
 
 ## Current limitations
 
-- **Proactive detection on Claude Code is fixture-tested, not live-tested.** An ordinary prompt creates no session file. `Stop` creates one only when `last_assistant_message` contains a new candidate, and a repeated `Stop` does not offer it again. Live Claude hook execution was not run.
+- **Proactive candidate detection on Claude Code is fixture-tested.** An ordinary prompt creates no session file. `Stop` creates one only when `last_assistant_message` contains a new candidate, and a repeated `Stop` does not offer it again. A live Claude Code 2.1.287 session did confirm that an explicit tracking prompt receives `Stepper session: claude:<session_id>` from `UserPromptSubmit`, and `--resume` still has that key. An unrelated prompt does not receive it.
 - **Cursor hook execution is only partly live-tested.** `agent --print` 2026.10.01 fired `sessionStart`, `preToolUse`, and `postToolUse`. It did not fire `afterAgentResponse` or `stop`. An IDE logging hook later showed a finished turn as the last `postToolUse`, then `afterAgentResponse`, then `stop` with a new generation id and no response text. The offer uses the stored response and does not wait for another tool call in that generation. Stepper's handling of those payloads is fixture-tested. The logging hook did not run Stepper.
 - A candidate detected only in a final assistant response may require **one additional agent turn** to ask for confirmation.
 - Hooks cannot ask you a question directly; they prompt the agent to ask.
