@@ -10,7 +10,7 @@ Cursor `agent --print` 2026.10.01, in a trusted workspace whose hooks only logge
 
 In the IDE session that built Stepper, project hooks logged `preToolUse` and `postToolUse` while the turn was still open. `afterAgentResponse` did not run between those tool calls.
 
-Same-turn suggestion injection therefore runs only when `afterAgentResponse` has already stored a candidate and a later `postToolUse` in that same generation arrives. That sequence was not observed. A candidate that appears only in the final assistant message is offered from `stop`, and that `stop` path is covered by payload fixtures rather than by the CLI run.
+A later read of that IDE log showed the turn ending as the last `postToolUse`, then `afterAgentResponse` for the same generation, then `stop`. The `stop` payload had a new generation id, `loop_count` 0, and no response text. A later `postToolUse` in the generation that produced the message was not observed, so the offer does not depend on one. Cursor stores the message in `afterAgentResponse` and offers from `stop`. The CLI run still did not fire either event, so that offer path is fixture-tested. Claude `Stop` reads `last_assistant_message` and creates a session only when that message contains a new candidate.
 
 The session key is injected when a prompt addresses Stepper, and again on session start when that session holds a lease. It is not repeated on every later prompt. Cursor cannot attach context in `beforeSubmitPrompt`, so the key is carried on the next `postToolUse` instead.
 

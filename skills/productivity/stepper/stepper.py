@@ -1055,10 +1055,10 @@ def handle_hook(root: Path, platform: str, payload: dict) -> dict | None:
         return _hook_json(platform, event, text)
 
     sess = load_session(root, key)
-    if sess is None:
-        return None
 
     if event in ("postToolUse", "PostToolUse"):
+        if sess is None:
+            return None
         parts = []
         if sess.get("announce_key"):
             parts.append(session_line(key))
@@ -1089,10 +1089,22 @@ def handle_hook(root: Path, platform: str, payload: dict) -> dict | None:
     if event in ("stop", "Stop"):
         if payload.get("stop_hook_active") or int(payload.get("loop_count") or 0) > 0:
             return None
+        assistant = payload.get("last_assistant_message") or ""
+        if sess is None:
+            # Claude has no afterAgentResponse. Detect here, and create a session
+            # only when the final message contains a candidate that has not been
+            # offered. An ordinary prompt writes nothing.
+            found = parse_candidates(assistant) if assistant else None
+            if found is None or suggestion_status(root, found["hash"]) in (
+                "offered",
+                "accepted",
+                "declined",
+            ):
+                return None
+            sess = fresh_session(key, platform)
         token = generation or "none"
         if sess.get("followup_generation") == token:
             return None
-        assistant = payload.get("last_assistant_message") or ""
         if assistant:
             sess["last_assistant_text"] = assistant
             consider_candidate(root, sess, parse_candidates(assistant), ctx, generation)

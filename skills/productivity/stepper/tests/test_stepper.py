@@ -300,6 +300,97 @@ class StepperTests(unittest.TestCase):
         self.assertIn("AC-4", offer["followup_message"])
         self.assertNotIn("AC-1", offer["followup_message"])
 
+    def test_claude_stop_offers_once_without_a_prior_session(self):
+        sessions = self.root / ".stepper" / "sessions"
+        contexts = self.root / ".stepper" / "contexts"
+        code, _data, out = self.hook(
+            "claude",
+            {
+                "hook_event_name": "UserPromptSubmit",
+                "session_id": "fresh",
+                "prompt": "Evaluate the acceptance criteria and report which ones still fail.",
+            },
+        )
+        self.assertEqual(code, 0)
+        self.assertEqual(out, "")
+        self.assertEqual(list(sessions.glob("*.json")), [])
+        self.assertEqual(list(contexts.glob("*.json")), [])
+        stop = {
+            "hook_event_name": "Stop",
+            "session_id": "fresh",
+            "prompt_id": "p1",
+            "stop_hook_active": False,
+            "last_assistant_message": AC_REPORT,
+        }
+        code, first, _out = self.hook("claude", stop)
+        self.assertEqual(code, 0)
+        text = first["hookSpecificOutput"]["additionalContext"]
+        self.assertEqual(text.count("Stepper candidate"), 1)
+        self.assertIn("2 items", text)
+        self.assertIn("AC-3", text)
+        self.assertIn("AC-4", text)
+        self.assertNotIn("AC-1", text)
+        self.assertEqual(len(list(sessions.glob("*.json"))), 1)
+        self.assertEqual(list(contexts.glob("*.json")), [])
+        code, _data, out = self.hook("claude", stop)
+        self.assertEqual(out, "")
+        repeated = dict(stop, prompt_id="p2")
+        code, _data, out = self.hook("claude", repeated)
+        self.assertEqual(out, "")
+
+    def test_cursor_offer_follows_the_observed_response_then_stop_order(self):
+        sessions = self.root / ".stepper" / "sessions"
+        contexts = self.root / ".stepper" / "contexts"
+        code, _data, out = self.hook(
+            "cursor",
+            {
+                "hook_event_name": "beforeSubmitPrompt",
+                "conversation_id": "aaa",
+                "generation_id": "turn",
+                "prompt": "Evaluate the acceptance criteria and report which ones still fail.",
+            },
+        )
+        self.assertEqual(out, "")
+        self.assertEqual(list(sessions.glob("*.json")), [])
+        code, _data, out = self.hook(
+            "cursor",
+            {
+                "hook_event_name": "postToolUse",
+                "conversation_id": "aaa",
+                "generation_id": "turn",
+                "tool_name": "Shell",
+            },
+        )
+        self.assertEqual(out, "")
+        self.assertEqual(list(sessions.glob("*.json")), [])
+        code, _data, out = self.hook(
+            "cursor",
+            {
+                "hook_event_name": "afterAgentResponse",
+                "conversation_id": "aaa",
+                "generation_id": "turn",
+                "text": AC_REPORT,
+            },
+        )
+        self.assertEqual(out, "")
+        self.assertEqual(len(list(sessions.glob("*.json"))), 1)
+        stop = {
+            "hook_event_name": "stop",
+            "conversation_id": "aaa",
+            "generation_id": "followup",
+            "status": "completed",
+            "loop_count": 0,
+        }
+        code, first, _out = self.hook("cursor", stop)
+        self.assertEqual(first["followup_message"].count("Stepper candidate"), 1)
+        self.assertIn("AC-3", first["followup_message"])
+        self.assertIn("AC-4", first["followup_message"])
+        self.assertEqual(list(contexts.glob("*.json")), [])
+        code, _data, out = self.hook("cursor", stop)
+        self.assertEqual(out, "")
+        code, _data, out = self.hook("cursor", dict(stop, generation_id="followup-2"))
+        self.assertEqual(out, "")
+
     def test_final_message_offers_once_on_stop_not_on_an_earlier_tool(self):
         self.hook(
             "cursor",

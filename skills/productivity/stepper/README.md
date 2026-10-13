@@ -166,8 +166,8 @@ The agent should supply the actual session key exposed by the hook, not the plac
 
 ## Current limitations
 
-- **Proactive detection is still being validated.** A review identified a Claude Code lifecycle case in which an ordinary session without an existing Stepper record may fail to produce a tracking offer. Confirm the fix before relying on automatic capture.
-- **Cursor hook execution is not fully validated.** A live `agent --print` run exercised some tool hooks but did not fire `afterAgentResponse` or `stop`; those paths currently rely on fixture tests.
+- **Proactive detection on Claude Code is fixture-tested, not live-tested.** An ordinary prompt creates no session file. `Stop` creates one only when `last_assistant_message` contains a new candidate, and a repeated `Stop` does not offer it again. Live Claude hook execution was not run.
+- **Cursor hook execution is only partly live-tested.** `agent --print` 2026.10.01 fired `sessionStart`, `preToolUse`, and `postToolUse`. It did not fire `afterAgentResponse` or `stop`. An IDE logging hook later showed a finished turn as the last `postToolUse`, then `afterAgentResponse`, then `stop` with a new generation id and no response text. The offer uses the stored response and does not wait for another tool call in that generation. Stepper's handling of those payloads is fixture-tested. The logging hook did not run Stepper.
 - A candidate detected only in a final assistant response may require **one additional agent turn** to ask for confirmation.
 - Hooks cannot ask you a question directly; they prompt the agent to ask.
 - Candidate detection intentionally favors conservative patterns and may miss unusual wording.
