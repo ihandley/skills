@@ -8,7 +8,7 @@ Promoted. Each skill here is listed in the top-level README, registered in `.cla
 
 Reachable only when you type them (`disable-model-invocation: true`, and `policy.allow_implicit_invocation: false` in `agents/openai.yaml`).
 
-None yet.
+- **[pair](./pair/SKILL.md)**: Teach-as-you-go pairing. You write the code; the agent explains the design, plans the steps, and checks understanding before editing anything.
 
 ## Model-invoked
 

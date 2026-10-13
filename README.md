@@ -48,7 +48,7 @@ Skills for daily code work.
 
 **User-invoked**
 
-None yet.
+- **[pair](./skills/engineering/pair/SKILL.md)**: Teach-as-you-go pairing. You write the code; the agent explains the design, plans the steps, and checks understanding before editing anything.
 
 **Model-invoked**
 
