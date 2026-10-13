@@ -20,7 +20,7 @@ Before proposing an architecture:
 4. Avoid introducing repository-wide dependencies or configuration unless absolutely necessary.
 5. Keep runtime state separate from the skill's source files. Installing or updating the skill must not overwrite active tracking state.
 6. Ensure the skill can be installed and used independently of other skills in the repository.
-7. If the repository is empty or has no established conventions, follow the Agent Skills specification and use a conventional `skills/stepper/` directory.
+7. If the repository is empty or has no established conventions, follow the Agent Skills specification while retaining `skills/productivity/stepper/` as the skill's location.
 
 Do not create a separate repository or initialize a new project.
 
@@ -157,9 +157,17 @@ The skill should extract actionable items from the relevant conversation context
 
 Preserve the original meaning and completion criteria. Do not invent requirements or silently discard items.
 
-For the initial implementation, explicit activation is sufficient.
+### Proactive capture (v1)
 
-Design the system so that automatic detection of actionable lists can be added later, but do not implement automatic detection in v1.
+Stepper should also notice candidate actionable lists in agent output and offer to track them without explicit invocation. This is a core v1 requirement, not a future enhancement.
+
+- Investigate which Cursor and Claude Code hook events can observe agent output and surface a suggestion. Do not assume either platform can directly prompt the user from a hook.
+- Use deterministic parsing for recognizable patterns (Markdown checklists, numbered acceptance criteria, TODOs, unresolved findings) where possible.
+- Distinguish candidate detection from deciding whether a list represents actual commitments. Use minimal agent judgment only when deterministic parsing is insufficient.
+- Ask the user before activating tracking. Never silently enroll a list.
+- Deduplicate suggestions for the same list, respect declined suggestions, and avoid nagging or interrupting ongoing work.
+- If hooks cannot directly offer suggestions, use the closest documented mechanism to flag a candidate for the agent to offer at a natural conversational boundary; clearly document any reliability limits.
+- Keep detection lightweight, avoid an LLM call on every message, and do not treat arbitrary numbered or illustrative lists as actionable by default.
 
 ### 2. Persistent State
 
@@ -176,11 +184,16 @@ Each tracked item needs:
 
 The system also needs to identify the current active item.
 
-Prefer three statuses:
+Define one consistent, script-enforced state machine across the CLI, persistence format, hooks, and tests. Support at least:
 
-- `pending`
-- `active`
-- `verified`
+- `pending` — outstanding and actionable.
+- `active` — currently being addressed.
+- `blocked` — cannot proceed until a stated dependency or condition changes.
+- `verified` — completion established with appropriate evidence.
+- `deferred` — explicitly postponed, not completed.
+- `cancelled` — explicitly removed from scope, not completed.
+
+Specify legal transitions, how blocked/deferred work is resumed, and whether terminal non-verified items count toward closure. Only verified items count as satisfied. Do not silently mark blocked, deferred, or cancelled items verified.
 
 A verified item must have evidence appropriate to its completion criteria.
 
@@ -313,21 +326,22 @@ Create a realistic end-to-end test using this scenario:
 
 An agent evaluates four acceptance criteria. AC-1 and AC-2 are already satisfied. AC-3 and AC-4 are outstanding.
 
-The user activates Stepper to track AC-3 and AC-4.
+The agent reports AC-3 and AC-4 as outstanding without the user invoking Stepper. Stepper detects the candidate list and offers to track it. The user accepts.
 
 The agent begins AC-3 and encounters a complicated issue requiring multiple tool calls and an extended investigation.
 
 Verify that:
 
-1. Stepper retains AC-3 and AC-4 throughout the investigation.
-2. The agent does not prematurely declare the tracked work finished.
-3. AC-3 is not marked verified without evidence.
-4. After AC-3 is verified, the agent is reminded about AC-4.
-5. After AC-4 is verified, Stepper announces completion.
-6. State survives a fresh agent session.
-7. Context compaction does not silently lose tracked commitments.
-8. Pausing or asking unrelated questions does not trigger disruptive reminders.
-9. A failed or unavailable hook does not corrupt state.
+1. Stepper proactively offers to track the two outstanding criteria, obtains user confirmation, and does not repeatedly offer the same list after a decline.
+2. Stepper retains AC-3 and AC-4 throughout the investigation.
+3. The agent does not prematurely declare the tracked work finished.
+4. AC-3 is not marked verified without evidence.
+5. After AC-3 is verified, the agent is reminded about AC-4.
+6. After AC-4 is verified, Stepper announces completion.
+7. State survives a fresh agent session.
+8. Context compaction does not silently lose tracked commitments.
+9. Pausing or asking unrelated questions does not trigger disruptive reminders.
+10. A failed or unavailable hook does not corrupt state.
 
 Use actual platform behavior for integration tests wherever possible. Do not represent mocked hook tests as proof of end-to-end platform integration.
 
