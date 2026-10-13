@@ -1,0 +1,3 @@
+interface:
+  display_name: "Skill Compress"
+  short_description: "Tighten a skill for the agent"
