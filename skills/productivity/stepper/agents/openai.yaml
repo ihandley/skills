@@ -1,0 +1,3 @@
+interface:
+  display_name: "Stepper"
+  short_description: "Keep outstanding commitments in view"

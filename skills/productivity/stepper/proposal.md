@@ -1,8 +1,18 @@
 # Stepper Architecture Proposal
 
-Status: revised, awaiting approval before implementation.
+Status: approved and implemented.
 
-The deterministic architecture is approved in principle. This revision records the decisions made after review. No implementation should start from this draft until the revision itself is approved.
+The deterministic architecture in this document is the implementation contract. The notes below record behavior that live Cursor execution did not confirm.
+
+## Implementation notes
+
+Cursor `agent --print` 2026.10.01, in a trusted workspace whose hooks only logged events, fired `sessionStart`, then `preToolUse`, then `postToolUse` for one shell command. It did not fire `afterAgentResponse` or `stop`.
+
+In the IDE session that built Stepper, project hooks logged `preToolUse` and `postToolUse` while the turn was still open. `afterAgentResponse` did not run between those tool calls.
+
+Same-turn suggestion injection therefore runs only when `afterAgentResponse` has already stored a candidate and a later `postToolUse` in that same generation arrives. That sequence was not observed. A candidate that appears only in the final assistant message is offered from `stop`, and that `stop` path is covered by payload fixtures rather than by the CLI run.
+
+The session key is injected when a prompt addresses Stepper, and again on session start when that session holds a lease. It is not repeated on every later prompt. Cursor cannot attach context in `beforeSubmitPrompt`, so the key is carried on the next `postToolUse` instead.
 
 ## Objective
 
@@ -461,7 +471,7 @@ No unrelated skill or repository-wide runtime dependency will be changed.
 
 ## Approval gate
 
-No implementation should begin until this revision is approved. The revised choices are:
+This revision was approved before implementation. The shipped choices are:
 
 - Python 3 standard library, with no runtime dependencies
 - One JSON state file per context under a locally excluded `.stepper/`
