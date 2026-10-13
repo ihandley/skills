@@ -1,6 +1,6 @@
 # Stepper Architecture Proposal
 
-Status: v1 approved and implemented. The hierarchy revision below is awaiting approval. Do not implement it until that revision is approved.
+Status: v1 approved and implemented. The hierarchy revision is approved, including the focus, descent, and depth-independent traversal clarifications below.
 
 The deterministic architecture in this document is the implementation contract. The notes below record behavior that live Cursor execution did not confirm. The hierarchy section is a proposal, not a change to the shipped v1 contract.
 
@@ -548,7 +548,7 @@ Adding children leaves the active item where it is. If `AC-3` is active and gain
 
 `focus` of a leaf demotes the previous active item to `pending` and activates the leaf. The parent is not given a second status. Its place in the work is the ancestor path.
 
-`focus` of an item that still has a pending, active, or blocked descendant fails:
+`focus` of an item that still has a pending, active, or blocked descendant fails before any status changes:
 
 ```text
 AC-3 has unresolved children; focus a leaf
@@ -556,12 +556,14 @@ AC-3 has unresolved children; focus a leaf
 
 The CLI does not choose a child on the user's behalf.
 
-Verifying the active item chooses the next active item in this order:
+An active item must not sit under a deferred ancestor. `focus` on a descendant whose ancestor is `deferred` returns every deferred ancestor on that path to `pending`, then activates the requested leaf. Returning to `pending` drops no evidence and no blocked reason, because a deferred item has neither. The command does not leave the ancestor deferred, and it does not leave the ancestor active above the child. If the focus itself fails because the target has unresolved children, the ancestors stay deferred.
 
-1. The next `pending` sibling that has no children, in `order`.
-2. When no such sibling remains and every descendant of the parent is verified or cancelled, the parent becomes `active` if it is `pending`. The parent is not verified.
-3. When the parent does not become active, repeat from the parent's siblings upward.
-4. A blocked or deferred item is skipped, as it is today.
+Verifying the active item chooses the next active item by walking parent links. The walk is the same at every depth. `MAX_DEPTH` is checked only when an item is added. A deeper tree, loaded or produced by raising the constant, uses this same walk.
+
+1. Scan the finished item's siblings in `order`, skipping the finished item. A `pending` sibling with no children becomes active. A `pending` sibling with unresolved descendants is entered, and the same rule selects inside it. The branch is not skipped because it has children.
+2. When no sibling branch is selected and every descendant of the parent is verified or cancelled, the parent becomes `active` if it is `pending`. The parent is not verified.
+3. When the parent does not become active, repeat the same walk from the parent.
+4. `blocked` and `deferred` nodes are not selected and are not entered. That matches the flat list, which also skips them.
 
 So finishing `AC-3b-1` makes `AC-3b` active when `AC-3b` has nothing else outstanding. Finishing the last child of `AC-3` makes `AC-3` active. `AC-4` waits until `AC-3` itself is verified, deferred, or cancelled. Verifying a non-active item still does not move the active item.
 
@@ -613,7 +615,9 @@ Context completion is unchanged and still looks at every item: each item is `ver
 
 - An active item may temporarily have unresolved children, because `add` must not move focus.
 - The CLI then makes an eligible parent active so the branch is verified before the next top-level item. That parent has children, and it is active only because those children are resolved.
-- There is no un-verify. Reopening is the existing return from `deferred` or `blocked`.
+- `focus` reactivates a deferred ancestor to `pending` before activating the requested leaf. An active child under a deferred parent is not a stored state.
+- Sibling selection enters a pending branch that still has unresolved children. Traversal does not contain a depth cutoff. Raising `MAX_DEPTH` needs tests at the new depth, not a new walk.
+- There is no un-verify. Reopening is the existing return from `deferred` or `blocked`, plus the ancestor reactivation above.
 - A deferred child blocks parent verification. Cancelling the child is the way to remove it from scope.
 - `item-N` is the generated id. A hierarchical id appears only when the user supplies it.
 - Detection stays flat. "Track these as sub-steps of AC-3" is an explicit `add`, not a parsed capture.
@@ -632,12 +636,14 @@ This revision was approved before implementation. The shipped choices are:
 
 ## Hierarchy approval gate
 
-Do not implement the hierarchy section until it is approved. The proposed choices are:
+This hierarchy revision is approved. The approved choices are:
 
 - `parent_id` on each item, with missing values read as `null` and no version bump
 - `MAX_DEPTH = 2`, rejected rather than flattened
 - User-supplied ids preserved, including `AC-3a` and `AC-3b-1`; generated ids remain `item-N`
 - `add --parent` as the only new command surface
 - One active item, unchanged by adding children, advancing to an eligible parent before the next branch
+- Deferred ancestors return to `pending` when a descendant is focused
+- Pending sibling branches are entered, and the walk has no depth cutoff
 - Parent verification and parent cancel or defer blocked while a required descendant is open
 - Overall progress counted from top-level items only, with `status --tree` for the rest

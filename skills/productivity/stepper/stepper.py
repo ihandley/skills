@@ -21,6 +21,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 VERSION = 1
+MAX_DEPTH = 2
 STATUSES = ("pending", "active", "blocked", "verified", "deferred", "cancelled")
 OUTSTANDING = ("pending", "active", "blocked")
 LEGAL = {
@@ -51,6 +52,7 @@ ITEM_KEYS = {
     "evidence",
     "blocked_reason",
     "order",
+    "parent_id",
 }
 SESSION_KEYS = {
     "version",
@@ -91,8 +93,8 @@ HEADING = re.compile(
 CHECKED = re.compile(r"^\s*(?:[-*+]|\d+[.)])\s+\[[xX]\]\s+")
 OPEN_BOX = re.compile(r"^\s*(?:[-*+]|\d+[.)])\s+\[\s\]\s+(.+?)\s*$")
 LIST_ITEM = re.compile(r"^\s*(?:[-*+]|\d+[.)])\s+(.+?)\s*$")
-ITEM_ID = re.compile(r"^((?:AC|[A-Za-z][A-Za-z0-9]*)-\d+)\s*[:\-]\s+(.+)$")
-BARE_ID = re.compile(r"^(?:AC|[A-Za-z][A-Za-z0-9]*)-\d+$")
+ITEM_ID = re.compile(r"^([A-Za-z][A-Za-z0-9]*(?:-[A-Za-z0-9]+)+)\s*[:\-]\s+(.+)$")
+BARE_ID = re.compile(r"^[A-Za-z][A-Za-z0-9]*(?:-[A-Za-z0-9]+)+$")
 STATUS_WORD = re.compile(
     r"(?i)\b(outstanding|not met|unmet|failed|remaining|unresolved|todo)\b"
 )
@@ -322,6 +324,7 @@ def blank_item(item_id: str, description: str, criteria: str, order: int) -> dic
         "evidence": None,
         "blocked_reason": None,
         "order": order,
+        "parent_id": None,
     }
 
 
@@ -345,8 +348,10 @@ def validate_context(data: dict) -> None:
     seen = set()
     active = 0
     for item in data["items"]:
-        if not isinstance(item, dict) or set(item) != ITEM_KEYS:
+        if not isinstance(item, dict) or set(item) - {"parent_id"} != ITEM_KEYS - {"parent_id"}:
             raise ValueError("item schema")
+        if "parent_id" in item and item["parent_id"] is not None and not isinstance(item["parent_id"], str):
+            raise ValueError("parent")
         if item["status"] not in STATUSES:
             raise ValueError("status")
         if item["id"] in seen or not isinstance(item["id"], str):
@@ -362,6 +367,25 @@ def validate_context(data: dict) -> None:
             raise ValueError("order")
     if active > 1:
         raise ValueError("multiple active items")
+    ids = {item["id"] for item in data["items"]}
+    for item in data["items"]:
+        parent = item.get("parent_id")
+        seen = set()
+        while parent is not None:
+            if parent not in ids or parent in seen or parent == item["id"]:
+                raise ValueError("parent")
+            seen.add(parent)
+            parent = next(
+                candidate.get("parent_id")
+                for candidate in data["items"]
+                if candidate["id"] == parent
+            )
+
+
+def normalize_context(data: dict) -> dict:
+    for item in data["items"]:
+        item["parent_id"] = item.get("parent_id")
+    return data
 
 
 def load_context(root: Path, context_id: str) -> dict:
@@ -373,7 +397,7 @@ def load_context(root: Path, context_id: str) -> dict:
         validate_context(data)
     except ValueError as exc:
         _fail_corrupt(root, path, str(exc))
-    return data
+    return normalize_context(data)
 
 
 def save_context(root: Path, data: dict) -> None:
@@ -403,7 +427,7 @@ def read_contexts(root: Path) -> tuple[list[dict], list[str]]:
             copy = quarantine(root, path)
             bad.append(str(path if copy is None else path))
             continue
-        good.append(data)
+        good.append(normalize_context(data))
     return good, bad
 
 
@@ -456,6 +480,8 @@ def reminder(ctx: dict) -> str:
         return "Stepper: tracking is closed."
     if is_complete(ctx):
         return "Stepper: tracked work is complete."
+    if any(item.get("parent_id") for item in ctx["items"]):
+        return _hierarchy_reminder(ctx)
     active = [item for item in ctx["items"] if item["status"] == "active"]
     pending = sorted(
         (item for item in ctx["items"] if item["status"] == "pending"),
@@ -613,13 +639,159 @@ def _item(ctx: dict, item_id: str) -> dict:
     raise StepperError(f"no item {item_id}")
 
 
+def _children(ctx: dict, parent_id: str | None) -> list[dict]:
+    return sorted(
+        (item for item in ctx["items"] if item.get("parent_id") == parent_id),
+        key=lambda item: item["order"],
+    )
+
+
+def _parent(ctx: dict, item: dict) -> dict | None:
+    parent_id = item.get("parent_id")
+    if parent_id is None:
+        return None
+    return _item(ctx, parent_id)
+
+
+def _ancestors(ctx: dict, item: dict) -> list[dict]:
+    chain = []
+    seen = set()
+    current = _parent(ctx, item)
+    while current is not None:
+        if current["id"] in seen:
+            raise StepperError(f"parent cycle at {current['id']}")
+        seen.add(current["id"])
+        chain.append(current)
+        current = _parent(ctx, current)
+    chain.reverse()
+    return chain
+
+
+def _descendants(ctx: dict, item: dict) -> list[dict]:
+    found = []
+    for child in _children(ctx, item["id"]):
+        found.append(child)
+        found.extend(_descendants(ctx, child))
+    return found
+
+
+def _depth(ctx: dict, item: dict) -> int:
+    return len(_ancestors(ctx, item))
+
+
+def _eligible(ctx: dict, item: dict) -> bool:
+    return all(child["status"] in ("verified", "cancelled") for child in _descendants(ctx, item))
+
+
+def _blocking_descendants(ctx: dict, item: dict, statuses: tuple[str, ...]) -> list[dict]:
+    return [child for child in _descendants(ctx, item) if child["status"] in statuses]
+
+
+def _until(ids: list[str]) -> str:
+    if len(ids) == 1:
+        return f"until {ids[0]} is resolved"
+    return f"until {', '.join(ids)} are resolved"
+
+
+def _guard_ancestors(ctx: dict, item: dict) -> None:
+    for ancestor in _ancestors(ctx, item):
+        if ancestor["status"] in ("verified", "cancelled"):
+            raise StepperError(
+                f"cannot change {item['id']} because {ancestor['id']} is {ancestor['status']}"
+            )
+
+
+def _select_branch(ctx: dict, node: dict) -> dict | None:
+    if node["status"] != "pending":
+        return None
+    for child in _children(ctx, node["id"]):
+        chosen = _select_branch(ctx, child)
+        if chosen is not None:
+            return chosen
+    if not _children(ctx, node["id"]) or _eligible(ctx, node):
+        return node
+    if _blocking_descendants(ctx, node, ("pending", "active", "blocked", "deferred")):
+        return node
+    return None
+
+
+def _next_hierarchical(ctx: dict, finished: dict) -> dict | None:
+    for sibling in _children(ctx, finished.get("parent_id")):
+        if sibling["id"] == finished["id"]:
+            continue
+        chosen = _select_branch(ctx, sibling)
+        if chosen is not None:
+            return chosen
+    parent = _parent(ctx, finished)
+    if parent is not None and parent["status"] == "pending" and _eligible(ctx, parent):
+        return parent
+    if parent is not None:
+        return _next_hierarchical(ctx, parent)
+    return None
+
+
+def _progress(ctx: dict) -> dict:
+    tops = _children(ctx, None)
+    resolved = sum(1 for item in tops if item["status"] in ("verified", "cancelled"))
+    active = next((item for item in ctx["items"] if item["status"] == "active"), None)
+    path = []
+    if active is not None:
+        path = [item["id"] for item in _ancestors(ctx, active)] + [active["id"]]
+    return {
+        "top_level": {"resolved": resolved, "total": len(tops)},
+        "active_path": path,
+    }
+
+
+def _tree_node(ctx: dict, item: dict) -> dict:
+    children = _children(ctx, item["id"])
+    resolved = sum(1 for child in children if child["status"] in ("verified", "cancelled"))
+    return {
+        "id": item["id"],
+        "status": item["status"],
+        "children_resolved": resolved,
+        "children_total": len(children),
+        "children": [_tree_node(ctx, child) for child in children],
+    }
+
+
+def _hierarchy_reminder(ctx: dict) -> str:
+    progress = _progress(ctx)
+    counts = progress["top_level"]
+    parts = []
+    if progress["active_path"]:
+        parts.append(" → ".join(progress["active_path"]) + " active")
+    else:
+        parts.append("no active item")
+    parts.append(f"top-level {counts['resolved']}/{counts['total']}")
+    active = next((item for item in ctx["items"] if item["status"] == "active"), None)
+    parent = _parent(ctx, active) if active is not None else None
+    if parent is not None:
+        children = _children(ctx, parent["id"])
+        resolved = sum(1 for child in children if child["status"] in ("verified", "cancelled"))
+        parts.append(f"{parent['id']} {resolved}/{len(children)}")
+    return "Stepper: " + ". ".join(parts) + "."
+
+
 def _demote_active(ctx: dict) -> None:
     for item in ctx["items"]:
         if item["status"] == "active":
             item["status"] = "pending"
 
 
-def _activate_next(ctx: dict) -> None:
+def _activate_next(ctx: dict, finished: dict | None = None) -> None:
+    if any(item.get("parent_id") for item in ctx["items"]):
+        if finished is None:
+            for item in _children(ctx, None):
+                chosen = _select_branch(ctx, item)
+                if chosen is not None:
+                    chosen["status"] = "active"
+                    return
+            return
+        chosen = _next_hierarchical(ctx, finished)
+        if chosen is not None:
+            chosen["status"] = "active"
+        return
     pending = sorted(
         (item for item in ctx["items"] if item["status"] == "pending"),
         key=lambda item: item["order"],
@@ -638,6 +810,16 @@ def transition(
     if ctx["closed"]:
         raise StepperError(f"context {ctx['id']} is closed")
     item = _item(ctx, item_id)
+    _guard_ancestors(ctx, item)
+    if new_status == "verified":
+        blocking = _blocking_descendants(ctx, item, ("pending", "active", "blocked", "deferred"))
+        if blocking:
+            raise StepperError(f"cannot verify {item_id} {_until([child['id'] for child in blocking])}")
+    if new_status in ("deferred", "cancelled"):
+        blocking = _blocking_descendants(ctx, item, ("pending", "active", "blocked"))
+        if blocking:
+            verb = "defer" if new_status == "deferred" else "cancel"
+            raise StepperError(f"cannot {verb} {item_id} {_until([child['id'] for child in blocking])}")
     current = item["status"]
     if new_status == "verified":
         evidence = None if evidence is None else evidence.strip()
@@ -667,7 +849,7 @@ def transition(
         item["blocked_reason"] = None
     item["status"] = new_status
     if was_active and new_status == "verified":
-        _activate_next(ctx)
+        _activate_next(ctx, item)
 
 
 def require_holder(root: Path, session_key: str) -> dict:
@@ -687,7 +869,12 @@ def require_holder(root: Path, session_key: str) -> dict:
 
 
 def result(ctx: dict, **extra) -> dict:
-    body = {"ok": True, "context": public_context(ctx), "reminder": reminder(ctx)}
+    body = {
+        "ok": True,
+        "context": public_context(ctx),
+        "reminder": reminder(ctx),
+        "progress": _progress(ctx),
+    }
     body.update(extra)
     return body
 
@@ -756,16 +943,29 @@ def cmd_capture(root: Path, session_key: str, context_id: str, items: list[str],
     return result(ctx)
 
 
-def cmd_add(root: Path, session_key: str, items: list[str]) -> dict:
+def cmd_add(root: Path, session_key: str, items: list[str], parent_id: str | None) -> dict:
     ctx = require_holder(root, session_key)
     if not items:
         raise StepperError("add needs at least one --item")
+    parent = None
+    if parent_id is not None:
+        parent = _item(ctx, parent_id)
+        if parent["status"] in ("verified", "cancelled"):
+            raise StepperError(f"cannot add under {parent_id} because it is {parent['status']}")
     seq = ctx["next_seq"]
     for raw in items:
         item, seq = parse_item_arg(raw, seq)
         if any(existing["id"] == item["id"] for existing in ctx["items"]):
             raise StepperError(f"item {item['id']} already exists")
-        item["order"] = len(ctx["items"])
+        item["parent_id"] = parent_id
+        if parent is not None:
+            depth = _depth(ctx, parent) + 1
+            if depth > MAX_DEPTH:
+                raise StepperError(
+                    f"cannot add {item['id']} under {parent_id}: depth {depth} exceeds MAX_DEPTH {MAX_DEPTH}"
+                )
+        siblings = _children(ctx, parent_id)
+        item["order"] = max((sibling["order"] for sibling in siblings), default=-1) + 1
         ctx["items"].append(item)
     ctx["next_seq"] = seq
     if not any(item["status"] == "active" for item in ctx["items"]):
@@ -776,6 +976,16 @@ def cmd_add(root: Path, session_key: str, items: list[str]) -> dict:
 
 def cmd_focus(root: Path, session_key: str, item_id: str) -> dict:
     ctx = require_holder(root, session_key)
+    item = _item(ctx, item_id)
+    _guard_ancestors(ctx, item)
+    blocking = _blocking_descendants(ctx, item, ("pending", "active", "blocked"))
+    if blocking:
+        raise StepperError(f"{item_id} has unresolved children; focus a leaf")
+    if item["status"] != "active" and "active" not in LEGAL[item["status"]]:
+        transition(ctx, item_id, "active")
+    for ancestor in _ancestors(ctx, item):
+        if ancestor["status"] == "deferred":
+            ancestor["status"] = "pending"
     transition(ctx, item_id, "active")
     save_context(root, ctx)
     return result(ctx)
@@ -887,7 +1097,7 @@ def cmd_decline(root: Path, session_key: str, digest: str) -> dict:
     return {"ok": True, "suggestion": digest, "status": "declined"}
 
 
-def cmd_status(root: Path, session_key: str | None) -> dict:
+def cmd_status(root: Path, session_key: str | None, tree: bool = False) -> dict:
     ensure_store(root)
     contexts, corrupt = read_contexts(root)
     if session_key is None:
@@ -901,6 +1111,8 @@ def cmd_status(root: Path, session_key: str | None) -> dict:
                     "lease": ctx["lease"],
                     "complete": is_complete(ctx),
                     "reminder": reminder(ctx),
+                    "progress": {"top_level": _progress(ctx)["top_level"]},
+                    **({"tree": [_tree_node(ctx, item) for item in _children(ctx, None)]} if tree else {}),
                 }
                 for ctx in contexts
             ],
@@ -915,6 +1127,8 @@ def cmd_status(root: Path, session_key: str | None) -> dict:
         else {"session_key": session_key, "prompt_class": session["prompt_class"]},
         "context": None if ctx is None else public_context(ctx),
         "reminder": None if ctx is None else reminder(ctx),
+        "progress": None if ctx is None else _progress(ctx),
+        **({"tree": [_tree_node(ctx, item) for item in _children(ctx, None)]} if tree and ctx is not None else {}),
         "corrupt_files": corrupt,
     }
 
@@ -1388,9 +1602,9 @@ def run_command(args: argparse.Namespace) -> dict:
         if args.cmd == "capture":
             return cmd_capture(root, args.session, args.context, args.item or [], args.suggestion)
         if args.cmd == "add":
-            return cmd_add(root, args.session, args.item or [])
+            return cmd_add(root, args.session, args.item or [], args.parent)
         if args.cmd == "status":
-            return cmd_status(root, args.session)
+            return cmd_status(root, args.session, args.tree)
         if args.cmd == "focus":
             return cmd_focus(root, args.session, args.item_id)
         if args.cmd == "verify":
@@ -1439,10 +1653,12 @@ def build_parser() -> argparse.ArgumentParser:
     root(add)
     session(add)
     add.add_argument("--item", action="append")
+    add.add_argument("--parent")
 
     status = sub.add_parser("status")
     root(status)
     session(status, required=False)
+    status.add_argument("--tree", action="store_true")
 
     for name in ("focus", "unblock", "defer", "cancel"):
         command = sub.add_parser(name)
