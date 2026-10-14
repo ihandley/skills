@@ -1,0 +1,5 @@
+interface:
+  display_name: "Pair"
+  short_description: "Teach-as-you-go pairing, you write the code"
+policy:
+  allow_implicit_invocation: false
