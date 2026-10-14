@@ -1,0 +1,48 @@
+# Copy to ~/.claude/tidy.yaml and set `profile`.
+# That file is machine-local. This example is the schema.
+
+profile: work
+
+profiles:
+  work:
+    repos_root: ~/src/work
+    forge: github
+    tracker:
+      type: jira
+      project: JET
+      key_pattern: 'JET-\d+'
+      # `work_instructions` means the Jira cloud host named in your work instructions.
+      # Or set the host string itself.
+      cloud_id: work_instructions
+      skip_label: skip-qa
+      on_merged:
+        when_label: Done
+        otherwise: Testing
+      on_closed_unmerged: Canceled
+      in_sync_statuses: [Testing, Done]
+      require_story_points: true
+      subtask_skip_fields: [team, sprint]
+      fields:
+        story_points: customfield_10016
+        sprint: customfield_10021
+        team: customfield_10001
+        tech_domain: customfield_10691
+        product_domain: customfield_12409
+      defaults:
+        team: "team-id"
+        tech_domain: { id: "11419" }
+        product_domain: { id: "13186" }
+        assignee: "account-id"
+        priority: { name: Medium }
+        sprint: open
+
+  home:
+    repos_root: ~/src
+    forge: github
+    tracker:
+      type: github
+      # Issues link through the PR's closing references. Set a pattern only
+      # when branch names carry an issue number the closing reference can miss.
+      key_pattern:
+      on_merged: close
+      on_closed_unmerged: leave
