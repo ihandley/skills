@@ -13,10 +13,13 @@
     "agents"
   ],
   "skills": [
+    "./skills/engineering/agents-md",
+    "./skills/engineering/chad-learn",
     "./skills/engineering/deslop",
-    "./skills/engineering/init-ai",
+    "./skills/engineering/pair",
     "./skills/engineering/skill-compress",
     "./skills/productivity/terse",
-    "./skills/productivity/stepper"
+    "./skills/productivity/stepper",
+    "./skills/productivity/ticketer"
   ]
 }
