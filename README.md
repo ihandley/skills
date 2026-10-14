@@ -70,3 +70,7 @@ None yet.
 - **[terse](./skills/productivity/terse/SKILL.md)**: Rewrite or draft Slack, email, Jira, Confluence, and pull-request text to minimize length and maximize signal.
 - **[stepper](./skills/productivity/stepper/SKILL.md)**: Keep a short list of outstanding commitments in view across a long investigation.
 - **[ticketer](./skills/productivity/ticketer/SKILL.md)**: Create or update Jira and GitHub Issues tickets with team rules enforced by a CLI and a confirmation gate before anything is filed.
+
+## Releasing
+
+PR titles must be Conventional Commits (`feat:`, `fix:`, `chore:`, `feat!:` for breaking). Squash merges make the title the commit, and release-please reads those commits to open a release PR. Merging that PR bumps `.claude-plugin/plugin.json` and tags the release, and `/plugin` then picks up the update.

@@ -17,4 +17,4 @@ skills.sh already installs individual skills into Claude Code, Cursor, Codex, an
 ## Invariants
 
 - Every promoted skill has an entry in `.claude-plugin/plugin.json`'s `skills` array.
-- `.claude-plugin/plugin.json`'s `version` tracks `package.json`. `npm run version` copies the package version into the plugin manifest.
+- `.claude-plugin/plugin.json`'s `version` is bumped by release-please from Conventional Commit titles. The release PR updates it through `extra-files` in `release-please-config.json`.
