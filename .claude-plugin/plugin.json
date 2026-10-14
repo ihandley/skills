@@ -13,9 +13,9 @@
     "agents"
   ],
   "skills": [
+    "./skills/engineering/agents-md",
     "./skills/engineering/chad-learn",
     "./skills/engineering/deslop",
-    "./skills/engineering/init-ai",
     "./skills/productivity/terse",
     "./skills/productivity/stepper"
   ]
