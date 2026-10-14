@@ -1,0 +1,3 @@
+interface:
+  display_name: "Ticketer"
+  short_description: "Create and update tickets with team rules enforced"

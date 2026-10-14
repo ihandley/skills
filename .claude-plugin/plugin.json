@@ -18,6 +18,7 @@
     "./skills/engineering/deslop",
     "./skills/engineering/pair",
     "./skills/productivity/terse",
-    "./skills/productivity/stepper"
+    "./skills/productivity/stepper",
+    "./skills/productivity/ticketer"
   ]
 }
