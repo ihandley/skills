@@ -1,0 +1,22 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "ticketer team config",
+  "description": "Schema for .ticketer/<team>.toml. Editors with TOML schema support (Even Better TOML) can bind to it. ticketer.py performs the same checks at load time.",
+  "type": "object",
+  "required": ["tracker"],
+  "additionalProperties": false,
+  "properties": {
+    "tracker": { "enum": ["jira", "github"] },
+    "required": { "type": "array", "items": { "type": "string" } },
+    "forbid_empty": { "type": "array", "items": { "type": "string" } },
+    "normalize_labels": { "type": "boolean" },
+    "ai_disclosure": { "type": "string" },
+    "enforce_templates": { "type": "boolean" },
+    "template_dir": { "type": "string" },
+    "require_metadata": { "type": "boolean" },
+    "metadata_max_age_hours": { "type": "number", "exclusiveMinimum": 0 },
+    "draft_max_age_hours": { "type": "number", "exclusiveMinimum": 0 },
+    "defaults": { "type": "object" },
+    "extra": { "type": "object" }
+  }
+}
