@@ -8,6 +8,7 @@ Promoted. Each skill here is listed in the top-level README, registered in `.cla
 
 Reachable only when you type them (`disable-model-invocation: true`, and `policy.allow_implicit_invocation: false` in `agents/openai.yaml`).
 
+- **[chad-learn](./chad-learn/SKILL.md)**: Reconstruct existing code in the order it could have been built, one decision at a time. Writes only a learning journal.
 - **[pair](./pair/SKILL.md)**: Teach-as-you-go pairing. You write the code; the agent explains the design, plans the steps, and checks understanding before editing anything.
 
 ## Model-invoked

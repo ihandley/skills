@@ -13,6 +13,7 @@
     "agents"
   ],
   "skills": [
+    "./skills/engineering/chad-learn",
     "./skills/engineering/deslop",
     "./skills/engineering/init-ai",
     "./skills/engineering/pair",
