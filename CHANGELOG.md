@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.3.0](https://github.com/ihandley/skills/compare/ihandley-skills-v0.2.0...ihandley-skills-v0.3.0) (2026-10-14)
+
+
+### Features
+
+* add tidy to the productivity bucket ([#14](https://github.com/ihandley/skills/issues/14)) ([9904eca](https://github.com/ihandley/skills/commit/9904eca118fcb7d850c5c24fc322864ead9607d3))
+
 ## [0.2.0](https://github.com/ihandley/skills/compare/ihandley-skills-v0.1.0...ihandley-skills-v0.2.0) (2026-10-14)
 
 
