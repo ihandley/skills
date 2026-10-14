@@ -14,7 +14,7 @@ A change stays when both are true:
 - **`engineering/`, `productivity/`**: promoted. Listed in the top-level README, shipped in the Claude Code plugin, and documented under `docs/`.
 - **`in-progress/`**: public on purpose, excluded from the plugin until it graduates.
 - **`misc/`**: kept, rarely used, not promoted.
-- **`deprecated/`**: removed from use. Delete the skill. The changeset names whatever replaced it.
+- **`deprecated/`**: removed from use. Delete the skill. The commit that deletes it names whatever replaced it.
 
 ## Already decided
 
