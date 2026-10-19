@@ -78,14 +78,14 @@ class LocateTests(Base):
         self.assertEqual(data["team"], "core")
         self.assertTrue(data["config_exists"])
 
-    def test_user_level_fallback(self):
+    def test_user_level_team_pointer_is_ignored(self):
         home = self.tmp / "home"
         home.mkdir()
         (home / "team").write_text("solo\n")
         (home / "solo.toml").write_text(GITHUB_TOML)
         code, data, _ = self.run_cli("locate", cwd=self.tmp)
-        self.assertEqual(data["team"], "solo")
-        self.assertTrue(data["config_exists"])
+        self.assertIsNone(data["team"])
+        self.assertFalse(data["config_exists"])
 
     def test_no_team_means_no_config_and_draft_fails_closed(self):
         code, data, _ = self.run_cli("locate", cwd=self.tmp)
@@ -101,6 +101,134 @@ class LocateTests(Base):
     def test_old_python_guard(self):
         src = TICKETER.read_text()
         self.assertLess(src.index("sys.version_info < (3, 11)"), src.index("import tomllib"))
+
+
+class MappingTests(Base):
+    def setUp(self):
+        super().setUp()
+        self.home = self.tmp / "home"
+        self.home.mkdir()
+        (self.home / "jira.toml").write_text(JIRA_TOML)
+        (self.home / "github.toml").write_text(GITHUB_TOML)
+        self.work = self.tmp / "work"
+        self.proj = self.work / "proj"
+        self.proj.mkdir(parents=True)
+
+    def mappings(self, text):
+        (self.home / "mappings.toml").write_text(text)
+
+    def test_longest_path_prefix_wins_and_match_is_reported(self):
+        self.mappings('[[mapping]]\npath = "%s"\nprovider = "jira"\n\n'
+                      '[[mapping]]\npath = "%s"\nprovider = "github"\n' % (self.work, self.proj))
+        _, data, _ = self.run_cli("locate", cwd=self.proj)
+        self.assertEqual(data["team"], "github")
+        self.assertTrue(data["mapping"].endswith("work/proj"), data["mapping"])
+        _, data, _ = self.run_cli("locate", cwd=self.work)
+        self.assertEqual(data["team"], "jira")
+        self.assertTrue(data["config_exists"])
+
+    def test_sibling_prefix_does_not_match(self):
+        sibling = self.tmp / "work-other"
+        sibling.mkdir()
+        self.mappings('[[mapping]]\npath = "%s"\nprovider = "jira"\n' % self.work)
+        _, data, _ = self.run_cli("locate", cwd=sibling)
+        self.assertIsNone(data["team"])
+
+    def test_remote_matches_when_no_path_does(self):
+        other = self.tmp / "elsewhere"
+        other.mkdir()
+        subprocess.run(["git", "init", "-q"], cwd=other, check=True)
+        subprocess.run(["git", "remote", "add", "origin", "git@github.com:Acme/Widgets.git"], cwd=other, check=True)
+        self.mappings('[[mapping]]\nremote = "acme/widgets"\nprovider = "github"\n')
+        _, data, _ = self.run_cli("locate", cwd=other)
+        self.assertEqual(data["team"], "github")
+        _, data, _ = self.run_cli("locate", cwd=self.tmp)
+        self.assertIsNone(data["team"])
+
+    def test_unmapped_path_has_no_config_no_default_and_asks(self):
+        self.mappings('[[mapping]]\npath = "%s"\nprovider = "jira"\n' % self.work)
+        outside = self.tmp / "outside"
+        outside.mkdir()
+        _, data, _ = self.run_cli("locate", cwd=outside)
+        self.assertFalse(data["config_exists"])
+        self.assertIsNone(data["mapping"])
+        self.assertEqual(data["providers"], ["github", "jira"])
+        code, data, _ = self.draft(jira_payload(), "--cwd", str(outside))
+        self.assertEqual(code, 4)
+        self.assertIn("no default", data["error"])
+        self.assertIn("map add", data["error"])
+
+    def test_repo_level_team_file_beats_mapping(self):
+        self.mappings('[[mapping]]\npath = "%s"\nprovider = "jira"\n' % self.tmp)
+        self.write_config(GITHUB_TOML, team="oss")
+        _, data, _ = self.run_cli("locate")
+        self.assertEqual(data["team"], "oss")
+
+    def test_overrides_reach_the_draft(self):
+        self.mappings('[[mapping]]\npath = "%s"\nprovider = "github"\n'
+                      '[mapping.overrides.defaults]\nrepo = "acme/special"\nlabels = ["triage"]\n' % self.proj)
+        code, data, _ = self.draft({"summary": "x", "description": "y", "labels": ["bug"]}, "--cwd", str(self.proj))
+        self.assertEqual(code, 0, data)
+        self.assertIn("repo: acme/special", data["render"])
+        self.assertIn("triage, bug", data["render"])
+
+    def test_changed_overrides_invalidate_a_draft(self):
+        text = ('[[mapping]]\npath = "%s"\nprovider = "github"\n'
+                '[mapping.overrides.defaults]\nrepo = "acme/special"\n' % self.proj)
+        self.mappings(text)
+        _, data, _ = self.draft({"summary": "x", "description": "y", "labels": ["bug"]}, "--cwd", str(self.proj))
+        self.mappings(text.replace("special", "other"))
+        code, out, _ = self.run_cli("submit", "--draft", data["id"], "--confirm", data["id"])
+        self.assertEqual(code, 2)
+        self.assertIn("changed", out["error"])
+
+    def test_invalid_mappings_file_is_rejected(self):
+        self.mappings('[[mapping]]\nprovider = "jira"\nbogus = 1\n[mapping.overrides]\ntracker = "github"\n')
+        code, data, _ = self.run_cli("locate", cwd=self.proj)
+        self.assertEqual(code, 4)
+        codes = {e["code"] for e in data["errors"]}
+        self.assertEqual(codes, {"unknown_mapping_key", "empty_mapping", "bad_override"})
+
+    def test_map_add_appends_keeps_comments_and_refuses_duplicates(self):
+        self.mappings("# keep me\n[[mapping]]\npath = \"%s\"\nprovider = \"jira\"\n" % self.work)
+        code, data, _ = self.run_cli("map", "add", "--path", str(self.proj), "--provider", "github")
+        self.assertEqual(code, 0, data)
+        text = (self.home / "mappings.toml").read_text()
+        self.assertIn("# keep me", text)
+        _, data, _ = self.run_cli("locate", cwd=self.proj)
+        self.assertEqual(data["team"], "github")
+        code, data, _ = self.run_cli("map", "add", "--path", str(self.proj), "--provider", "jira")
+        self.assertEqual(code, 5)
+        self.assertIn("--force", data["error"])
+        _, data, _ = self.run_cli("locate", cwd=self.proj)
+        self.assertEqual(data["team"], "github")
+
+    def test_map_add_force_replaces_but_keeps_overrides(self):
+        self.mappings('[[mapping]]\npath = "%s"\nprovider = "github"\n'
+                      '[mapping.overrides.defaults]\nrepo = "acme/special"\n' % self.proj)
+        code, data, _ = self.run_cli("map", "add", "--path", str(self.proj), "--provider", "jira", "--force")
+        self.assertEqual(code, 0, data)
+        self.assertTrue(data["replaced"])
+        _, data, _ = self.run_cli("locate", cwd=self.proj)
+        self.assertEqual(data["team"], "jira")
+        self.assertEqual(data["overrides"], {"defaults": {"repo": "acme/special"}})
+
+    def test_map_add_creates_file_and_needs_an_existing_provider(self):
+        code, data, _ = self.run_cli("map", "add", "--path", str(self.proj), "--provider", "nope")
+        self.assertEqual(code, 5)
+        self.assertIn("init", data["error"])
+        code, _, _ = self.run_cli("map", "add", "--path", str(self.proj), "--provider", "jira")
+        self.assertEqual(code, 0)
+        self.assertTrue((self.home / "mappings.toml").is_file())
+
+    def test_init_user_scope_names_config_by_provider_and_writes_no_pointer(self):
+        (self.home / "github.toml").unlink()
+        code, data, _ = self.run_cli("init", "--tracker", "github")
+        self.assertEqual(code, 0, data)
+        self.assertTrue((self.home / "github.toml").is_file())
+        self.assertIsNone(data["team_pointer"])
+        self.assertFalse((self.home / "team").exists())
+        self.assertIn("map add", data["next"])
 
 
 class ConfigTests(Base):

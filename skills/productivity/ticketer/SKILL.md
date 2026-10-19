@@ -17,7 +17,7 @@ Run `python3 <this-skill>/ticketer.py <command>`. Every command prints one JSON 
 
 ## Steps
 
-1. **Locate.** `ticketer.py locate`. If `config_exists` is false, ask the user for their team slug and tracker, run `ticketer.py init --team <slug> --tracker <jira|github>`, fill every `REPLACE_ME` with values the user gives you, and have them review it. Never invent ids, keys, or field values.
+1. **Locate.** `ticketer.py locate`. If `config_exists` is false, the directory is unmapped and there is no default. Ask the user which provider config to use (`providers` lists them) or whether to create one. To create one, run `ticketer.py init --provider <name> --tracker <jira|github>`, fill every `REPLACE_ME` with values the user gives you, and have them review it. Then save the choice with `ticketer.py map add --path <dir> --provider <name>`. Add `--remote owner/repo` to match by git remote instead. Never invent ids, keys, or field values.
 
 2. **Collect.** Gather what the config's `required` list names. Ask for anything missing. For a description, use the section headings in `templates/<issue-type>.md`. If adjacent work or follow-ons are plausible, ask which to include before drafting.
 
