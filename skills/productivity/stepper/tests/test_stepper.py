@@ -230,6 +230,26 @@ class StepperTests(unittest.TestCase):
         self.assertTrue((self.root / ".stepper" / "contexts" / "default.json").exists())
         self.assertTrue((self.root / ".stepper" / "contexts" / "other.json").exists())
 
+    def test_capture_after_close_archives_the_closed_context(self):
+        self.capture()
+        self.cli("close", "--session", "cursor:aaa")
+        code, data = self.capture()
+        self.assertEqual(code, 0, data)
+        self.assertFalse(data["context"]["closed"])
+        self.assertEqual(data["context"]["lease"]["session_key"], "cursor:aaa")
+        archived = list((self.root / ".stepper" / "archive").glob("default-*.json"))
+        self.assertEqual(len(archived), 1)
+        self.assertTrue(json.loads(archived[0].read_text())["closed"])
+
+    def test_capture_over_open_context_says_it_is_open(self):
+        self.capture()
+        self.cli("detach", "--session", "cursor:aaa")
+        code, data = self.cli(
+            "capture", "--session", "cursor:aaa", "--context", "default", "--item", "AC-9: x"
+        )
+        self.assertEqual(code, 1)
+        self.assertIn("is open", data["error"])
+
     def test_corrupt_file_is_preserved_and_not_replaced(self):
         self.capture()
         path = self.root / ".stepper" / "contexts" / "default.json"

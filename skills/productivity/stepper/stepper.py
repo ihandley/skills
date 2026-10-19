@@ -882,9 +882,12 @@ def cmd_capture(root: Path, session_key: str, context_id: str, items: list[str],
     if leased_by(root, session_key) is not None:
         raise StepperError("this session already holds a context; detach or close it first")
     path = context_path(root, context_id)
+    to_archive = None
     if path.exists():
-        load_context(root, context_id)
-        raise StepperError(f"context {context_id} already exists")
+        existing = load_context(root, context_id)
+        if not existing["closed"]:
+            raise StepperError(f"context {context_id} already exists and is open")
+        to_archive = path
     seq = 1
     built = []
     source_hash = None
@@ -933,6 +936,10 @@ def cmd_capture(root: Path, session_key: str, context_id: str, items: list[str],
         "next_seq": seq,
         "items": built,
     }
+    if to_archive is not None:
+        archive = store(root) / "archive"
+        archive.mkdir(parents=True, exist_ok=True)
+        os.replace(to_archive, archive / f"{context_id}-{stamp()}.json")
     save_context(root, ctx)
     if source_hash:
         suggestions = load_suggestions(root)
