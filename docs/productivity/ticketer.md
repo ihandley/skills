@@ -13,7 +13,10 @@ Reach for it when the ticket must follow team rules: required fields, labels, a 
 ## Common questions
 
 **Where do team rules live?**
-In a TOML file at `.ticketer/<team>.toml` in the repository, or `~/.config/ticketer/<team>.toml` for you alone. `.ticketer/team` or `~/.config/ticketer/team` names the team. With no config, writes are refused. Run `ticketer.py init` to create a starter file, and commit it so teammates share it.
+In provider configs in `~/.config/ticketer/`, named by provider: `jira.toml`, `github.toml`. `~/.config/ticketer/mappings.toml` maps a directory, a git remote, or both to one of them. The longest matching path wins, and a remote entry applies only when no path matches. An entry can carry an `overrides` table for a repo, labels, or extra fields. A `.ticketer/team` file in a repository still works and wins over the mappings.
+
+**What happens in a directory that is not mapped?**
+Nothing is filed and there is no default. The agent asks which provider config to use, or whether to create one with `ticketer.py init`. It saves the answer with `ticketer.py map add`, so it does not ask again.
 
 **Which trackers work?**
 Jira and GitHub Issues. Each is a small adapter, so another tracker is an added module.

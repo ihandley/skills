@@ -26,6 +26,8 @@ import hashlib
 import json
 import os
 import re
+import subprocess
+import tempfile
 import time
 import tomllib
 from pathlib import Path
@@ -38,6 +40,10 @@ SKILL_DIR = Path(__file__).resolve().parent
 PLACEHOLDER = "REPLACE_ME"
 SLUG_RE = re.compile(r"^[a-z0-9][a-z0-9_-]*$")
 ID_RE = re.compile(r"^[0-9a-f]{12}$")
+REMOTE_RE = re.compile(r"[:/]([A-Za-z0-9_.-]+)/([A-Za-z0-9_.-]+?)(?:\.git)?/?$")
+OWNER_REPO_RE = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
+MAPPINGS_FILE = "mappings.toml"
+MAPPING_KEYS = {"path", "remote", "provider", "overrides"}
 
 EXIT_REFUSED = 2
 EXIT_CONFIG = 4
@@ -129,7 +135,8 @@ def resolve(args):
                 return candidate
         return None
 
-    team = team_source = None
+    team = team_source = mapping = None
+    overrides = {}
     if getattr(args, "team", None):
         team, team_source = args.team, "--team"
     else:
@@ -137,10 +144,11 @@ def resolve(args):
         if pointer:
             team, team_source = pointer.read_text(encoding="utf-8").strip(), str(pointer)
         else:
-            user_pointer = home / "team"
-            searched.append(str(user_pointer))
-            if user_pointer.is_file():
-                team, team_source = user_pointer.read_text(encoding="utf-8").strip(), str(user_pointer)
+            searched.append(str(home / MAPPINGS_FILE))
+            mapping = match_mapping(load_mappings(home), cwd)
+            if mapping:
+                team, team_source = mapping["provider"], str(home / MAPPINGS_FILE)
+                overrides = mapping.get("overrides", {})
     if team is not None and not SLUG_RE.match(team):
         raise Fail(EXIT_CONFIG, "team slug %r is invalid (lowercase letters, digits, - and _ only)" % team)
 
@@ -160,6 +168,10 @@ def resolve(args):
         "team_source": team_source,
         "config_path": str(config_path) if config_path else None,
         "config_exists": bool(config_path and config_path.is_file()),
+        "cwd": str(cwd),
+        "mapping": mapping["_label"] if mapping else None,
+        "overrides": overrides,
+        "providers": list_providers(home),
         "searched": searched,
         "cache_dir": str(cache_dir()),
     }
@@ -170,19 +182,108 @@ def require_config(args):
     if not info["config_exists"]:
         raise Fail(
             EXIT_CONFIG,
-            "no team config found. Writes fail closed without one. Ask the user for their team slug and "
-            "tracker, then run: ticketer.py init --team <slug> --tracker <jira|github>",
+            "no config found for this directory. Writes fail closed without one, and there is no default. "
+            "Ask the user which provider config to use (existing: %s), or whether to create one with: "
+            "ticketer.py init --provider <name> --tracker <jira|github>. Then save the choice with: "
+            "ticketer.py map add --path <dir> --provider <name>" % (", ".join(info["providers"]) or "none"),
             searched=info["searched"],
+            providers=info["providers"],
         )
-    return info["config_path"], info["team"]
+    return info
 
 
-def load_config(path):
+def list_providers(home):
+    if not home.is_dir():
+        return []
+    return sorted(p.stem for p in home.glob("*.toml") if p.name != MAPPINGS_FILE and SLUG_RE.match(p.stem))
+
+
+def norm_path(value):
+    return Path(value).expanduser().resolve()
+
+
+def git_remote(cwd):
+    try:
+        proc = subprocess.run(["git", "-C", str(cwd), "remote", "get-url", "origin"],
+                              capture_output=True, text=True, timeout=5, check=False)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    match = REMOTE_RE.search(proc.stdout.strip()) if proc.returncode == 0 else None
+    return "%s/%s" % match.groups() if match else None
+
+
+def load_mappings(home):
+    path = home / MAPPINGS_FILE
+    if not path.is_file():
+        return []
+    try:
+        data = tomllib.loads(path.read_text(encoding="utf-8"))
+    except (OSError, tomllib.TOMLDecodeError) as exc:
+        raise Fail(EXIT_CONFIG, "cannot read %s: %s" % (path, exc))
+    problems = []
+    unknown = sorted(set(data) - {"mapping"})
+    if unknown:
+        problems.append(err("unknown_mapping_key", "unknown top-level keys: %s" % ", ".join(unknown)))
+    entries = data.get("mapping", [])
+    for index, entry in enumerate(entries):
+        where = "mapping #%d" % (index + 1)
+        extra = sorted(set(entry) - MAPPING_KEYS)
+        if extra:
+            problems.append(err("unknown_mapping_key", "%s: unknown keys: %s" % (where, ", ".join(extra))))
+        if not (isinstance(entry.get("provider"), str) and SLUG_RE.match(entry["provider"])):
+            problems.append(err("bad_provider", "%s: provider must be a config name like jira or github" % where))
+        for key in ("path", "remote"):
+            if key in entry and not (isinstance(entry[key], str) and entry[key].strip()):
+                problems.append(err("bad_type", "%s: %s must be a non-empty string" % (where, key)))
+        if "path" not in entry and "remote" not in entry:
+            problems.append(err("empty_mapping", "%s: needs a path, a remote, or both" % where))
+        if "remote" in entry and isinstance(entry["remote"], str) and not OWNER_REPO_RE.match(entry["remote"]):
+            problems.append(err("bad_remote", "%s: remote must look like owner/repo" % where))
+        overrides = entry.get("overrides", {})
+        if not isinstance(overrides, dict):
+            problems.append(err("bad_type", "%s: overrides must be a table" % where))
+        elif set(overrides) - (CONFIG_KEYS - {"tracker"}):
+            bad = sorted(set(overrides) - (CONFIG_KEYS - {"tracker"}))
+            problems.append(err("bad_override", "%s: cannot override %s" % (where, ", ".join(bad))))
+    if problems:
+        raise Fail(EXIT_CONFIG, "%s is invalid" % path, problems)
+    return entries
+
+
+def match_mapping(entries, cwd):
+    """Longest path prefix wins. A remote-only entry matches only when no path entry does."""
+    remote = git_remote(cwd) if any("remote" in e for e in entries) else None
+    best, best_len = None, -1
+    for entry in entries:
+        length = 0
+        if "path" in entry:
+            root = norm_path(entry["path"])
+            if not cwd.is_relative_to(root):
+                continue
+            length = len(root.parts)
+        if "remote" in entry and (remote is None or entry["remote"].lower() != remote.lower()):
+            continue
+        if length > best_len:
+            label = ", ".join("%s %s" % (k, entry[k]) for k in ("path", "remote") if k in entry)
+            best, best_len = {**entry, "_label": label}, length
+    return best
+
+
+def deep_merge_config(data, overrides):
+    for key, value in overrides.items():
+        if key in ("defaults", "extra") and isinstance(value, dict):
+            data[key] = {**data.get(key, {}), **value}
+        else:
+            data[key] = value
+
+
+def load_config(path, overrides=None):
     path = Path(path)
     try:
         data = tomllib.loads(path.read_text(encoding="utf-8"))
     except (OSError, tomllib.TOMLDecodeError) as exc:
         raise Fail(EXIT_CONFIG, "cannot read config %s: %s" % (path, exc))
+    deep_merge_config(data, overrides or {})
     problems = []
     unknown = sorted(set(data) - CONFIG_KEYS)
     if unknown:
@@ -228,7 +329,8 @@ def load_config(path):
     data.setdefault("defaults", {})
     data.setdefault("extra", {})
     data["_path"] = str(path)
-    data["_sha"] = hashlib.sha256(path.read_bytes()).hexdigest()
+    data["_overrides"] = overrides or {}
+    data["_sha"] = hashlib.sha256(path.read_bytes() + canonical(overrides or {}).encode()).hexdigest()
     return data
 
 
@@ -439,25 +541,102 @@ def cmd_locate(args):
 
 def cmd_init(args):
     adapter = get_adapter(args.tracker)
-    if not SLUG_RE.match(args.team):
-        raise Fail(EXIT_CONFIG, "team slug must match %s" % SLUG_RE.pattern)
-    base = (Path(os.getcwd()) / ".ticketer") if args.scope == "repo" else config_home()
-    target = base / ("%s.toml" % args.team)
+    provider = args.provider or args.tracker
+    if not SLUG_RE.match(provider):
+        raise Fail(EXIT_CONFIG, "provider name must match %s" % SLUG_RE.pattern)
+    repo_scope = args.scope == "repo"
+    base = (Path(os.getcwd()) / ".ticketer") if repo_scope else config_home()
+    target = base / ("%s.toml" % provider)
     if target.exists() and not args.force:
         raise Fail(EXIT_STATE, "%s already exists; pass --force to overwrite" % target)
     base.mkdir(parents=True, exist_ok=True)
     target.write_text(adapter.CONFIG_TEMPLATE, encoding="utf-8")
     pointer = base / "team"
-    wrote_pointer = not pointer.exists() or args.force
+    wrote_pointer = repo_scope and (not pointer.exists() or args.force)
     if wrote_pointer:
-        pointer.write_text(args.team + "\n", encoding="utf-8")
+        pointer.write_text(provider + "\n", encoding="utf-8")
+    if repo_scope:
+        follow = "Commit .ticketer/%s.toml so teammates share it." % provider
+    else:
+        follow = "Then map a directory to it: ticketer.py map add --path <dir> --provider %s." % provider
     return {
         "ok": True,
         "config_path": str(target),
         "team_pointer": str(pointer) if wrote_pointer else None,
-        "next": "Replace every %s value in the config, then ask the user to review it. "
-                "Commit .ticketer/%s.toml so teammates share it." % (PLACEHOLDER, args.team),
+        "next": "Replace every %s value in the config, then ask the user to review it. %s" % (PLACEHOLDER, follow),
     }, 0
+
+
+def split_mapping_blocks(text):
+    head, blocks = [], []
+    for line in text.splitlines(keepends=True):
+        if line.strip() == "[[mapping]]":
+            blocks.append([line])
+        elif blocks:
+            blocks[-1].append(line)
+        else:
+            head.append(line)
+    return "".join(head), ["".join(block) for block in blocks]
+
+
+def mapping_block(path, remote, provider, old_block=""):
+    lines = ["[[mapping]]\n"]
+    if path:
+        lines.append("path = %s\n" % json.dumps(path))
+    if remote:
+        lines.append("remote = %s\n" % json.dumps(remote))
+    lines.append("provider = %s\n" % json.dumps(provider))
+    kept = re.search(r"^\s*\[mapping\.", old_block, re.MULTILINE)
+    return "".join(lines) + (old_block[kept.start():] if kept else "")
+
+
+def write_atomic(path, text):
+    fd, tmp = tempfile.mkstemp(dir=str(path.parent), prefix=".mappings-")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            handle.write(text)
+        os.replace(tmp, path)
+    except BaseException:
+        if os.path.exists(tmp):
+            os.unlink(tmp)
+        raise
+
+
+def cmd_map_add(args):
+    home = config_home()
+    if not SLUG_RE.match(args.provider):
+        raise Fail(EXIT_CONFIG, "provider name must match %s" % SLUG_RE.pattern)
+    if not (args.path or args.remote):
+        raise Fail(EXIT_CONFIG, "give --path, --remote, or both")
+    if args.remote and not OWNER_REPO_RE.match(args.remote):
+        raise Fail(EXIT_CONFIG, "--remote must look like owner/repo")
+    if not (home / ("%s.toml" % args.provider)).is_file():
+        raise Fail(EXIT_STATE, "no config named %s in %s. Create it first: ticketer.py init --provider %s --tracker <jira|github>"
+                   % (args.provider, home, args.provider))
+    path = str(norm_path(args.path)) if args.path else None
+    target = home / MAPPINGS_FILE
+    entries = load_mappings(home)
+    key = (path, args.remote.lower() if args.remote else None)
+    same = [i for i, e in enumerate(entries)
+            if (str(norm_path(e["path"])) if "path" in e else None, e["remote"].lower() if "remote" in e else None) == key]
+    text = target.read_text(encoding="utf-8") if target.is_file() else ""
+    head, blocks = split_mapping_blocks(text)
+    if len(blocks) != len(entries):
+        raise Fail(EXIT_STATE, "cannot edit %s safely. Edit it by hand." % target)
+    if same and not args.force:
+        raise Fail(EXIT_STATE, "%s already maps %s; pass --force to replace it"
+                   % (target, " + ".join(v for v in (path, args.remote) if v)))
+    if same:
+        blocks[same[0]] = mapping_block(path, args.remote, args.provider, blocks[same[0]])
+    else:
+        if blocks and not blocks[-1].endswith("\n\n"):
+            blocks[-1] = blocks[-1].rstrip("\n") + "\n\n"
+        blocks.append(mapping_block(path, args.remote, args.provider))
+    home.mkdir(parents=True, exist_ok=True)
+    write_atomic(target, head + "".join(blocks))
+    load_mappings(home)
+    return {"ok": True, "mappings_path": str(target), "replaced": bool(same),
+            "entry": {"path": path, "remote": args.remote, "provider": args.provider}}, 0
 
 
 def cmd_metadata_store(args):
@@ -473,8 +652,8 @@ def cmd_metadata_store(args):
 
 
 def cmd_draft(args):
-    config_path, _team = require_config(args)
-    config = load_config(config_path)
+    info = require_config(args)
+    config = load_config(info["config_path"], info["overrides"])
     adapter = get_adapter(config["tracker"])
     raw = read_json_input("-")
     draft, notes = build_draft(raw, adapter, config)
@@ -492,7 +671,8 @@ def cmd_draft(args):
             raise Fail(EXIT_REFUSED,
                        "an identical draft was already %s. Use --allow-duplicate only if the user wants a second ticket." % status)
     save_record({"id": draft_id, "status": "drafted", "created_at": time.time(), "tracker": adapter.NAME,
-                 "config_path": config["_path"], "config_sha": config["_sha"], "draft": draft})
+                 "config_path": config["_path"], "resolve": {"cwd": info["cwd"], "team": getattr(args, "team", None), "config": getattr(args, "config", None)},
+                 "config_sha": config["_sha"], "draft": draft})
     return {
         "ok": True, "id": draft_id, "render": render(draft, draft_id, adapter.NAME),
         "warnings": warnings, "notes": notes, "needs": needs,
@@ -507,7 +687,10 @@ def cmd_submit(args):
         raise Fail(EXIT_REFUSED, "confirmation token does not match the draft id; the user has not confirmed this draft")
     if record["status"] != "drafted" and not args.resend:
         raise Fail(EXIT_REFUSED, "draft is already %s; refusing to emit it twice (--resend overrides)" % record["status"])
-    config = load_config(record["config_path"])
+    if "resolve" not in record:
+        raise Fail(EXIT_REFUSED, "draft predates the current resolver; run draft again")
+    current = resolve(argparse.Namespace(**record["resolve"]))
+    config = load_config(record["config_path"], current["overrides"])
     if config["_sha"] != record["config_sha"]:
         raise Fail(EXIT_REFUSED, "team config changed since the draft; run draft again")
     if time.time() - record["created_at"] > config["draft_max_age_hours"] * 3600:
@@ -551,8 +734,8 @@ def cmd_verify(args):
 
 
 def cmd_find_parent(args):
-    config_path, _ = require_config(args)
-    config = load_config(config_path)
+    info = require_config(args)
+    config = load_config(info["config_path"], info["overrides"])
     adapter = get_adapter(config["tracker"])
     if not hasattr(adapter, "find_parent"):
         raise Fail(EXIT_REFUSED, "%s does not support parent search" % adapter.NAME)
@@ -572,12 +755,21 @@ def parser():
     common(p)
     p.set_defaults(fn=cmd_locate)
 
-    p = sub.add_parser("init", help="write a starter team config")
-    p.add_argument("--team", required=True)
+    p = sub.add_parser("init", help="write a starter provider config")
+    p.add_argument("--provider", "--team", dest="provider", help="config name; defaults to the tracker name")
     p.add_argument("--tracker", required=True, choices=sorted(ADAPTERS))
     p.add_argument("--scope", choices=["user", "repo"], default="user")
     p.add_argument("--force", action="store_true")
     p.set_defaults(fn=cmd_init)
+
+    p = sub.add_parser("map", help="map a directory or git remote to a provider config")
+    msub = p.add_subparsers(dest="map_command", required=True)
+    s_add = msub.add_parser("add")
+    s_add.add_argument("--path")
+    s_add.add_argument("--remote", help="owner/repo")
+    s_add.add_argument("--provider", required=True)
+    s_add.add_argument("--force", action="store_true")
+    s_add.set_defaults(fn=cmd_map_add)
 
     p = sub.add_parser("metadata", help="cache tracker metadata the agent fetched")
     msub = p.add_subparsers(dest="metadata_command", required=True)
