@@ -312,6 +312,35 @@ class JiraDraftTests(Base):
         self.assertIn("description:\n_AI generated._\n\n## Context", data["render"])
 
 
+class RequiredByTypeTests(Base):
+    def setUp(self):
+        super().setUp()
+        self.write_config(JIRA_TOML + '[required_by_type]\nbug = ["customfield_10568", "customfield_10676"]\n')
+
+    def missing(self, data):
+        return {e["field"] for e in (data or {}).get("errors", []) if e["code"] == "required_missing"}
+
+    def test_matching_type_requires_extra_fields_case_insensitively(self):
+        code, data, _ = self.draft(jira_payload(issue_type="Bug"))
+        self.assertEqual(code, 2)
+        self.assertEqual(self.missing(data), {"customfield_10568", "customfield_10676"})
+
+    def test_extra_fields_satisfied_by_fields(self):
+        fields = {"customfield_10568": {"id": "1"}, "customfield_10676": {"id": "2"}}
+        code, data, _ = self.draft(jira_payload(issue_type="Bug", fields=fields))
+        self.assertEqual(self.missing(data), set())
+
+    def test_other_types_do_not_require_them(self):
+        code, data, _ = self.draft(jira_payload(issue_type="Task"))
+        self.assertEqual(self.missing(data), set())
+
+    def test_bad_shape_is_a_config_error(self):
+        self.write_config(JIRA_TOML + '[required_by_type]\nbug = "customfield_10568"\n')
+        code, data, _ = self.draft(jira_payload())
+        self.assertEqual(code, 4)
+        self.assertEqual(data["errors"][0]["code"], "bad_type")
+
+
 class JiraMetadataTests(Base):
     def setUp(self):
         super().setUp()

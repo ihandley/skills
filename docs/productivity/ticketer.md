@@ -18,6 +18,9 @@ In provider configs in `~/.config/ticketer/`, named by provider: `jira.toml`, `g
 **What happens in a directory that is not mapped?**
 Nothing is filed and there is no default. The agent asks which provider config to use, or whether to create one with `ticketer.py init`. It saves the answer with `ticketer.py map add`, so it does not ask again.
 
+**Can a field be required for only one issue type?**
+Yes. List the fields under `[required_by_type]` in the team config, keyed by issue type, for example `Bug = ["customfield_10568"]`. They apply on top of `required`, and the match ignores case.
+
 **Which trackers work?**
 Jira and GitHub Issues. Each is a small adapter, so another tracker is an added module.
 
