@@ -52,6 +52,7 @@ EXIT_STATE = 5
 CONFIG_KEYS = {
     "tracker",
     "required",
+    "required_by_type",
     "forbid_empty",
     "normalize_labels",
     "ai_disclosure",
@@ -295,6 +296,10 @@ def load_config(path, overrides=None):
         value = data.get(key, [])
         if not (isinstance(value, list) and all(isinstance(v, str) for v in value)):
             problems.append(err("bad_type", "%s must be a list of strings" % key, key))
+    by_type = data.get("required_by_type", {})
+    if not (isinstance(by_type, dict) and all(
+            isinstance(v, list) and all(isinstance(n, str) for n in v) for v in by_type.values())):
+        problems.append(err("bad_type", "required_by_type must be a table of issue type to a list of strings", "required_by_type"))
     for key in ("normalize_labels", "enforce_templates", "require_metadata"):
         if key in data and not isinstance(data[key], bool):
             problems.append(err("bad_type", "%s must be true or false" % key, key))
@@ -321,6 +326,7 @@ def load_config(path, overrides=None):
     if problems:
         raise Fail(EXIT_CONFIG, "config %s is invalid" % path, problems)
     data.setdefault("required", ["summary"])
+    data.setdefault("required_by_type", {})
     data.setdefault("forbid_empty", [])
     data.setdefault("enforce_templates", True)
     data.setdefault("require_metadata", False)
@@ -454,7 +460,9 @@ def validate_draft(draft, config, adapter, metadata):
     if operation == CREATE:
         if "summary" not in config["required"]:
             config = {**config, "required": ["summary"] + list(config["required"])}
-        for name in config["required"]:
+        issue_type = (draft.get("issue_type") or "").casefold()
+        extra_required = [n for t, names in config["required_by_type"].items() if t.casefold() == issue_type for n in names]
+        for name in dict.fromkeys(list(config["required"]) + extra_required):
             value = draft.get("fields", {}).get(name) if name.startswith("customfield_") else draft.get(name)
             if is_empty(value):
                 problems.append(err("required_missing", "required field %r is missing or empty" % name, name))

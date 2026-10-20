@@ -8,6 +8,10 @@
   "properties": {
     "tracker": { "enum": ["jira", "github"] },
     "required": { "type": "array", "items": { "type": "string" } },
+    "required_by_type": {
+      "type": "object",
+      "additionalProperties": { "type": "array", "items": { "type": "string" } }
+    },
     "forbid_empty": { "type": "array", "items": { "type": "string" } },
     "normalize_labels": { "type": "boolean" },
     "ai_disclosure": { "type": "string" },

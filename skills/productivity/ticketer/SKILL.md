@@ -19,7 +19,7 @@ Run `python3 <this-skill>/ticketer.py <command>`. Every command prints one JSON 
 
 1. **Locate.** `ticketer.py locate`. If `config_exists` is false, the directory is unmapped and there is no default. Ask the user which provider config to use (`providers` lists them) or whether to create one. To create one, run `ticketer.py init --provider <name> --tracker <jira|github>`, fill every `REPLACE_ME` with values the user gives you, and have them review it. Then save the choice with `ticketer.py map add --path <dir> --provider <name>`. Add `--remote owner/repo` to match by git remote instead. Never invent ids, keys, or field values.
 
-2. **Collect.** Gather what the config's `required` list names. Ask for anything missing. For a description, use the section headings in `templates/<issue-type>.md`. If adjacent work or follow-ons are plausible, ask which to include before drafting.
+2. **Collect.** Gather what the config's `required` list and the issue type's `required_by_type` entry name. Ask for anything missing. For a description, use the section headings in `templates/<issue-type>.md`. If adjacent work or follow-ons are plausible, ask which to include before drafting.
 
 3. **Draft.** Pipe the fields as JSON on stdin: `ticketer.py draft`. Keys are listed in the adapter (`adapters/jira.py`, `adapters/github.py`) as `DRAFT_KEYS`. Use `"operation": "update"` with `"key"` to edit.
    - Exit 2 with `errors`: fix them and draft again. Do not argue with a validator.
