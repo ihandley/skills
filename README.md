@@ -48,7 +48,7 @@ Skills for daily code work.
 
 **User-invoked**
 
-- **[chad-learn](./skills/engineering/chad-learn/SKILL.md)**: Reconstruct existing code in the order it could have been built, one decision at a time. Writes only a learning journal.
+- **[understand](./skills/engineering/understand/SKILL.md)**: Understand a subject one portion at a time, in arrival order. Writes only a learning journal.
 - **[pair](./skills/engineering/pair/SKILL.md)**: Teach-as-you-go pairing. You write the code; the agent explains the design, plans the steps, and checks understanding before editing anything.
 
 **Model-invoked**

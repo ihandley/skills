@@ -1,0 +1,5 @@
+interface:
+  display_name: "Understand"
+  short_description: "Understand a subject one portion at a time"
+policy:
+  allow_implicit_invocation: false
