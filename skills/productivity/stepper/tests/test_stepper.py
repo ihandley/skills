@@ -250,6 +250,62 @@ class StepperTests(unittest.TestCase):
         self.assertEqual(code, 1)
         self.assertIn("is open", data["error"])
 
+    def capture_unnamed(self, session):
+        self.register(session)
+        return self.cli("capture", "--session", session, "--item", "AC-9: x")
+
+    def test_capture_without_context_skips_an_open_unleased_default(self):
+        self.capture()
+        self.cli("detach", "--session", "cursor:aaa")
+        code, data = self.capture_unnamed("cursor:bbb")
+        self.assertEqual(code, 0, data)
+        self.assertEqual(data["context"]["id"], "default-2")
+        self.assertEqual(data["context"]["lease"]["session_key"], "cursor:bbb")
+        old = json.loads((self.root / ".stepper" / "contexts" / "default.json").read_text())
+        self.assertFalse(old["closed"])
+        self.assertIsNone(old["lease"])
+
+    def test_capture_without_context_skips_a_default_held_by_another_session(self):
+        self.capture()
+        code, data = self.capture_unnamed("cursor:bbb")
+        self.assertEqual(code, 0, data)
+        self.assertEqual(data["context"]["id"], "default-2")
+        old = json.loads((self.root / ".stepper" / "contexts" / "default.json").read_text())
+        self.assertEqual(old["lease"]["session_key"], "cursor:aaa")
+
+    def test_capture_without_context_counts_past_each_open_default(self):
+        self.capture()
+        self.capture_unnamed("cursor:bbb")
+        code, data = self.capture_unnamed("cursor:ccc")
+        self.assertEqual(code, 0, data)
+        self.assertEqual(data["context"]["id"], "default-3")
+
+    def test_capture_without_context_reuses_default_once_it_is_closed(self):
+        self.capture()
+        self.cli("close", "--session", "cursor:aaa")
+        code, data = self.capture_unnamed("cursor:bbb")
+        self.assertEqual(code, 0, data)
+        self.assertEqual(data["context"]["id"], "default")
+
+    def test_open_context_error_names_the_holder(self):
+        self.capture()
+        self.register("cursor:bbb")
+        code, data = self.cli(
+            "capture", "--session", "cursor:bbb", "--context", "default", "--item", "AC-9: x"
+        )
+        self.assertEqual(code, 1)
+        self.assertIn("held by cursor:aaa", data["error"])
+        self.assertIn("--take", data["error"])
+
+    def test_open_context_error_says_when_nobody_holds_it(self):
+        self.capture()
+        self.cli("detach", "--session", "cursor:aaa")
+        code, data = self.cli(
+            "capture", "--session", "cursor:aaa", "--context", "default", "--item", "AC-9: x"
+        )
+        self.assertEqual(code, 1)
+        self.assertIn("no session holds it", data["error"])
+
     def test_corrupt_file_is_preserved_and_not_replaced(self):
         self.capture()
         path = self.root / ".stepper" / "contexts" / "default.json"
