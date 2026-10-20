@@ -18,3 +18,4 @@ Reachable by you or by the agent when the task fits.
 - **[deslop](./deslop/SKILL.md)**: Scrub AI-generated comments, over-defensive checks, and type escapes from a branch diff before commit or PR.
 - **[agents-md](./agents-md/SKILL.md)**: Write or update a minimal `AGENTS.md` from verified commands, conventions, and gotchas. Shows the draft and asks before writing.
 - **[skill-compress](./skill-compress/SKILL.md)**: Compress a `SKILL.md` and its support files for execution density without losing behavior.
+- **[pr-review](./pr-review/SKILL.md)**: Review a pull request by fetching and following the LiveViewTech pr-review skill.

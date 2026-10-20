@@ -56,6 +56,7 @@ Skills for daily code work.
 - **[deslop](./skills/engineering/deslop/SKILL.md)**: Scrub AI-generated comments, over-defensive checks, and type escapes from a branch diff before commit or PR.
 - **[agents-md](./skills/engineering/agents-md/SKILL.md)**: Write or update a minimal `AGENTS.md` from verified commands, conventions, and gotchas. Shows the draft and asks before writing.
 - **[skill-compress](./skills/engineering/skill-compress/SKILL.md)**: Compress a `SKILL.md` and its support files for execution density without losing behavior.
+- **[pr-review](./skills/engineering/pr-review/SKILL.md)**: Review a pull request by fetching and following the LiveViewTech pr-review skill.
 
 ### Productivity
 
