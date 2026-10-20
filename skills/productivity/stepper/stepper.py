@@ -105,6 +105,7 @@ STEPPER_PROMPT = re.compile(
 QUESTION = re.compile(
     r"(?i)^(how|why|what|when|who|where|can you explain|explain)\b"
 )
+DEFAULT_CONTEXT = "default"
 CONTEXT_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
 
 
@@ -877,16 +878,38 @@ def result(ctx: dict, **extra) -> dict:
     return body
 
 
-def cmd_capture(root: Path, session_key: str, context_id: str, items: list[str], suggestion: str | None) -> dict:
+def open_context_error(context_id: str, existing: dict) -> StepperError:
+    lease = existing["lease"]
+    if lease:
+        who = f"held by {lease['session_key']}; attach {context_id} --take to continue it, or pass a different --context"
+    else:
+        who = f"no session holds it; attach {context_id} to continue it, close it, or pass a different --context"
+    return StepperError(f"context {context_id} already exists and is open ({who})")
+
+
+def free_default_id(root: Path) -> str:
+    context_id = DEFAULT_CONTEXT
+    n = 1
+    while True:
+        path = context_path(root, context_id)
+        if not path.exists() or load_context(root, context_id)["closed"]:
+            return context_id
+        n += 1
+        context_id = f"{DEFAULT_CONTEXT}-{n}"
+
+
+def cmd_capture(root: Path, session_key: str, context_id: str | None, items: list[str], suggestion: str | None) -> dict:
     require_session(root, session_key)
     if leased_by(root, session_key) is not None:
         raise StepperError("this session already holds a context; detach or close it first")
+    if context_id is None:
+        context_id = free_default_id(root)
     path = context_path(root, context_id)
     to_archive = None
     if path.exists():
         existing = load_context(root, context_id)
         if not existing["closed"]:
-            raise StepperError(f"context {context_id} already exists and is open")
+            raise open_context_error(context_id, existing)
         to_archive = path
     seq = 1
     built = []
@@ -1650,7 +1673,7 @@ def build_parser() -> argparse.ArgumentParser:
     capture = sub.add_parser("capture")
     root(capture)
     session(capture)
-    capture.add_argument("--context", default="default")
+    capture.add_argument("--context")
     capture.add_argument("--item", action="append")
     capture.add_argument("--suggestion")
 

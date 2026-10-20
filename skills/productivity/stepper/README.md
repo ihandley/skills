@@ -140,6 +140,7 @@ Stepper stores state under `.stepper/` in the **working repository**, separate f
 - Each tracked context has its own JSON file.
 - Each Cursor conversation or Claude Code session has a separate session binding.
 - A context is leased to one session at a time, preventing two conversations from silently changing the same tracked list.
+- A new capture never overwrites another session's open list. Without `--context` it takes the first free id of `default`, `default-2`, `default-3`.
 - The same supported session can recover its state after resume or compaction.
 - A **new** conversation does not automatically take over an existing context. Ask it to continue that tracked work explicitly; takeover requires your authorization.
 - A crashed session may retain its lease until you explicitly transfer it.

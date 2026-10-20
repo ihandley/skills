@@ -24,7 +24,7 @@ When the user asks you to track items, register nothing yourself. Use the sessio
 python3 stepper.py capture --session <key> --item "AC-3: reset email is sent"
 ```
 
-Repeat `--item` for each commitment. An id such as `AC-3` is kept. Otherwise the CLI assigns `item-1`, `item-2`, and so on. The first item becomes active. Capture fails if this session already holds a context or if that context id is still open. A closed context with the same id is moved to `.stepper/archive/` and the new list takes the id. Do not pick a new id to get around a corrupt file. Report the CLI error.
+Repeat `--item` for each commitment. An id such as `AC-3` is kept. Otherwise the CLI assigns `item-1`, `item-2`, and so on. The first item becomes active. Capture fails if this session already holds a context. Without `--context` the new list takes `default`, or `default-2`, `default-3` and so on when earlier ones are still open, so another session's list is never touched. An explicit `--context <id>` that is still open fails and the error says who holds it. A closed context with the id you get is moved to `.stepper/archive/` and the new list takes the id. Do not pick a new id to get around a corrupt file. Report the CLI error.
 
 A hook may tell you `Stepper candidate <hash>: N items`. Ask the user once whether to track them. On yes:
 
