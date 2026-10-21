@@ -22,6 +22,7 @@
     "./skills/productivity/terse",
     "./skills/productivity/stepper",
     "./skills/productivity/ticketer",
-    "./skills/productivity/tidy"
+    "./skills/productivity/tidy",
+    "./skills/productivity/alias"
   ]
 }

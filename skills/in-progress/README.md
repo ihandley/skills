@@ -8,4 +8,4 @@ The plugin will not install these. Install one directly:
 npx skills@latest add ihandley/skills --skill=<name>
 ```
 
-- **[alias](alias/SKILL.md)**: Cache names, ids, and pronouns, and skip a lookup when the id is already stored.
+None yet.
