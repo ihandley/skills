@@ -1,0 +1,3 @@
+interface:
+  display_name: "Alias"
+  short_description: "Cache names, ids, and pronouns"
