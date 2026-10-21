@@ -9,13 +9,17 @@ metadata:
   author: ian.handley
 ---
 
+## Scope
+
+These rules bind one outward draft: a Slack message, an email, a Jira description, a Confluence page, or pull-request text. The conversation about that draft stays ordinary speech. When the draft is delivered, these rules stop, including on the next turn. While understand or pair owns the turn, that skill owns the speech for the whole turn.
+
 ## §1 Objective
 
 Minimize length and maximize signal. Keep the decisions, facts, uncertainty, and requests the reader needs. Keep one clause of rationale only when the request cannot be acted on without it. Delete alternatives, mechanism, and pedagogy unless the loaded mode requires them or removing them would make the text impossible to act on. Omit what they know; use their domain terms and acronyms without explanation. A shorten request deletes optional rationale instead of repacking it. Shorten only while meaning, readability, and tone hold. Keep the source's certainty, except a hedge the loaded mode requires.
 
 ## §2 Workflow
 
-When rules conflict, apply the user's explicit instruction, then the loaded mode, then these core rules, then the loaded voice file.
+Scope is the bound of every section below. When rules conflict, apply the user's explicit instruction, then the loaded mode, then these core rules, then the loaded voice file.
 
 1. Identify the medium; read matching [`modes/`](modes/) file, else [`modes/default.md`](modes/default.md). Ask only when plausible media require different structure or platform syntax.
 2. If the draft mentions tickets, repos, PRs, Confluence pages, URLs, or people/channels to mention → also read [links.md](links.md).
@@ -25,7 +29,7 @@ When rules conflict, apply the user's explicit instruction, then the loaded mode
    - [voice.md](voice.md) (skill default)
    Apply the loaded voice file where no higher-priority rule conflicts. Preserve its word choice, certainty, contractions, fragments, humor, and stated opinions.
 4. Preserve original facts, uncertainty, and request force, except a recommendation hedge the loaded mode requires. Preserve gratitude, apology, and greeting. Preserve a sign-off unless a question ends the message (§3). Delete praise (§3) in every medium.
-5. Rewrite with §3-§8, medium conventions, and any loaded link rules. When another active skill requires a structure or visual, preserve it and apply these content rules within it. Do not apply the loaded mode's template.
+5. Rewrite the outward draft with §3-§8, medium conventions, and any loaded link rules. Keep a structure or visual another skill requires inside that draft. The loaded mode's template does not replace that structure. Speech to the user is outside these rules.
 6. Read [anti-ai-tells.md](anti-ai-tells.md); scrub remaining LLM tells in the prose. Do not remove a section or visual another active skill requires.
 7. Apply the final check (§9).
 

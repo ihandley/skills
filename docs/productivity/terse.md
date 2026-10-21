@@ -8,9 +8,12 @@ The constraint is that it keeps your facts, certainty, and the force of any requ
 
 Type `/terse`, or the agent reaches for it when you ask to rewrite pasted text or draft one of those media.
 
-Reach for it on any text another person will read. It is the wrong tool for code, commit diffs, or long-form documents where length is the point. For code cleanup, use `deslop`.
+Reach for it on a Slack message, an email, a Jira description, a Confluence page, or a pull request. The conversation about that draft stays ordinary speech, and the rules stop when the draft is delivered. It is the wrong tool for code, commit diffs, or long-form documents where length is the point. For code cleanup, use `deslop`.
 
 ## Common questions
+
+**Does it change how the agent talks to me?**
+Only the outward draft follows these rules. The conversation with you stays ordinary speech. While `understand` or `pair` owns the turn, that skill owns the speech.
 
 **Which medium does it use?**
 It picks the matching mode, such as `slack` or `pr-description`, and falls back to `default`. It asks only when plausible media need different structure or platform syntax.

@@ -68,6 +68,9 @@ Per sub-step, in order:
 "Stop pairing" (or equivalent) → drop every gate above for the rest of the task,
 revert to normal immediately. No confirm back-and-forth.
 
+This session owns the turn until stop pairing. The understand offer stays quiet.
+Stepper leaves its list leased and does not steer back.
+
 ## §7 Notes file
 
 `~/.claude/pair-notes.md` — global, not per-repo (a gap belongs to the driver, not

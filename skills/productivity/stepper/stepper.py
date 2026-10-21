@@ -516,6 +516,20 @@ def reminder(ctx: dict) -> str:
     )
 
 
+def teaching_owner(root: Path, session_key: str) -> str | None:
+    path = root / ".claude" / "turn-owner.json"
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    if not isinstance(data, dict) or data.get("session_key") != session_key:
+        return None
+    owner = data.get("owner") or ""
+    if owner in ("understand", "pair"):
+        return owner
+    return None
+
+
 def public_context(ctx: dict) -> dict:
     return {
         "id": ctx["id"],
@@ -1299,6 +1313,8 @@ def handle_hook(root: Path, platform: str, payload: dict) -> dict | None:
         source = payload.get("source")
         if platform == "claude" and source not in (None, "startup", "resume", "compact"):
             return None
+        if teaching_owner(root, key):
+            return None
         if holds and ctx is not None and not ctx["paused"]:
             if has_outstanding(ctx) or any(item["status"] == "deferred" for item in ctx["items"]):
                 text = reminder(ctx) + "\n" + session_line(key)
@@ -1323,7 +1339,13 @@ def handle_hook(root: Path, platform: str, payload: dict) -> dict | None:
         if sess.get("announce_key"):
             parts.append(session_line(key))
             sess["announce_key"] = False
-        if sess.get("compaction_pending") and holds and ctx is not None and not ctx["paused"]:
+        if (
+            sess.get("compaction_pending")
+            and holds
+            and ctx is not None
+            and not ctx["paused"]
+            and not teaching_owner(root, key)
+        ):
             parts.append(reminder(ctx))
             sess["compaction_pending"] = False
             sess["reminded_generation"] = generation
@@ -1378,6 +1400,7 @@ def handle_hook(root: Path, platform: str, payload: dict) -> dict | None:
             and sess.get("prompt_class") == "tracked"
             and has_outstanding(ctx)
             and sess.get("reminded_generation") != token
+            and not teaching_owner(root, key)
         ):
             parts.append(reminder(ctx))
             sess["reminded_generation"] = token

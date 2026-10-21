@@ -706,6 +706,58 @@ class StepperTests(unittest.TestCase):
         )
         self.assertEqual(out, "")
 
+    def test_teaching_owner_suppresses_stop_and_session_start_reminders(self):
+        self.capture()
+        latch = self.root / ".claude" / "turn-owner.json"
+        latch.parent.mkdir()
+        latch.write_text(
+            json.dumps(
+                {
+                    "session_key": "cursor:aaa",
+                    "owner": "understand",
+                    "pending_offer": False,
+                }
+            )
+        )
+        self.register("cursor:aaa", prompt="fix AC-3", generation="g-teach")
+        code, _data, out = self.hook(
+            "cursor",
+            {
+                "hook_event_name": "stop",
+                "conversation_id": "aaa",
+                "generation_id": "g-teach",
+                "status": "completed",
+                "loop_count": 0,
+            },
+        )
+        self.assertEqual(out, "")
+        code, _data, out = self.hook(
+            "cursor",
+            {"hook_event_name": "sessionStart", "conversation_id": "aaa", "generation_id": "g-teach-2"},
+        )
+        self.assertEqual(out, "")
+        latch.write_text(
+            json.dumps(
+                {
+                    "session_key": "cursor:other",
+                    "owner": "pair",
+                    "pending_offer": False,
+                }
+            )
+        )
+        self.register("cursor:aaa", prompt="fix AC-3", generation="g-back")
+        code, data, _out = self.hook(
+            "cursor",
+            {
+                "hook_event_name": "stop",
+                "conversation_id": "aaa",
+                "generation_id": "g-back",
+                "status": "completed",
+                "loop_count": 0,
+            },
+        )
+        self.assertIn("AC-3 active", data["followup_message"])
+
     def test_compaction_reinjects_on_the_next_tool_only(self):
         self.capture()
         self.hook("cursor", {"hook_event_name": "preCompact", "conversation_id": "aaa", "trigger": "auto"})

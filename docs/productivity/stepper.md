@@ -24,6 +24,9 @@ It means the agent stored a non-empty note. You still have to trust, or check, t
 **Can an acceptance criterion have sub-steps?**
 Yes. Ask to track them under that item, for example under AC-3. Stepper keeps the parent in view, and the parent is not verified just because its sub-steps are finished. Overall progress counts the top-level items. `status --tree` shows the rest.
 
+**What if I stop to understand something, or to pair?**
+The list stays leased. While understand or pair owns the turn, the reminder stays quiet and the agent does not steer back to the list.
+
 **Do I have to install hooks?**
 No. Hooks add reminders when a session starts, when context is compacted, and when the agent is about to stop with items left. Without them, the commands still work when you or the agent invoke Stepper.
 
