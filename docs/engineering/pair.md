@@ -22,7 +22,7 @@ Only when you ask. A nudge points at the shape. A pointer points at existing cod
 `~/.claude/pair-notes.md`, one append-only log for you, not per repo. A concept marked solid on its last two entries is not re-explained. A gap becomes a footgun in the later check.
 
 **Can I stop?**
-Say "stop pairing". The gates drop for the rest of the task.
+Say "stop pairing". The gates drop for the rest of the task. Until then this session owns the turn: understand does not offer, and the stepper reminder stays quiet.
 
 ## It's working if
 

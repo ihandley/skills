@@ -64,6 +64,6 @@ Only the session that holds the lease can change that context. Another session m
 
 ## Reminders
 
-Obey a `Stepper:` reminder. Do not conclude the tracked work while `status` still shows an active, pending, or blocked item. An unrelated question or a paused context is not a request to abandon the list. Answer it, and leave the list in place.
+Obey a `Stepper:` reminder. Do not conclude the tracked work while `status` still shows an active, pending, or blocked item. An unrelated question or a paused context is not a request to abandon the list. Answer it, and leave the list in place. While `.claude/turn-owner.json` names this session's owner as understand or pair, that skill owns the turn. Leave the list leased and untouched, and do not steer back to it.
 
 Hooks may ask you to offer a candidate. That request is not permission to capture.

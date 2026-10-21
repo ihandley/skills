@@ -14,7 +14,7 @@ Done when those four lines are filled and the subject is named.
 
 ## Session end
 
-The learner is ending the session.
+The learner is ending the session. A release back to parked work is this case: state what now makes sense, write the journal, and stop. The menu is for when the next step is unclear.
 
 1. State what now makes sense, in the concrete terms of this subject.
 2. Write the journal quietly. Include `Current thread` so the next session can resume. Mention the write when that line is what they need in order to come back.
