@@ -53,7 +53,9 @@ ITEM_KEYS = {
     "blocked_reason",
     "order",
     "parent_id",
+    "depends_on",
 }
+OPTIONAL_ITEM_KEYS = {"parent_id", "depends_on"}
 SESSION_KEYS = {
     "version",
     "session_key",
@@ -342,6 +344,7 @@ def blank_item(item_id: str, description: str, criteria: str, order: int) -> dic
         "blocked_reason": None,
         "order": order,
         "parent_id": None,
+        "depends_on": [],
     }
 
 
@@ -365,8 +368,13 @@ def validate_context(data: dict) -> None:
     seen = set()
     active = 0
     for item in data["items"]:
-        if not isinstance(item, dict) or set(item) - {"parent_id"} != ITEM_KEYS - {"parent_id"}:
+        if not isinstance(item, dict) or set(item) - OPTIONAL_ITEM_KEYS != ITEM_KEYS - OPTIONAL_ITEM_KEYS:
             raise ValueError("item schema")
+        deps = item.get("depends_on")
+        if deps is not None and (
+            not isinstance(deps, list) or any(not isinstance(dep, str) for dep in deps)
+        ):
+            raise ValueError("depends_on")
         if "parent_id" in item and item["parent_id"] is not None and not isinstance(item["parent_id"], str):
             raise ValueError("parent")
         if item["status"] not in STATUSES:
@@ -402,6 +410,17 @@ def validate_context(data: dict) -> None:
 def normalize_context(data: dict) -> dict:
     for item in data["items"]:
         item["parent_id"] = item.get("parent_id")
+        if item.get("parent_id"):
+            item.setdefault("depends_on", [])
+    prev = None
+    tops = sorted(
+        (item for item in data["items"] if not item.get("parent_id")),
+        key=lambda item: item["order"],
+    )
+    for item in tops:
+        if "depends_on" not in item:
+            item["depends_on"] = [] if prev is None else [prev]
+        prev = item["id"]
     return data
 
 
@@ -492,6 +511,49 @@ def has_outstanding(ctx: dict) -> bool:
     return any(item["status"] in OUTSTANDING for item in ctx["items"])
 
 
+def _depends(item: dict) -> list[str]:
+    return list(item.get("depends_on") or [])
+
+
+def _dep_met(ctx: dict, dep_id: str) -> bool:
+    match = next((item for item in ctx["items"] if item["id"] == dep_id), None)
+    return match is not None and match["status"] in ("verified", "cancelled")
+
+
+def _top_level(ctx: dict) -> list[dict]:
+    return sorted(
+        (item for item in ctx["items"] if not item.get("parent_id")),
+        key=lambda item: item["order"],
+    )
+
+
+def _held(ctx: dict) -> dict | None:
+    tops = _top_level(ctx)
+    active = next((item for item in tops if item["status"] == "active"), None)
+    if active is not None:
+        return active
+    return next((item for item in tops if item["status"] == "blocked"), None)
+
+
+def brief_of(ctx: dict | None) -> dict:
+    empty = {"done": [], "left": [], "blocked": [], "position": "none"}
+    if ctx is None:
+        return empty
+    tops = _top_level(ctx)
+    held = _held(ctx)
+    if held is None:
+        position = "none"
+    else:
+        index = next(n for n, item in enumerate(tops, 1) if item["id"] == held["id"])
+        position = f"{index} of {len(tops)}"
+    return {
+        "done": [item["id"] for item in tops if item["status"] == "verified"],
+        "left": [item["id"] for item in tops if item["status"] in ("pending", "active", "deferred")],
+        "blocked": [item["id"] for item in tops if item["status"] == "blocked"],
+        "position": position,
+    }
+
+
 def reminder(ctx: dict) -> str:
     if ctx["closed"]:
         return "Stepper: tracking is closed."
@@ -518,17 +580,16 @@ def reminder(ctx: dict) -> str:
         return f"Stepper: nothing actionable remains; {names} deferred."
     if not bits:
         return "Stepper: nothing outstanding."
-    outstanding = active + pending + blocked
-    if len(outstanding) == 1:
-        tail = "until it is resolved or explicitly deferred"
-    elif len(outstanding) == 2:
-        tail = "until both are resolved or explicitly deferred"
-    else:
-        tail = "until they are resolved or explicitly deferred"
+    if blocked and not active:
+        names = ", ".join(item["id"] for item in blocked)
+        return (
+            f"Stepper: {names} blocked. Hold. "
+            "Brief before any new start: done, left, blocked, and where this item sits."
+        )
     return (
         "Stepper: "
         + "; ".join(bits)
-        + f". Do not conclude the tracked work {tail}."
+        + ". Stick to the active item. Brief before any new start."
     )
 
 
@@ -799,7 +860,7 @@ def _hierarchy_reminder(ctx: dict) -> str:
         children = _children(ctx, parent["id"])
         resolved = sum(1 for child in children if child["status"] in ("verified", "cancelled"))
         parts.append(f"{parent['id']} {resolved}/{len(children)}")
-    return "Stepper: " + ". ".join(parts) + "."
+    return "Stepper: " + ". ".join(parts) + ". Stick to the active item. Brief before any new start."
 
 
 def _demote_active(ctx: dict) -> None:
@@ -903,6 +964,7 @@ def result(ctx: dict, **extra) -> dict:
         "context": public_context(ctx),
         "reminder": reminder(ctx),
         "progress": _progress(ctx),
+        "brief": brief_of(ctx),
     }
     body.update(extra)
     return body
@@ -975,6 +1037,8 @@ def cmd_capture(root: Path, session_key: str, context_id: str | None, items: lis
     ids = [item["id"] for item in built]
     if len(ids) != len(set(ids)):
         raise StepperError("duplicate item id")
+    for index, item in enumerate(built):
+        item["depends_on"] = [] if index == 0 else [built[index - 1]["id"]]
     built[0]["status"] = "active"
     created = now()
     ctx = {
@@ -1024,6 +1088,8 @@ def cmd_add(root: Path, session_key: str, items: list[str], parent_id: str | Non
                 )
         siblings = _children(ctx, parent_id)
         item["order"] = max((sibling["order"] for sibling in siblings), default=-1) + 1
+        if parent_id is None and siblings:
+            item["depends_on"] = [siblings[-1]["id"]]
         ctx["items"].append(item)
     ctx["next_seq"] = seq
     if not any(item["status"] == "active" for item in ctx["items"]):
@@ -1032,9 +1098,16 @@ def cmd_add(root: Path, session_key: str, items: list[str], parent_id: str | Non
     return result(ctx)
 
 
+def _unmet(ctx: dict, item: dict) -> list[str]:
+    return [dep for dep in _depends(item) if not _dep_met(ctx, dep)]
+
+
 def cmd_focus(root: Path, session_key: str, item_id: str) -> dict:
     ctx = require_holder(root, session_key)
     item = _item(ctx, item_id)
+    unmet = _unmet(ctx, item)
+    if unmet and item["status"] != "active":
+        raise StepperError(f"{item_id} depends on {', '.join(unmet)}")
     _guard_ancestors(ctx, item)
     blocking = _blocking_descendants(ctx, item, ("pending", "active", "blocked"))
     if blocking:
@@ -1090,6 +1163,125 @@ def cmd_cancel(root: Path, session_key: str, item_id: str) -> dict:
 def cmd_pause(root: Path, session_key: str, paused: bool) -> dict:
     ctx = require_holder(root, session_key)
     ctx["paused"] = paused
+    save_context(root, ctx)
+    return result(ctx)
+
+
+def cmd_skip(root: Path, session_key: str) -> dict:
+    ctx = require_holder(root, session_key)
+    held = _held(ctx)
+    if held is None:
+        raise StepperError("nothing to skip")
+    later = [
+        item
+        for item in _top_level(ctx)
+        if item["order"] > held["order"] and item["status"] not in ("verified", "cancelled")
+    ]
+    if not later:
+        raise StepperError("no later item")
+    nxt = later[0]
+    if held["id"] in _depends(nxt):
+        raise StepperError(f"{nxt['id']} depends on {held['id']}; hold")
+    unmet = _unmet(ctx, nxt)
+    if unmet:
+        raise StepperError(f"{nxt['id']} depends on {', '.join(unmet)}")
+    return cmd_focus(root, session_key, nxt["id"])
+
+
+def cmd_free(root: Path, session_key: str, item_id: str) -> dict:
+    ctx = require_holder(root, session_key)
+    item = _item(ctx, item_id)
+    item["depends_on"] = []
+    save_context(root, ctx)
+    return result(ctx)
+
+
+def cmd_order(root: Path, session_key: str, item_ids: list[str], free_ids: list[str]) -> dict:
+    ctx = require_holder(root, session_key)
+    tops = _top_level(ctx)
+    if not item_ids or set(item_ids) != {item["id"] for item in tops} or len(item_ids) != len(set(item_ids)):
+        raise StepperError("order needs every top-level id once")
+    free = set(free_ids or [])
+    unknown = free - set(item_ids)
+    if unknown:
+        raise StepperError(f"unknown id {', '.join(sorted(unknown))}")
+    for index, item_id in enumerate(item_ids):
+        item = _item(ctx, item_id)
+        item["order"] = index
+        item["depends_on"] = [] if index == 0 or item_id in free else [item_ids[index - 1]]
+    save_context(root, ctx)
+    return result(ctx)
+
+
+def cmd_drop(root: Path, session_key: str) -> dict:
+    ctx = require_holder(root, session_key)
+    ctx["closed"] = True
+    ctx["paused"] = False
+    ctx["lease"] = None
+    save_context(root, ctx)
+    live = context_path(root, ctx["id"])
+    archive = store(root) / "archive"
+    archive.mkdir(parents=True, exist_ok=True)
+    os.replace(live, archive / f"{ctx['id']}-{stamp()}.json")
+    return {
+        "ok": True,
+        "context": None,
+        "reminder": "Stepper: no list.",
+        "brief": brief_of(None),
+    }
+
+
+def _cancel_quietly(item: dict) -> None:
+    if item["status"] == "verified":
+        return
+    item["status"] = "cancelled"
+    item["blocked_reason"] = None
+
+
+def cmd_replace(root: Path, session_key: str, items: list[str]) -> dict:
+    ctx = require_holder(root, session_key)
+    if not items:
+        raise StepperError("replace needs at least one --item")
+    seq = ctx["next_seq"]
+    built = []
+    for raw in items:
+        item, seq = parse_item_arg(raw, seq)
+        built.append(item)
+    ids = [item["id"] for item in built]
+    if len(ids) != len(set(ids)):
+        raise StepperError("duplicate item id")
+    keep = set(ids)
+    for existing in ctx["items"]:
+        if existing["id"] not in keep:
+            _cancel_quietly(existing)
+    outstanding = []
+    for fresh in built:
+        existing = next((item for item in ctx["items"] if item["id"] == fresh["id"]), None)
+        if existing is not None and existing["status"] == "verified":
+            continue
+        previous = outstanding[-1]["id"] if outstanding else None
+        if existing is None:
+            fresh["depends_on"] = [] if previous is None else [previous]
+            fresh["status"] = "pending"
+            ctx["items"].append(fresh)
+            outstanding.append(fresh)
+        else:
+            existing["description"] = fresh["description"]
+            existing["completion_criteria"] = fresh["completion_criteria"]
+            existing["parent_id"] = None
+            existing["status"] = "pending"
+            existing["blocked_reason"] = None
+            existing["depends_on"] = [] if previous is None else [previous]
+            outstanding.append(existing)
+    if not outstanding:
+        raise StepperError("replace needs at least one outstanding item")
+    for index, item in enumerate(outstanding):
+        item["order"] = index
+    for item in ctx["items"]:
+        if item["status"] == "active":
+            item["status"] = "pending"
+    outstanding[0]["status"] = "active"
+    ctx["next_seq"] = seq
     save_context(root, ctx)
     return result(ctx)
 
@@ -1186,6 +1378,7 @@ def cmd_status(root: Path, session_key: str | None, tree: bool = False) -> dict:
         "context": None if ctx is None else public_context(ctx),
         "reminder": None if ctx is None else reminder(ctx),
         "progress": None if ctx is None else _progress(ctx),
+        "brief": brief_of(ctx),
         **({"tree": [_tree_node(ctx, item) for item in _children(ctx, None)]} if tree and ctx is not None else {}),
         "corrupt_files": corrupt,
     }
@@ -1693,6 +1886,16 @@ def run_command(args: argparse.Namespace) -> dict:
             return cmd_pause(root, args.session, False)
         if args.cmd == "close":
             return cmd_close(root, args.session)
+        if args.cmd == "skip":
+            return cmd_skip(root, args.session)
+        if args.cmd == "free":
+            return cmd_free(root, args.session, args.item_id)
+        if args.cmd == "order":
+            return cmd_order(root, args.session, args.item or [], args.free or [])
+        if args.cmd == "drop":
+            return cmd_drop(root, args.session)
+        if args.cmd == "replace":
+            return cmd_replace(root, args.session, args.item or [])
         if args.cmd == "attach":
             return cmd_attach(root, args.session, args.context_id, args.take)
         if args.cmd == "detach":
@@ -1748,10 +1951,26 @@ def build_parser() -> argparse.ArgumentParser:
     block.add_argument("item_id")
     block.add_argument("--reason", required=True)
 
-    for name in ("pause", "resume", "close", "detach"):
+    for name in ("pause", "resume", "close", "detach", "skip", "drop"):
         command = sub.add_parser(name)
         root(command)
         session(command)
+
+    free = sub.add_parser("free")
+    root(free)
+    session(free)
+    free.add_argument("item_id")
+
+    order = sub.add_parser("order")
+    root(order)
+    session(order)
+    order.add_argument("--item", action="append")
+    order.add_argument("--free", action="append")
+
+    replace = sub.add_parser("replace")
+    root(replace)
+    session(replace)
+    replace.add_argument("--item", action="append")
 
     attach = sub.add_parser("attach")
     root(attach)
