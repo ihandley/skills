@@ -72,6 +72,7 @@ None yet.
 - **[stepper](./skills/productivity/stepper/SKILL.md)**: Stick to one ordered list of work, and brief before any new start.
 - **[ticketer](./skills/productivity/ticketer/SKILL.md)**: Create or update Jira and GitHub Issues tickets with team rules enforced by a CLI and a confirmation gate before anything is filed.
 - **[tidy](./skills/productivity/tidy/SKILL.md)**: Reconcile local branches with pull requests and the tracker in `~/.claude/tidy.yaml`, then delete branches the pull request already took.
+- **[alias](./skills/productivity/alias/SKILL.md)**: Cache names, ids, and pronouns, and skip a lookup when the id is already stored.
 
 ## Releasing
 
