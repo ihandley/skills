@@ -1,0 +1,13 @@
+# Copy to ~/.config/alias/config.yaml and replace every name with your own tools.
+# cache: where entries are stored. The default published path is ~/.alias/aliases.yaml.
+# Each tool binding reads and writes one ids.<id> field.
+# extract is a regex with one capture group. Exactly one match is stored.
+# Zero or many matches stay a _stub.
+
+cache: ~/.alias/aliases.yaml
+tools:
+  - tool: mcp__acme__find_employee
+    query: name
+    type: person
+    id: employee
+    extract: 'Employee ID: (E[0-9]+)'
