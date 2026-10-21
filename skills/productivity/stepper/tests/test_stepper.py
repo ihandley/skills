@@ -92,7 +92,64 @@ class StepperTests(unittest.TestCase):
         code, data = self.cli("capture", "--session", "cursor:invented", "--item", "AC-3: x")
         self.assertEqual(code, 1)
         self.assertIn("unknown session", data["error"])
+        self.assertIn(str(self.root.resolve()), data["error"])
         self.assertFalse((self.root / ".stepper" / "contexts" / "default.json").exists())
+
+    def test_commands_from_another_directory_use_the_injected_root(self):
+        self.register("claude:sess", prompt="track these with stepper")
+        other = Path(tempfile.mkdtemp())
+        subprocess.run(["git", "init"], cwd=other, check=True, capture_output=True)
+        proc = subprocess.run(
+            [
+                sys.executable,
+                str(STEPPER),
+                "status",
+                "--session",
+                "claude:sess",
+                "--root",
+                str(self.root),
+            ],
+            cwd=other,
+            text=True,
+            capture_output=True,
+            env=self.env,
+            check=False,
+        )
+        status = json.loads(proc.stdout)
+        self.assertEqual(proc.returncode, 0)
+        self.assertEqual(status["session"]["session_key"], "claude:sess")
+        self.assertFalse((other / ".stepper").exists())
+        proc = subprocess.run(
+            [
+                sys.executable,
+                str(STEPPER),
+                "capture",
+                "--session",
+                "claude:sess",
+                "--root",
+                str(self.root),
+                "--item",
+                "M-5: waiting on Blaze",
+            ],
+            cwd=other,
+            text=True,
+            capture_output=True,
+            env=self.env,
+            check=False,
+        )
+        captured = json.loads(proc.stdout)
+        self.assertEqual(proc.returncode, 0, proc.stdout)
+        self.assertEqual(captured["context"]["items"][0]["id"], "M-5")
+        self.assertTrue((self.root / ".stepper" / "contexts" / "default.json").exists())
+        self.assertFalse((other / ".stepper").exists())
+
+    def test_skill_checkout_is_refused(self):
+        repo = STEPPER.resolve().parents[3]
+        self.assertTrue((repo / "skills" / "productivity" / "stepper" / "stepper.py").is_file())
+        code, data = self.cli("status", "--root", str(repo))
+        self.assertEqual(code, 1)
+        self.assertIn("contains stepper.py", data["error"])
+        self.assertIn("project root", data["error"])
 
     def test_second_session_cannot_mutate_or_receive_reminders(self):
         self.capture()
@@ -403,7 +460,13 @@ class StepperTests(unittest.TestCase):
             workspace=False,
         )
         text = submitted["hookSpecificOutput"]["additionalContext"]
-        self.assertEqual(text, "Stepper session: claude:5155e88d-741e-4fcb-9fbb-5e86a3830714. Pass --session claude:5155e88d-741e-4fcb-9fbb-5e86a3830714 on every stepper command.")
+        key = "claude:5155e88d-741e-4fcb-9fbb-5e86a3830714"
+        root = str(self.root.resolve())
+        self.assertEqual(
+            text,
+            f"Stepper session: {key}. Project root: {root}. "
+            f"Pass --session {key} --root {root} on every stepper command.",
+        )
         self.assertEqual(len(list(sessions.glob("*.json"))), 1)
         self.assertEqual(list((self.root / ".stepper" / "contexts").glob("*.json")), [])
         code, _data, out = self.hook(

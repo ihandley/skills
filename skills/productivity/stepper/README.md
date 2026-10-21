@@ -145,27 +145,27 @@ Stepper stores state under `.stepper/` in the **working repository**, separate f
 - A **new** conversation does not automatically take over an existing context. Ask it to continue that tracked work explicitly; takeover requires your authorization.
 - A crashed session may retain its lease until you explicitly transfer it.
 
-Hooks pass the session identifier to the agent. The agent copies the `Stepper session:` line and does not construct a key from a transcript path. **Do not manually edit files in `.stepper/`.**
+Hooks pass the session identifier and the project root to the agent. The agent copies both from the `Stepper session:` line and does not construct a key from a transcript path. **Do not manually edit files in `.stepper/`.**
 
 ## CLI reference
 
-Most users should not need to run these commands directly. For troubleshooting or agent integration, run them from the skill directory. State-changing commands require a valid hook-registered session key.
+Most users should not need to run these commands directly. For troubleshooting or agent integration, pass `--root` with the project the hook named. The skill directory is not that project. State-changing commands require a valid hook-registered session key.
 
 ```bash
-python3 stepper.py status
-python3 stepper.py status --session 'cursor:<conversation-id>'
-python3 stepper.py capture --session 'cursor:<conversation-id>' \
+python3 stepper.py status --root /path/to/project
+python3 stepper.py status --session 'cursor:<conversation-id>' --root /path/to/project
+python3 stepper.py capture --session 'cursor:<conversation-id>' --root /path/to/project \
   --item 'AC-3: reset email is sent' \
   --item 'AC-4: expired tokens are rejected'
-python3 stepper.py focus --session 'cursor:<conversation-id>' AC-4
-python3 stepper.py verify --session 'cursor:<conversation-id>' AC-3 \
+python3 stepper.py focus --session 'cursor:<conversation-id>' --root /path/to/project AC-4
+python3 stepper.py verify --session 'cursor:<conversation-id>' --root /path/to/project AC-3 \
   --evidence 'Integration test passed'
-python3 stepper.py pause --session 'cursor:<conversation-id>'
-python3 stepper.py resume --session 'cursor:<conversation-id>'
-python3 stepper.py close --session 'cursor:<conversation-id>'
+python3 stepper.py pause --session 'cursor:<conversation-id>' --root /path/to/project
+python3 stepper.py resume --session 'cursor:<conversation-id>' --root /path/to/project
+python3 stepper.py close --session 'cursor:<conversation-id>' --root /path/to/project
 ```
 
-The agent should supply the actual session key exposed by the hook, not the placeholders above. Other commands include `add`, `block`, `unblock`, `defer`, `cancel`, `attach`, `detach`, and `decline`.
+The agent should supply the session key and project root from the hook line, not the placeholders above. Other commands include `add`, `block`, `unblock`, `defer`, `cancel`, `attach`, `detach`, and `decline`.
 
 ## Current limitations
 

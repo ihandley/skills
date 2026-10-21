@@ -30,6 +30,9 @@ The list stays leased. While understand or pair owns the turn, the reminder stay
 **Do I have to install hooks?**
 No. Hooks add reminders when a session starts, when context is compacted, and when the agent is about to stop with items left. Without them, the commands still work when you or the agent invoke Stepper.
 
+**The agent says unknown session.**
+The hook stores the session in the project it was running in, and the `Stepper session:` line names that directory. Commands pass that path as `--root`. A command run from the skill directory without it looks in the skills repository, which has no session.
+
 ## It's working if
 
 - After a long investigation of the first outstanding item, the agent comes back to the next one without you restating the list.

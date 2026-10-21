@@ -139,16 +139,31 @@ def home() -> Path:
 
 def resolve_root(arg: str | None) -> Path:
     if arg:
-        return Path(arg).expanduser().resolve()
+        root = Path(arg).expanduser().resolve()
+    else:
+        try:
+            out = subprocess.check_output(
+                ["git", "rev-parse", "--show-toplevel"],
+                text=True,
+                stderr=subprocess.DEVNULL,
+            ).strip()
+            root = Path(out)
+        except (subprocess.CalledProcessError, FileNotFoundError):
+            root = Path.cwd().resolve()
+    refuse_skill_checkout(root)
+    return root
+
+
+def refuse_skill_checkout(root: Path) -> None:
+    script = Path(__file__).resolve()
     try:
-        out = subprocess.check_output(
-            ["git", "rev-parse", "--show-toplevel"],
-            text=True,
-            stderr=subprocess.DEVNULL,
-        ).strip()
-        return Path(out)
-    except (subprocess.CalledProcessError, FileNotFoundError):
-        return Path.cwd()
+        script.relative_to(root)
+    except ValueError:
+        return
+    raise StepperError(
+        f"refusing {root} because it contains stepper.py. "
+        "Pass --root with the project root from the Stepper session line."
+    )
 
 
 def store(root: Path) -> Path:
@@ -311,7 +326,8 @@ def require_session(root: Path, key: str) -> dict:
     data = load_session(root, key)
     if data is None:
         raise StepperError(
-            f"unknown session {key}. A hook registers the session before commands can change state."
+            f"unknown session {key} under {root}. "
+            "A hook registers the session before commands can change state."
         )
     return data
 
@@ -1175,8 +1191,11 @@ def cmd_status(root: Path, session_key: str | None, tree: bool = False) -> dict:
     }
 
 
-def session_line(key: str) -> str:
-    return f"Stepper session: {key}. Pass --session {key} on every stepper command."
+def session_line(key: str, root: Path) -> str:
+    return (
+        f"Stepper session: {key}. Project root: {root}. "
+        f"Pass --session {key} --root {root} on every stepper command."
+    )
 
 
 def offer_line(candidate: dict) -> str:
@@ -1292,7 +1311,7 @@ def handle_hook(root: Path, platform: str, payload: dict) -> dict | None:
             if platform == "cursor":
                 sess["announce_key"] = True
             else:
-                text = session_line(key)
+                text = session_line(key, root)
         save_session(root, sess)
         return _hook_json(platform, event, text)
 
@@ -1317,7 +1336,7 @@ def handle_hook(root: Path, platform: str, payload: dict) -> dict | None:
             return None
         if holds and ctx is not None and not ctx["paused"]:
             if has_outstanding(ctx) or any(item["status"] == "deferred" for item in ctx["items"]):
-                text = reminder(ctx) + "\n" + session_line(key)
+                text = reminder(ctx) + "\n" + session_line(key, root)
                 return _hook_json(platform, event, text)
         # A restarted Claude session loses the earlier prompt injection. Repeat
         # the key when this session already registered, without tracking text.
@@ -1327,7 +1346,7 @@ def handle_hook(root: Path, platform: str, payload: dict) -> dict | None:
             and load_session(root, key) is not None
             and not (ctx and ctx["paused"])
         ):
-            return _hook_json(platform, event, session_line(key))
+            return _hook_json(platform, event, session_line(key, root))
         return None
 
     sess = load_session(root, key)
@@ -1337,7 +1356,7 @@ def handle_hook(root: Path, platform: str, payload: dict) -> dict | None:
             return None
         parts = []
         if sess.get("announce_key"):
-            parts.append(session_line(key))
+            parts.append(session_line(key, root))
             sess["announce_key"] = False
         if (
             sess.get("compaction_pending")
