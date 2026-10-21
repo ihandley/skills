@@ -1,40 +1,35 @@
 ## What it does
 
-Stepper keeps a short list of outstanding commitments in view while an agent works through a long investigation. It remembers which item is active, and it brings the next one back after the current item is verified.
+Stepper keeps one ordered list of work in front of you and stays on the active item until that item is done. When you move to start something else, it restates what is done, what is left, what is blocked, and where the current item sits.
 
-The constraint is that the agent cannot edit the list by hand. A small CLI owns the state, and a verified item needs a non-empty evidence note. That note records what the agent claims. It does not prove the claim.
+The list is temporary working memory for one stretch of delivery. The agent holds the order, including who you are waiting on. You decide when to wait, when to skip, and when the list itself is wrong.
 
 ## When to reach for it
 
-Type `/stepper`, or the agent reaches for it when you ask to track acceptance criteria, remaining issues, or what's left.
+Type `/stepper`, or the agent reaches for it when a reply contains a concrete list of remaining work, when you ask what is left, or when you say to drop or replace the list.
 
-Reach for it when a conversation is about to lose a short list of unfinished commitments. It is the wrong tool for a project plan, a ticket backlog, or a record of every intermediate step. Those stay in your issue tracker.
+Reach for it when you want to walk one feature through to the end without losing the thread. It is the wrong tool for learning a subject (`understand`) or for a ticket backlog.
 
 ## Common questions
 
 **Where does the list live?**
-In `.stepper/` inside the repository you are working in. The skill install does not write that directory, and the first run adds it to the clone's local git exclude list.
+In `.stepper/` inside the project named on the `Stepper session:` line. Commands pass that path as `--root`. A command run from the skill directory without it looks in the skills repository, which has no session.
 
-**Can two chats share one list?**
-No. The chat that starts the list holds it. Another chat can take it only when you ask to continue that work there.
+**What happens when the active item is blocked?**
+Stepper recommends waiting, and says why. You can skip to the next item when that item does not depend on the blocked one. Skipping is available. Waiting is the recommendation.
+
+**Can I throw the list away?**
+Yes, when you say so. Dropping archives it without marking the leftovers done. Replacing swaps the outstanding items in one step. Another chat's list stays put.
 
 **Does "verified" mean the tests passed?**
 It means the agent stored a non-empty note. You still have to trust, or check, that the note is true.
 
-**Can an acceptance criterion have sub-steps?**
-Yes. Ask to track them under that item, for example under AC-3. Stepper keeps the parent in view, and the parent is not verified just because its sub-steps are finished. Overall progress counts the top-level items. `status --tree` shows the rest.
-
-**What if I stop to understand something, or to pair?**
-The list stays leased. While understand or pair owns the turn, the reminder stays quiet and the agent does not steer back to the list.
-
-**Do I have to install hooks?**
-No. Hooks add reminders when a session starts, when context is compacted, and when the agent is about to stop with items left. Without them, the commands still work when you or the agent invoke Stepper.
-
-**The agent says unknown session.**
-The hook stores the session in the project it was running in, and the `Stepper session:` line names that directory. Commands pass that path as `--root`. A command run from the skill directory without it looks in the skills repository, which has no session.
+**Can two chats share one list?**
+No. The chat that starts the list holds it. Another chat can take it only when you ask to continue that work there.
 
 ## It's working if
 
-- After a long investigation of the first outstanding item, the agent comes back to the next one without you restating the list.
-- A second chat does not change the list held by the first.
-- Pausing, or asking an unrelated question, does not clear the list.
+- After you accept a list, the agent starts at the first item and stays there.
+- A blocked item comes back as "wait" before any offer to skip.
+- Starting something new gets a status first: done, left, blocked, and where you are.
+- Saying the list is wrong archives it or replaces it, and the next status matches that.

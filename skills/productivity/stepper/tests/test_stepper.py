@@ -251,6 +251,7 @@ class StepperTests(unittest.TestCase):
         code, data = self.cli("defer", "--session", "cursor:aaa", "AC-4")
         self.assertEqual(code, 0)
         self.assertEqual(data["context"]["items"][1]["status"], "deferred")
+        self.cli("free", "--session", "cursor:aaa", "AC-4")
         code, data = self.cli("focus", "--session", "cursor:aaa", "AC-4")
         self.assertEqual(code, 0)
         self.assertEqual(data["context"]["items"][1]["status"], "active")
@@ -1163,6 +1164,7 @@ class StepperTests(unittest.TestCase):
 
     def test_selection_skips_a_parent_with_blocked_or_deferred_children(self):
         self.capture()
+        self.cli("free", "--session", "cursor:aaa", "AC-4")
         self.cli("focus", "--session", "cursor:aaa", "AC-4")
         self.cli("focus", "--session", "cursor:aaa", "AC-3")
         code, added = self.cli(
@@ -1189,6 +1191,7 @@ class StepperTests(unittest.TestCase):
         self.cli("verify", "--session", "cursor:aaa", "AC-3c", "--evidence", "done")
         self.cli("cancel", "--session", "cursor:aaa", "AC-3d")
         self.cli("add", "--session", "cursor:aaa", "--item", "AC-5: later leaf")
+        self.cli("free", "--session", "cursor:aaa", "AC-4")
         self.cli("focus", "--session", "cursor:aaa", "AC-4")
         code, skipped = self.cli("verify", "--session", "cursor:aaa", "AC-4", "--evidence", "sent")
         self.assertEqual(code, 0)
@@ -1216,6 +1219,94 @@ class StepperTests(unittest.TestCase):
         self.assertTrue(all(item["status"] != "active" for item in done["context"]["items"]))
         self.assertEqual(self.item(done, "AC-4")["status"], "pending")
         self.assertEqual(done["progress"]["active_path"], [])
+
+    def test_capture_depends_on_the_previous_item_and_status_briefs(self):
+        code, data = self.capture()
+        self.assertEqual(code, 0)
+        self.assertEqual(self.item(data, "AC-3")["depends_on"], [])
+        self.assertEqual(self.item(data, "AC-4")["depends_on"], ["AC-3"])
+        brief = data["brief"]
+        self.assertEqual(brief["done"], [])
+        self.assertEqual(brief["blocked"], [])
+        self.assertEqual(brief["left"], ["AC-3", "AC-4"])
+        self.assertEqual(brief["position"], "1 of 2")
+
+    def test_skip_refuses_while_the_next_item_depends_on_the_held_item(self):
+        self.capture()
+        code, blocked = self.cli("block", "--session", "cursor:aaa", "AC-3", "--reason", "waiting on Blaze")
+        self.assertEqual(code, 0)
+        self.assertIn("Hold", blocked["reminder"])
+        code, denied = self.cli("skip", "--session", "cursor:aaa")
+        self.assertEqual(code, 1)
+        self.assertIn("AC-4 depends on AC-3", denied["error"])
+        self.assertIn("hold", denied["error"])
+        code, freed = self.cli("free", "--session", "cursor:aaa", "AC-4")
+        self.assertEqual(code, 0)
+        self.assertEqual(self.item(freed, "AC-4")["depends_on"], [])
+        code, skipped = self.cli("skip", "--session", "cursor:aaa")
+        self.assertEqual(code, 0)
+        self.assertEqual(self.item(skipped, "AC-4")["status"], "active")
+        self.assertEqual(self.item(skipped, "AC-3")["status"], "blocked")
+
+    def test_order_marks_an_item_free_so_skip_can_pass_the_held_item(self):
+        self.capture()
+        self.cli("block", "--session", "cursor:aaa", "AC-3", "--reason", "waiting on Blaze")
+        code, ordered = self.cli(
+            "order",
+            "--session",
+            "cursor:aaa",
+            "--item",
+            "AC-3",
+            "--item",
+            "AC-4",
+            "--free",
+            "AC-4",
+        )
+        self.assertEqual(code, 0)
+        self.assertEqual(self.item(ordered, "AC-4")["depends_on"], [])
+        code, skipped = self.cli("skip", "--session", "cursor:aaa")
+        self.assertEqual(code, 0)
+        self.assertEqual(self.item(skipped, "AC-4")["status"], "active")
+        self.assertEqual(self.item(skipped, "AC-3")["status"], "blocked")
+
+    def test_drop_archives_without_verifying_and_the_same_session_can_capture(self):
+        self.capture()
+        session = self.root / ".stepper" / "sessions"
+        before = list(session.glob("*.json"))
+        code, dropped = self.cli("drop", "--session", "cursor:aaa")
+        self.assertEqual(code, 0)
+        self.assertIsNone(dropped["context"])
+        self.assertEqual(dropped["brief"], {"done": [], "left": [], "blocked": [], "position": "none"})
+        self.assertEqual(list((self.root / ".stepper" / "contexts").glob("*.json")), [])
+        archived = list((self.root / ".stepper" / "archive").glob("default-*.json"))
+        self.assertEqual(len(archived), 1)
+        stored = json.loads(archived[0].read_text())
+        self.assertTrue(stored["closed"])
+        self.assertIsNone(stored["lease"])
+        self.assertTrue(all(item["status"] != "verified" for item in stored["items"]))
+        self.assertEqual(list(session.glob("*.json")), before)
+        code, again = self.capture()
+        self.assertEqual(code, 0)
+        self.assertEqual(again["context"]["items"][0]["status"], "active")
+
+    def test_replace_cancels_outstanding_items_without_verifying_them(self):
+        self.capture()
+        code, replaced = self.cli(
+            "replace",
+            "--session",
+            "cursor:aaa",
+            "--item",
+            "M-5: waiting on Blaze",
+        )
+        self.assertEqual(code, 0, replaced)
+        self.assertEqual(self.item(replaced, "M-5")["status"], "active")
+        self.assertEqual(self.item(replaced, "AC-3")["status"], "cancelled")
+        self.assertIsNone(self.item(replaced, "AC-3")["evidence"])
+        self.assertEqual(self.item(replaced, "AC-4")["status"], "cancelled")
+        self.assertIsNone(self.item(replaced, "AC-4")["evidence"])
+        self.assertEqual(replaced["brief"]["left"], ["M-5"])
+        self.assertEqual(replaced["brief"]["done"], [])
+        self.assertEqual(replaced["brief"]["blocked"], [])
 
     def cli_home(self, *args):
         proc = subprocess.run(

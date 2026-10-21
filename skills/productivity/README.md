@@ -15,6 +15,6 @@ None yet.
 Reachable by you or by the agent when the task fits.
 
 - **[terse](./terse/SKILL.md)**: Rewrite or draft Slack, email, Jira, Confluence, and pull-request text to minimize length and maximize signal.
-- **[stepper](./stepper/SKILL.md)**: Keep a short list of outstanding commitments in view across a long investigation.
+- **[stepper](./stepper/SKILL.md)**: Stick to one ordered list of work, and brief before any new start.
 - **[ticketer](./ticketer/SKILL.md)**: Create or update Jira and GitHub Issues tickets with team rules enforced by a CLI and a confirmation gate before anything is filed.
 - **[tidy](./tidy/SKILL.md)**: Reconcile local branches with pull requests and the tracker in `~/.claude/tidy.yaml`, then delete branches the pull request already took.
