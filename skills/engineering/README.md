@@ -10,7 +10,7 @@ Reachable only when you type them (`disable-model-invocation: true`, and `policy
 
 - **[understand](./understand/SKILL.md)**: Understand a subject one portion at a time, in arrival order, and stay there until you release the turn. Writes only a learning journal.
 - **[pair](./pair/SKILL.md)**: Teach-as-you-go pairing. You write the code; the agent explains the design, plans the steps, and checks understanding before editing anything.
-- **[pr-queue](./pr-queue/SKILL.md)**: List sprint In Review tickets and team pull requests, then start qpre for a row you name.
+- **[pr-queue](./pr-queue/SKILL.md)**: List the open sprint's In Review tickets and the last 7 days of pull requests, and track that list until you start qpre.
 
 ## Model-invoked
 

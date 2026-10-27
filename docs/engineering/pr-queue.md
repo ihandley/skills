@@ -1,34 +1,38 @@
 ## What it does
 
-`pr-queue` lists the pull requests and sprint tickets waiting for your review. It reads your team from `~/.claude/aliases.yaml` and prints three sections: Sprint, Needs you, and Still open.
+`pr-queue` lists the pull requests to review this week and tracks that list until you start `qpre`. It reads your team from `~/.claude/aliases.yaml`, takes the open sprint's `In Review` tickets first, then pull requests updated in the last 7 days.
 
-The constraint is that the list is the whole job. A row number in a later message starts `qpre` on that pull request. The skill does not review the diff itself.
+The constraint is that the list is the whole job. The skill does not review the diff. A later "start" runs `qpre` on the active item, and the item stays active until you say the review is done.
 
 ## When to reach for it
 
 Type `/pr-queue`. The agent will not reach for it.
 
-Reach for it when you want the review queue: the open sprint's `In Review` tickets, pull requests that still need your approval, and older open pull requests from the team or on a team repo. For a review of one pull request you already have, use `pr-review`.
+Reach for it when you want the day's review queue. `/pr-queue backlog` is the open pull requests last updated more than 7 days ago. `all` on either command adds every other repo list on the team. For a review of one pull request you already have, use `pr-review`.
 
 ## Common questions
 
 **Where do the people and repos come from?**
-The `type: team` entry aliased "my team" in `~/.claude/aliases.yaml`. Authors are `members` and `qa`. Repos are every `repos_*` list. Sprint tickets are JET issues in an open sprint with status `In Review` whose Tech Domain is one of `jira_tech_domains`.
+The `type: team` entry aliased "my team" in `~/.claude/aliases.yaml`. Authors are `members` and `qa`. The daily repos are `repos_active`. Sprint tickets are issues in an open sprint with status `In Review` whose Tech Domain is one of `jira_tech_domains`.
 
-**Does this clear my GitHub inbox?**
-The queue is read-only. The inbox bookmarklet is still what marks notifications done.
+**What does a normal run show?**
+One stepper list, not a table. In Review tickets stay in Jira rank, at any age. Recent pull requests are the ones updated in the last 7 days, newest first. A line such as `94 quiet` is the count of older open pull requests, including ones you already approved. Your own open pull requests stay in the recent section. A pull request you have approved on its latest commit does not.
 
-**What does a row show?**
-The pull request as `repo#number`, the title, the author, the age in days, and the approval count. A section heading carries a fact that is true of every row in it, such as `Still open · 18 · none approved`. A repo outside `repos_active` adds a short mark (`eol`, `lib`, and the other list names shortened the same way). `asked` appears when you are a requested reviewer. A sprint row also links its Jira key.
+**What is on a line?**
+`repo#number`, the title, the author's name, and days since the last update. A mark appears only when it applies: a repo list other than `repos_active` (`eol`, `lib`, and the other names shortened the same way), `asked` when you are a requested reviewer, and `draft`, `merged`, or `closed`.
 
-**What does a row number do?**
-It runs `qpre` with that pull request's URL when the pull request is open and ready for review. A draft, merged, closed, or ticket-only row has no command to run.
+**What does start do?**
+It runs `qpre` with the active item's pull request URL. A draft, merged, closed, or ticket-only item has no command to run. Saying the review is done strikes the item. Leaving `qpre` halfway leaves the item active.
 
-**What if Jira or GitHub fails?**
-The section from the source that returned still prints, with a line naming the source that failed.
+**What does backlog show?**
+A table of those older pull requests you have not approved on the latest commit, newest update first. A row number runs `qpre`.
+
+**What if Jira is unavailable?**
+The run stops. The queue needs the Atlassian connection, and it does not fall back to another Jira client.
 
 ## It's working if
 
-- Sprint matches the open sprint's `In Review` tickets on the team board, in rank order.
-- A pull request you have already approved is under Still open, unless a sprint ticket links it.
-- A row number starts `qpre` with the full pull request URL, and the queue step ends before that.
+- The list matches the open sprint's `In Review` tickets in rank order, then pull requests updated in the last 7 days.
+- A second `/pr-queue` in the same chat says the list is already there.
+- "Start" runs `qpre` with the full pull request URL, and the item stays until you say the review is done.
+- The quiet count arrives without those older pull requests being downloaded.
