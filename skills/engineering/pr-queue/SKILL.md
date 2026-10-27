@@ -44,8 +44,9 @@ Each pull request has one **home**, the first section it fits. Print sprint issu
 
 ## Print
 
-Columns: row number, issue key, title, author, opened, approvals, repo list, reasons, qpre. Row numbers run through the whole queue.
+Columns: row number, key, title, author, opened, approvals, repo list, reasons, qpre. Row numbers run through the whole queue.
 
+- The key cell is a markdown link to the pull request. The visible text is the issue key when the row has one, otherwise `#<number>`. A row with no pull request links the issue key to the Jira issue.
 - Title is the pull request title, or the issue summary when the issue has no pull request.
 - Author is the pull request author, or the issue assignee when the issue has no pull request.
 - Opened is the pull request `createdAt`, or the issue `created` when the issue has no pull request.

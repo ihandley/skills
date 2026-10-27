@@ -18,6 +18,9 @@ The `type: team` entry aliased "my team" in `~/.claude/aliases.yaml`. Authors ar
 **Does this clear my GitHub inbox?**
 The queue is read-only. The inbox bookmarklet is still what marks notifications done.
 
+**What does the key open?**
+The pull request. The visible text is the issue key when the row has one, otherwise the pull request number. A row with no pull request opens the Jira issue.
+
 **What does a row number do?**
 It runs `qpre` with that pull request's URL. A row with an empty `qpre` cell has no command to run. Draft, merged, and closed pull requests stay visible when a sprint ticket links them, and the row shows that state.
 
