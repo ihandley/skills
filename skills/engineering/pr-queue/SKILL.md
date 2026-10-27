@@ -18,11 +18,11 @@ Done when each value is present and every author has `ids.github`. Anything miss
 
 ## Stop
 
-Call `getAccessibleAtlassianResources` once and keep its cloud id and site URL. A missing Atlassian MCP tool, a namespace that is not authenticated, or a failed call stops the run before GitHub.
+Call `getAccessibleAtlassianResources` once and keep its cloud id and site URL. Call GitHub `get_me` once and keep its login. A missing MCP tool, a namespace that is not authenticated, or a failed call stops the run.
 
-The viewer's `ids.github` equals `gh api user`. Any other result: stop and print both logins.
+The viewer's `ids.github` equals that login. Any other result: stop and print both logins.
 
-On a list invocation, copy `--session` and `--root` from the hook line that starts with `Stepper session:`. A missing line stops the run: say the hook did not provide a session key. `status` for that session already shows a list: say so and stop.
+On a list invocation, copy `--session` and `--root` from the hook line that starts with `Stepper session:`. Read it from the prompt, or from the context attached to those MCP results. A line that is still absent then stops the run: say the stepper hook did not provide a session key. `status` for that session already shows a list: say so and stop.
 
 Done when the cloud id, the viewer, and (on a list invocation) a free session are in hand, or the run has stopped.
 

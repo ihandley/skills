@@ -27,8 +27,8 @@ It runs `qpre` with the active item's pull request URL. A draft, merged, closed,
 **What does backlog show?**
 A table of those older pull requests you have not approved on the latest commit, newest update first. A row number runs `qpre`.
 
-**What if Jira is unavailable?**
-The run stops. The queue needs the Atlassian connection, and it does not fall back to another Jira client.
+**What if it stops before the queue?**
+The Atlassian connection or the GitHub connection is missing, or the stepper hook never named this chat. The session line arrives with the first tool result. Install the stepper hook when that line is absent after those calls.
 
 ## It's working if
 
