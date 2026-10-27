@@ -541,6 +541,48 @@ class StepperTests(unittest.TestCase):
         code, _data, out = self.hook("claude", repeated)
         self.assertEqual(out, "")
 
+    def test_pr_queue_prompt_registers_a_session_and_announces_the_key(self):
+        sessions = self.root / ".stepper" / "sessions"
+        code, _data, out = self.hook(
+            "cursor",
+            {
+                "hook_event_name": "beforeSubmitPrompt",
+                "conversation_id": "aaa",
+                "generation_id": "turn",
+                "prompt": "/pr-queue",
+            },
+        )
+        self.assertEqual(code, 0)
+        self.assertEqual(out, "")
+        self.assertEqual(len(list(sessions.glob("*.json"))), 1)
+        code, announced, _out = self.hook(
+            "cursor",
+            {
+                "hook_event_name": "postToolUse",
+                "conversation_id": "aaa",
+                "generation_id": "turn",
+                "tool_name": "get_me",
+            },
+        )
+        self.assertEqual(code, 0)
+        root = str(self.root.resolve())
+        self.assertEqual(
+            announced["additional_context"],
+            f"Stepper session: cursor:aaa. Project root: {root}. "
+            f"Pass --session cursor:aaa --root {root} on every stepper command.",
+        )
+        code, submitted, _out = self.hook(
+            "claude",
+            {
+                "hook_event_name": "UserPromptSubmit",
+                "session_id": "5155e88d-741e-4fcb-9fbb-5e86a3830714",
+                "cwd": str(self.root),
+                "prompt": "/pr-queue backlog",
+            },
+            workspace=False,
+        )
+        self.assertIn("Stepper session: claude:5155e88d-741e-4fcb-9fbb-5e86a3830714.", submitted["hookSpecificOutput"]["additionalContext"])
+
     def test_cursor_offer_follows_the_observed_response_then_stop_order(self):
         sessions = self.root / ".stepper" / "sessions"
         contexts = self.root / ".stepper" / "contexts"

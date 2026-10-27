@@ -101,7 +101,7 @@ STATUS_WORD = re.compile(
     r"(?i)\b(outstanding|not met|unmet|failed|remaining|unresolved|todo)\b"
 )
 STEPPER_PROMPT = re.compile(
-    r"(?i)\b(stepper|track (?:these|those|this|what)|keep track|what'?s left|"
+    r"(?i)\b(stepper|pr-queue|track (?:these|those|this|what)|keep track|what'?s left|"
     r"where are we|what'?s next|stop tracking|pause stepper|resume stepper)\b"
 )
 QUESTION = re.compile(
