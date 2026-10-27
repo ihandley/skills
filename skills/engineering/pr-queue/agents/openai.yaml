@@ -1,5 +1,5 @@
 interface:
   display_name: "PR Queue"
-  short_description: "List sprint tickets and team pull requests to review"
+  short_description: "Track sprint In Review tickets and this week's pull requests"
 policy:
   allow_implicit_invocation: false
