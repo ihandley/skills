@@ -1,0 +1,5 @@
+interface:
+  display_name: "Dependabot review"
+  short_description: "Review one dependency bump and file the ticket"
+policy:
+  allow_implicit_invocation: false

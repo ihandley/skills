@@ -19,6 +19,7 @@
     "./skills/engineering/pair",
     "./skills/engineering/skill-compress",
     "./skills/engineering/pr-review",
+    "./skills/engineering/dependabot-review",
     "./skills/engineering/pr-queue",
     "./skills/productivity/terse",
     "./skills/productivity/stepper",
