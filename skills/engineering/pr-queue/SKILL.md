@@ -44,24 +44,27 @@ Each pull request has one **home**, the first section it fits. Print sprint issu
 
 ## Print
 
-Columns: row number, key, title, author, opened, approvals, repo list, reasons, qpre. Row numbers run through the whole queue.
+Columns: row number, PR, title, author, age, approvals. Row numbers run through the whole queue. Print a section when it has rows. The heading is `<Section> · <count>`, and when every row in that section has 0 approvals, add `· none approved`.
 
-- The key cell is a markdown link to the pull request. The visible text is the issue key when the row has one, otherwise `#<number>`. A row with no pull request links the issue key to the Jira issue.
+The PR cell is `[<repo>#<number>](<pull request url>)`. After the link, add a mark only when it applies:
+
+- The repo's list, shortened: `eol`, `lib`, `infra`, `qa`, `tool`, `poc`, `disputed`, `verify`. `repos_active` has no mark.
+- `asked`, when the viewer is a requested reviewer.
+- `draft`, `merged`, or `closed`, when that is the pull request state.
+
+A Sprint row also links the issue key to `https://liveviewtech.atlassian.net/browse/<key>`. A Sprint row with no pull request uses that issue link as the PR cell.
+
 - Title is the pull request title, or the issue summary when the issue has no pull request.
 - Author is the pull request author, or the issue assignee when the issue has no pull request.
-- Opened is the pull request `createdAt`, or the issue `created` when the issue has no pull request.
-- Approvals is the count of APPROVED reviews.
-- Repo list is the `repos_*` name when the repo is on the record.
-- Reasons are the ones that apply: `sprint`, `team author`, `owned repo`, `review requested` (the viewer is a requested reviewer).
-- When the linked pull request is a draft, merged, or closed, the row shows that state.
-- The qpre cell is `qpre <url>` when the pull request is open and ready for review.
+- Age is whole days from the pull request `createdAt` to today, rendered `19d`. A row with no pull request uses the issue `created`.
+- Approvals is the count of APPROVED reviews. Blank when the issue has no pull request.
 
 Print the bot line after the sections. Print any source-failure line.
 
-Done when the three sections, the bot line, and any source-failure line are printed, and qpre has not been started. End the turn.
+Done when each section that has rows, the bot line, and any source-failure line are printed, and qpre has not been started. End the turn.
 
 ## Row
 
-A later message names a row number. Run `qpre` with that row's pull request URL.
+A later message names a row number. Run `qpre` with that row's pull request URL when the pull request is open and ready for review.
 
-Done when qpre has been started for that URL. A row with an empty qpre cell: say so and stop.
+Done when qpre has been started for that URL. A draft, merged, closed, or ticket-only row: say so and stop.
