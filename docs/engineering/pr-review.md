@@ -8,7 +8,7 @@ The constraint is that this repo stores the pointer. The review rules stay in `L
 
 Type `/pr-review`, or the agent reaches for it when you say "review this PR", "review PR 192", "self-review", or paste a pull request URL.
 
-Reach for it on a pull request number, URL, or the pull request for the current branch. Dependabot bumps are outside this skill.
+Reach for it on a pull request number, URL, or the pull request for the current branch. A Dependabot author or a dependency-bump pull request is `/dependabot-review`. That command stops this skill before the fetch.
 
 ## Common questions
 
