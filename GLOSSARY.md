@@ -31,3 +31,47 @@ _Avoid_: Day-1, quick win
 **Overhaul**:
 A friction change that replaces a tool, or adds a tool that is not present.
 _Avoid_: Structural, rewrite
+
+**Context**:
+One ordered list of work with a single active item, and its own name while it is open. It may name the repo it is about.
+_Avoid_: Instance, stepper instance
+
+**Lease**:
+A session's hold on a context. One context has one lease.
+_Avoid_: Lock, owner
+
+**Sitting**:
+One review of a queue, from capture until its ledger is done.
+_Avoid_: Session, week
+
+**Queue**:
+Which pull requests are in this sitting, and in what order.
+_Avoid_: Inbox, backlog
+
+**Backlog**:
+Open pull requests older than this sitting, kept outside the ledger.
+_Avoid_: Queue
+
+**Ledger**:
+The context for one sitting.
+_Avoid_: Queue, tracker
+
+**Walk**:
+One pass over a pull request.
+_Avoid_: Review
+
+**Outcome**:
+How a walk ended. A review was posted, the walk finished with nothing to post, or the walk is unfinished.
+_Avoid_: Done, status
+
+**Strike**:
+The user's decision that the active item is finished.
+_Avoid_: Done, outcome
+
+**Clean**:
+A walk that finished with nothing to post.
+_Avoid_: Empty, approved
+
+**Unfinished**:
+A walk left before it was posted or clean.
+_Avoid_: Pending, paused
