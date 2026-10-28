@@ -20,6 +20,10 @@ from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+import selection  # noqa: E402
+
 VERSION = 1
 MAX_DEPTH = 2
 STATUSES = ("pending", "active", "blocked", "verified", "deferred", "cancelled")
@@ -509,11 +513,6 @@ def _depends(item: dict) -> list[str]:
     return list(item.get("depends_on") or [])
 
 
-def _dep_met(ctx: dict, dep_id: str) -> bool:
-    match = next((item for item in ctx["items"] if item["id"] == dep_id), None)
-    return match is not None and match["status"] in ("verified", "cancelled")
-
-
 def _top_level(ctx: dict) -> list[dict]:
     return sorted(
         (item for item in ctx["items"] if not item.get("parent_id")),
@@ -816,7 +815,7 @@ def _depth(ctx: dict, item: dict) -> int:
 
 
 def _eligible(ctx: dict, item: dict) -> bool:
-    return all(child["status"] in ("verified", "cancelled") for child in _descendants(ctx, item))
+    return selection.eligible(ctx, item)
 
 
 def _blocking_descendants(ctx: dict, item: dict, statuses: tuple[str, ...]) -> list[dict]:
@@ -835,33 +834,6 @@ def _guard_ancestors(ctx: dict, item: dict) -> None:
             raise StepperError(
                 f"cannot change {item['id']} because {ancestor['id']} is {ancestor['status']}"
             )
-
-
-def _select_branch(ctx: dict, node: dict) -> dict | None:
-    if node["status"] != "pending":
-        return None
-    for child in _children(ctx, node["id"]):
-        chosen = _select_branch(ctx, child)
-        if chosen is not None:
-            return chosen
-    if not _children(ctx, node["id"]) or _eligible(ctx, node):
-        return node
-    return None
-
-
-def _next_hierarchical(ctx: dict, finished: dict) -> dict | None:
-    for sibling in _children(ctx, finished.get("parent_id")):
-        if sibling["id"] == finished["id"]:
-            continue
-        chosen = _select_branch(ctx, sibling)
-        if chosen is not None:
-            return chosen
-    parent = _parent(ctx, finished)
-    if parent is not None and parent["status"] == "pending" and _eligible(ctx, parent):
-        return parent
-    if parent is not None:
-        return _next_hierarchical(ctx, parent)
-    return None
 
 
 def _progress(ctx: dict) -> dict:
@@ -907,33 +879,6 @@ def _hierarchy_reminder(ctx: dict) -> str:
     return "Stepper: " + ". ".join(parts) + ". Stick to the active item. Brief before any new start."
 
 
-def _demote_active(ctx: dict) -> None:
-    for item in ctx["items"]:
-        if item["status"] == "active":
-            item["status"] = "pending"
-
-
-def _activate_next(ctx: dict, finished: dict | None = None) -> None:
-    if any(item.get("parent_id") for item in ctx["items"]):
-        if finished is None:
-            for item in _children(ctx, None):
-                chosen = _select_branch(ctx, item)
-                if chosen is not None:
-                    chosen["status"] = "active"
-                    return
-            return
-        chosen = _next_hierarchical(ctx, finished)
-        if chosen is not None:
-            chosen["status"] = "active"
-        return
-    pending = sorted(
-        (item for item in ctx["items"] if item["status"] == "pending"),
-        key=lambda item: item["order"],
-    )
-    if pending:
-        pending[0]["status"] = "active"
-
-
 def transition(
     ctx: dict,
     item_id: str,
@@ -969,7 +914,7 @@ def transition(
         raise StepperError(f"cannot move {item_id} from {current} to {new_status}")
     was_active = current == "active"
     if new_status == "active":
-        _demote_active(ctx)
+        selection.demote_active(ctx)
         item["blocked_reason"] = None
     elif new_status == "verified":
         if not evidence:
@@ -983,7 +928,7 @@ def transition(
         item["blocked_reason"] = None
     item["status"] = new_status
     if was_active and new_status == "verified":
-        _activate_next(ctx, item)
+        selection.activate_next(ctx, item)
 
 
 def require_holder(root: Path, session_key: str, context_id: str) -> dict:
@@ -1132,13 +1077,13 @@ def cmd_add(root: Path, session_key: str, context_id: str, items: list[str], par
         ctx["items"].append(item)
     ctx["next_seq"] = seq
     if not any(item["status"] == "active" for item in ctx["items"]):
-        _activate_next(ctx)
+        selection.activate_next(ctx)
     save_context(root, ctx)
     return result(ctx)
 
 
 def _unmet(ctx: dict, item: dict) -> list[str]:
-    return [dep for dep in _depends(item) if not _dep_met(ctx, dep)]
+    return selection.unmet(ctx, item)
 
 
 def cmd_focus(root: Path, session_key: str, context_id: str, item_id: str) -> dict:
@@ -1211,19 +1156,9 @@ def cmd_skip(root: Path, session_key: str, context_id: str) -> dict:
     held = _held(ctx)
     if held is None:
         raise StepperError("nothing to skip")
-    later = [
-        item
-        for item in _top_level(ctx)
-        if item["order"] > held["order"] and item["status"] not in ("verified", "cancelled")
-    ]
-    if not later:
-        raise StepperError("no later item")
-    nxt = later[0]
-    if held["id"] in _depends(nxt):
-        raise StepperError(f"{nxt['id']} depends on {held['id']}; hold")
-    unmet = _unmet(ctx, nxt)
-    if unmet:
-        raise StepperError(f"{nxt['id']} depends on {', '.join(unmet)}")
+    nxt, reason = selection.skip_target(ctx, held)
+    if nxt is None:
+        raise StepperError(reason)
     return cmd_focus(root, session_key, context_id, nxt["id"])
 
 
@@ -1321,9 +1256,7 @@ def cmd_replace(root: Path, session_key: str, context_id: str, items: list[str])
         raise StepperError("replace needs at least one outstanding item")
     for index, item in enumerate(outstanding):
         item["order"] = index
-    for item in ctx["items"]:
-        if item["status"] == "active":
-            item["status"] = "pending"
+    selection.demote_active(ctx)
     outstanding[0]["status"] = "active"
     ctx["next_seq"] = seq
     save_context(root, ctx)
