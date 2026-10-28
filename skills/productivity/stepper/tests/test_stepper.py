@@ -1789,6 +1789,105 @@ class StepperTests(unittest.TestCase):
         )
         self.assertIn("as AC-3-2", next_offer["followup_message"])
 
+    def test_pr_queue_sitting_rolls_only_when_complete(self):
+        self.capture()
+        code, sitting = self.cli(
+            "capture",
+            "--session",
+            "cursor:aaa",
+            "--context",
+            "pr-queue",
+            "--item",
+            "AC-3: review the first",
+            "--item",
+            "AC-4: review the second",
+        )
+        self.assertEqual(code, 0, sitting)
+
+        def queue():
+            code, inventory = self.cli("status")
+            self.assertEqual(code, 0)
+            return next(ctx for ctx in inventory["contexts"] if ctx["id"] == "pr-queue")
+
+        self.assertFalse(queue()["complete"])
+        self.cli(
+            "block",
+            "--session",
+            "cursor:aaa",
+            "--context",
+            "pr-queue",
+            "AC-3",
+            "--reason",
+            "waiting on a review",
+        )
+        self.assertFalse(queue()["complete"])
+        self.cli("unblock", "--session", "cursor:aaa", "--context", "pr-queue", "AC-3")
+        self.cli("defer", "--session", "cursor:aaa", "--context", "pr-queue", "AC-3")
+        self.assertFalse(queue()["complete"])
+        self.cli("cancel", "--session", "cursor:aaa", "--context", "pr-queue", "AC-3")
+        self.cli(
+            "verify",
+            "--session",
+            "cursor:aaa",
+            "--context",
+            "pr-queue",
+            "AC-4",
+            "--evidence",
+            "reviewed",
+        )
+        self.assertTrue(queue()["complete"])
+        code, held = self.cli("status", "--session", "cursor:aaa")
+        self.assertEqual({row["id"] for row in held["held"]}, {"default", "pr-queue"})
+        code, closed = self.cli("close", "--session", "cursor:aaa", "--context", "pr-queue")
+        self.assertEqual(code, 0, closed)
+        code, held = self.cli("status", "--session", "cursor:aaa")
+        self.assertEqual([row["id"] for row in held["held"]], ["default"])
+
+        self.cli(
+            "capture",
+            "--session",
+            "cursor:aaa",
+            "--context",
+            "pr-queue",
+            "--item",
+            "AC-3: review again",
+        )
+        self.cli("detach", "--session", "cursor:aaa", "--context", "pr-queue")
+        self.assertIsNone(queue()["lease"])
+        self.assertFalse(queue()["complete"])
+        code, attached = self.cli("attach", "--session", "cursor:aaa", "pr-queue")
+        self.assertEqual(code, 0, attached)
+        code, held = self.cli("status", "--session", "cursor:aaa")
+        self.assertEqual({row["id"] for row in held["held"]}, {"default", "pr-queue"})
+        self.register("cursor:bbb")
+        code, denied = self.cli("attach", "--session", "cursor:bbb", "pr-queue")
+        self.assertEqual(code, 1)
+        self.assertIn("cursor:aaa", denied["error"])
+
+        self.cli(
+            "verify",
+            "--session",
+            "cursor:aaa",
+            "--context",
+            "pr-queue",
+            "AC-3",
+            "--evidence",
+            "reviewed",
+        )
+        self.cli("detach", "--session", "cursor:aaa", "--context", "pr-queue")
+        self.assertTrue(queue()["complete"])
+        self.assertIsNone(queue()["lease"])
+        self.cli("attach", "--session", "cursor:aaa", "pr-queue")
+        self.cli("close", "--session", "cursor:aaa", "--context", "pr-queue")
+        code, held = self.cli("status", "--session", "cursor:aaa")
+        self.assertEqual([row["id"] for row in held["held"]], ["default"])
+        self.cli("verify", "--session", "cursor:aaa", "AC-3", "--evidence", "sent")
+        self.cli("verify", "--session", "cursor:aaa", "AC-4", "--evidence", "429")
+        code, inventory = self.cli("status")
+        finished = next(ctx for ctx in inventory["contexts"] if ctx["id"] == "default")
+        self.assertTrue(finished["complete"])
+        self.assertEqual(finished["lease"]["session_key"], "cursor:aaa")
+
     def cli_home(self, *args):
         proc = subprocess.run(
             [sys.executable, str(STEPPER), *args],

@@ -6,12 +6,12 @@
 
 **Status:** ready-for-agent
 
-- [ ] `/pr-queue` captures and continues the context named `pr-queue`. A capture outside that skill uses some other name
-- [ ] An unfinished `pr-queue` this session holds is reported as already there, and no fetch runs
-- [ ] An unfinished `pr-queue` with no lease is attached to this session, and no fetch runs
-- [ ] A complete `pr-queue` held by this session, or held by nobody, is closed and a new sitting is captured from a fresh fetch
-- [ ] A `pr-queue` held by another session stops the run and names that session
-- [ ] A context is complete when every item is verified or cancelled and at least one item is verified. A blocked or deferred item leaves the sitting in place
-- [ ] A finished context with any name other than `pr-queue` stays leased until you close it
-- [ ] The backlog is not written into the ledger
-- [ ] Attaching or rolling `pr-queue` leaves the session's other contexts leased
+- [x] `/pr-queue` captures and continues the context named `pr-queue`. A capture outside that skill uses some other name
+- [x] An unfinished `pr-queue` this session holds is reported as already there, and no fetch runs
+- [x] An unfinished `pr-queue` with no lease is attached to this session, and no fetch runs
+- [x] A complete `pr-queue` held by this session, or held by nobody, is closed and a new sitting is captured from a fresh fetch
+- [x] A `pr-queue` held by another session stops the run and names that session
+- [x] A context is complete when every item is verified or cancelled and at least one item is verified. A blocked or deferred item leaves the sitting in place
+- [x] A finished context with any name other than `pr-queue` stays leased until you close it
+- [x] The backlog is not written into the ledger
+- [x] Attaching or rolling `pr-queue` leaves the session's other contexts leased
