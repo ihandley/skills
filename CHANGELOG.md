@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.4.0](https://github.com/ihandley/skills/compare/ihandley-skills-v0.3.0...ihandley-skills-v0.4.0) (2026-10-28)
+
+
+### Features
+
+* **pair:** ground each question in the excerpt it uses ([#88](https://github.com/ihandley/skills/issues/88)) ([ac927bb](https://github.com/ihandley/skills/commit/ac927bba362ae5609728933cd6c16561d3b3fb80))
+
 ## [0.3.0](https://github.com/ihandley/skills/compare/ihandley-skills-v0.2.0...ihandley-skills-v0.3.0) (2026-10-28)
 
 
