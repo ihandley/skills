@@ -36,8 +36,13 @@ OptionParser.new do |opts|
   opts.on("--session KEY") { |value| options[:session] = value }
   opts.on("--root PATH") { |value| options[:root] = value }
   opts.on("--stepper PATH") { |value| options[:stepper] = value }
+  opts.on("--github-fixture PATH") { |value| options[:fixture] = value }
+  opts.on("--today DATE") { |value| options[:today] = Date.parse(value) }
 end.parse!
 abort "pass --viewer" if options[:viewer].to_s.empty?
+
+$fixture = options[:fixture]
+$today = options[:today] || Date.today
 
 started = Process.clock_gettime(Process::CLOCK_MONOTONIC)
 
@@ -45,6 +50,11 @@ def fail(query, detail)
   warn query
   warn detail
   exit 2
+end
+
+def fixture_nodes(path, query)
+  data = JSON.parse(File.read(path))
+  query.include?("updated:<") ? data["old"] : data["recent"]
 end
 
 def graphql(query, cursor: nil)
@@ -63,6 +73,12 @@ rescue JSON::ParserError => error
 end
 
 def search(query, required: false)
+  if $fixture
+    nodes = Array(fixture_nodes($fixture, query))
+    fail(query, "search returned no pull requests") if required && nodes.empty?
+    return nodes
+  end
+
   nodes = []
   cursor = nil
   loop do
@@ -78,6 +94,8 @@ def search(query, required: false)
 end
 
 def quiet_count(query)
+  return Integer(JSON.parse(File.read($fixture))["quiet"]) if $fixture
+
   out, err, status = Open3.capture3(
     "gh", "api", "--method", "GET", "search/issues",
     "-f", "q=#{query}", "-f", "per_page=1", "--jq", ".total_count"
@@ -134,7 +152,7 @@ end
 def age_days(iso)
   return 0 if iso.to_s.empty?
 
-  (Date.today - Time.parse(iso).getlocal.to_date).to_i
+  ($today - Time.parse(iso).getlocal.to_date).to_i
 end
 
 def item_text(ref, marks, title, author, age)
@@ -218,7 +236,7 @@ unless options[:backlog] || $stdin.tty?
   end
 end
 
-cutoff = (Date.today - 7).strftime("%Y-%m-%d")
+cutoff = ($today - 7).strftime("%Y-%m-%d")
 repo_qualifiers = repo_set.map { |repo| "repo:#{org}/#{repo}" }.join(" ")
 author_qualifiers = logins.map { |login| "author:#{login}" }.join(" ")
 recent_prefix = "is:pr is:open draft:false updated:>=#{cutoff}"

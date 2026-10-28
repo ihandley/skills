@@ -1,0 +1,17 @@
+me:
+  type: person
+  aliases: [me, "Ian Handley"]
+  ids: {github: ian}
+bob:
+  type: person
+  aliases: ["Bob Lee"]
+  ids: {github: bob}
+team:
+  type: team
+  aliases: ["my team"]
+  github_org: org
+  jira_project: JET
+  members: [me, bob]
+  qa: []
+  repos_active: [r1]
+  repos_lib: [lib1]

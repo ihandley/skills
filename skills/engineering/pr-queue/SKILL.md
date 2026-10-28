@@ -1,6 +1,7 @@
 ---
 name: pr-queue
 description: List this week's review queue, the open sprint's In Review tickets and the last 7 days of team pull requests, then walk them one at a time.
+compatibility: Requires Ruby 2.6+ and the gh CLI
 disable-model-invocation: true
 ---
 

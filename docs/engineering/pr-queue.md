@@ -45,6 +45,9 @@ An unfinished sitting in this chat stays as it is, and nothing is fetched. An un
 **What if it stops before the queue?**
 The Atlassian connection or the GitHub connection is missing, or the stepper hook never named this chat. The session line arrives with the first tool result. Install the stepper hook when that line is absent after those calls.
 
+**How is the printed list checked?**
+`python3 skills/engineering/pr-queue/tests/test_pr_queue.py` runs the script on saved input, a Jira file and a GitHub JSON file, without calling GitHub or Jira. It compares the normal list and the backlog table to files in `tests/fixtures`. Any change to the printed lines fails it. The script needs Ruby 2.6 or newer and the `gh` CLI, as the skill's `compatibility` line says.
+
 ## It's working if
 
 - The list matches the open sprint's `In Review` tickets in rank order, then pull requests updated in the last 7 days.
@@ -55,3 +58,4 @@ The Atlassian connection or the GitHub connection is missing, or the stepper hoo
 - The quiet count arrives without those older pull requests being downloaded.
 - The list is printed from searches that return pull requests. A search that comes back empty stops the run and names the query.
 - The run prints its total time from the prompt to the list, and it stays under five minutes.
+- `python3 skills/engineering/pr-queue/tests/test_pr_queue.py` passes with no network.
