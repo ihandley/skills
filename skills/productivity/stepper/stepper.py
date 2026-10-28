@@ -16,7 +16,8 @@ import re
 import shlex
 import subprocess
 import sys
-from contextlib import contextmanager
+from contextlib import contextmanager, nullcontext
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -168,6 +169,23 @@ def refuse_skill_checkout(root: Path) -> None:
         f"refusing {root} because it is the stepper skill directory. "
         "Pass --root with the project root from the Stepper session line."
     )
+
+
+@dataclass(frozen=True)
+class Invocation:
+    """The project root and session key for one run, from arguments or from a hook payload."""
+
+    root: Path
+    session_key: str | None
+    platform: str | None = None
+
+    @classmethod
+    def from_args(cls, args: argparse.Namespace) -> "Invocation":
+        return cls(resolve_root(args.root), getattr(args, "session", None))
+
+    @classmethod
+    def from_payload(cls, payload: dict, platform: str) -> "Invocation":
+        return cls(hook_root(payload), session_key_from(payload, platform), platform)
 
 
 def store(_checkout: Path | None = None) -> Path:
@@ -1455,11 +1473,11 @@ def consider_candidate(root: Path, sess: dict, candidate: dict | None, ctx: dict
     sess["candidate_generation"] = generation
 
 
-def handle_hook(root: Path, platform: str, payload: dict) -> dict | None:
+def handle_hook(inv: Invocation, payload: dict) -> dict | None:
+    root, platform, key = inv.root, inv.platform, inv.session_key
     event = payload.get("hook_event_name") or ""
     if not event_allowed(event, platform):
         return None
-    key = session_key_from(payload, platform)
     if not key:
         return None
     generation = generation_of(payload)
@@ -1846,7 +1864,7 @@ def emit(data: dict, code: int = 0) -> int:
 
 
 def run_command(args: argparse.Namespace) -> dict:
-    root = resolve_root(args.root)
+    root = Invocation.from_args(args).root
     context_id = getattr(args, "context", None)
     with locked(root, block=True):
         if args.cmd == "capture":
@@ -2006,10 +2024,11 @@ def main(argv: list[str] | None = None) -> int:
                 return 0
             if not isinstance(payload, dict):
                 return 0
-            root = hook_root(payload)
+            inv = Invocation.from_payload(payload, args.platform)
+            guard = locked(inv.root, block=False) if store(inv.root).is_dir() else nullcontext()
             try:
-                with locked(root, block=False):
-                    output = handle_hook(root, args.platform, payload)
+                with guard:
+                    output = handle_hook(inv, payload)
             except StepperError:
                 return 0
             if output:

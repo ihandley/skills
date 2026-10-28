@@ -100,6 +100,51 @@ class StepperTests(unittest.TestCase):
             "AC-4: rate limit returns 429",
         )
 
+    def git_repo(self):
+        subprocess.run(["git", "init", "-q", str(self.root)], check=True)
+        (self.root / "tracked.txt").write_text("x\n")
+        subprocess.run(["git", "-C", str(self.root), "add", "."], check=True)
+        subprocess.run(["git", "-C", str(self.root), "-c", "user.name=t", "-c", "user.email=t@t",
+                        "commit", "-q", "-m", "init"], check=True)
+        return (self.root / ".git" / "info" / "exclude").read_text() if (self.root / ".git" / "info" / "exclude").exists() else ""
+
+    def snapshot(self):
+        return sorted(str(p.relative_to(self.home)) for p in self.home.rglob("*"))
+
+    def test_an_unrelated_prompt_creates_no_store_and_leaves_the_tree_alone(self):
+        exclude = self.git_repo()
+        before_home = self.snapshot()
+        code, _, out = self.hook("claude", {"hook_event_name": "UserPromptSubmit",
+                                            "session_id": "zzz", "prompt": "how do I rebase?"})
+        self.assertEqual(code, 0)
+        self.assertEqual(out.strip(), "")
+        self.assertFalse(self.store.exists(), self.snapshot())
+        self.assertEqual(self.snapshot(), before_home)
+        status = subprocess.run(["git", "-C", str(self.root), "status", "--porcelain"],
+                                text=True, capture_output=True, check=True).stdout
+        self.assertEqual(status, "")
+        exclude_path = self.root / ".git" / "info" / "exclude"
+        self.assertEqual(exclude_path.read_text() if exclude_path.exists() else "", exclude)
+
+    def test_other_events_with_nothing_to_persist_create_no_store(self):
+        self.git_repo()
+        payloads = [
+            {"hook_event_name": "PostToolUse", "session_id": "zzz"},
+            {"hook_event_name": "Stop", "session_id": "zzz", "last_assistant_message": "done"},
+            {"hook_event_name": "SessionStart", "session_id": "zzz", "source": "startup"},
+            {"hook_event_name": "SessionEnd", "session_id": "zzz"},
+            {"hook_event_name": "PreCompact", "session_id": "zzz"},
+        ]
+        for payload in payloads:
+            with self.subTest(event=payload["hook_event_name"]):
+                self.hook("claude", payload)
+                self.assertFalse(self.store.exists(), self.snapshot())
+
+    def test_a_prompt_stepper_owns_does_create_the_store(self):
+        self.git_repo()
+        self.register("claude:zzz")
+        self.assertTrue((self.store / "sessions").is_dir())
+
     def test_capture_persists_and_restores_in_a_fresh_process(self):
         code, data = self.capture()
         self.assertEqual(code, 0)
