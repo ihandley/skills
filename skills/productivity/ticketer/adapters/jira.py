@@ -5,10 +5,16 @@ from __future__ import annotations
 import re
 
 NAME = "jira"
-DRAFT_KEYS = {
-    "operation", "key", "summary", "description", "issue_type", "priority", "parent",
-    "assignee", "labels", "components", "project_key", "cloud_id", "fields",
+FIELDS = {
+    "operation": "str", "key": "str", "summary": "str", "description": "str", "issue_type": "str",
+    "priority": "str", "parent": "str", "assignee": "str", "labels": "list", "components": "list",
+    "project_key": "str", "cloud_id": "str", "fields": "object",
 }
+DRAFT_KEYS = set(FIELDS)
+MERGE_LIST_KEYS = {"labels", "components"}
+DISPLAY_ORDER = ("key", "project_key", "issue_type", "summary", "priority", "parent", "assignee",
+                 "labels", "components")
+METADATA_KINDS = ("issue-types", "fields")
 IDENT_KEYS = ("project_key", "cloud_id")
 SUPPORTS_EXTRA = True
 NORMALIZE_LABELS = True

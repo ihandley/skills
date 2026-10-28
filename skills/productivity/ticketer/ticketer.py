@@ -64,12 +64,6 @@ CONFIG_KEYS = {
     "defaults",
     "extra",
 }
-STR_KEYS = {
-    "operation", "key", "summary", "description", "issue_type", "priority",
-    "parent", "assignee", "milestone", "project_key", "cloud_id", "repo",
-}
-LIST_KEYS = {"labels", "components", "assignees"}
-MERGE_LIST_KEYS = {"labels", "components"}
 CREATE, UPDATE = "create", "update"
 
 
@@ -408,11 +402,12 @@ def build_draft(raw, adapter, config):
         raise Fail(EXIT_REFUSED, "unknown draft keys for %s: %s" % (adapter.NAME, ", ".join(unknown)))
     problems = []
     for key, value in raw.items():
-        if key in STR_KEYS and not isinstance(value, str):
+        kind = adapter.FIELDS.get(key)
+        if kind == "str" and not isinstance(value, str):
             problems.append(err("bad_type", "%s must be a string" % key, key))
-        if key in LIST_KEYS and not (isinstance(value, list) and all(isinstance(v, str) for v in value)):
+        if kind == "list" and not (isinstance(value, list) and all(isinstance(v, str) for v in value)):
             problems.append(err("bad_type", "%s must be a list of strings" % key, key))
-        if key == "fields" and not isinstance(value, dict):
+        if kind == "object" and not isinstance(value, dict):
             problems.append(err("bad_type", "fields must be an object", key))
     if problems:
         raise Fail(EXIT_REFUSED, "draft has wrong types", problems)
@@ -426,7 +421,7 @@ def build_draft(raw, adapter, config):
         for key, value in defaults.items():
             draft[key] = list(value) if isinstance(value, list) else value
         for key, value in raw.items():
-            if key in MERGE_LIST_KEYS and key in draft:
+            if key in adapter.MERGE_LIST_KEYS and key in draft:
                 draft[key] = list(dict.fromkeys(list(draft[key]) + list(value)))
             else:
                 draft[key] = value
@@ -489,11 +484,9 @@ def validate_draft(draft, config, adapter, metadata):
     return problems, warnings, needs
 
 
-def render(draft, draft_id, tracker):
-    lines = ["TICKET DRAFT %s  (%s on %s)" % (draft_id, draft["operation"], tracker)]
-    order = ["key", "project_key", "repo", "issue_type", "summary", "priority", "parent", "assignee",
-             "assignees", "milestone", "labels", "components"]
-    for key in order:
+def render(draft, draft_id, adapter):
+    lines = ["TICKET DRAFT %s  (%s on %s)" % (draft_id, draft["operation"], adapter.NAME)]
+    for key in adapter.DISPLAY_ORDER:
         if key in draft:
             value = draft[key]
             lines.append("%s: %s" % (key, ", ".join(value) if isinstance(value, list) else value))
@@ -652,7 +645,12 @@ def cmd_metadata_store(args):
     raw = read_json_input(args.input)
     path = metadata_path(args.tracker, args.scope)
     data = json.loads(path.read_text(encoding="utf-8")) if path.is_file() else {}
-    adapter.store_metadata(data, args.kind, raw, args.issue_type)
+    try:
+        if args.kind not in adapter.METADATA_KINDS:
+            raise ValueError("%s has no metadata kind %r; supported: %s" % (adapter.NAME, args.kind, ", ".join(adapter.METADATA_KINDS)))
+        adapter.store_metadata(data, args.kind, raw, args.issue_type)
+    except ValueError as exc:
+        raise Fail(EXIT_REFUSED, str(exc))
     data["fetched_at"] = time.time()
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
@@ -682,7 +680,7 @@ def cmd_draft(args):
                  "config_path": config["_path"], "resolve": {"cwd": info["cwd"], "team": getattr(args, "team", None), "config": getattr(args, "config", None)},
                  "config_sha": config["_sha"], "draft": draft})
     return {
-        "ok": True, "id": draft_id, "render": render(draft, draft_id, adapter.NAME),
+        "ok": True, "id": draft_id, "render": render(draft, draft_id, adapter),
         "warnings": warnings, "notes": notes, "needs": needs,
         "ask": "Show 'render' to the user verbatim, then ask: Proceed? (yes / no / edit). "
                "Only on 'yes': ticketer.py submit --draft %s --confirm %s" % (draft_id, draft_id),
@@ -745,9 +743,10 @@ def cmd_find_parent(args):
     info = require_config(args)
     config = load_config(info["config_path"], info["overrides"])
     adapter = get_adapter(config["tracker"])
-    if not hasattr(adapter, "find_parent"):
+    descriptor = adapter.find_parent(args.query, config)
+    if descriptor is None:
         raise Fail(EXIT_REFUSED, "%s does not support parent search" % adapter.NAME)
-    return {"ok": True, "descriptor": adapter.find_parent(args.query, config)}, 0
+    return {"ok": True, "descriptor": descriptor}, 0
 
 
 def parser():
@@ -784,7 +783,7 @@ def parser():
     s = msub.add_parser("store")
     s.add_argument("--tracker", required=True, choices=sorted(ADAPTERS))
     s.add_argument("--scope", required=True, help="Jira project key or GitHub owner/repo")
-    s.add_argument("--kind", required=True, choices=["issue-types", "fields", "labels"])
+    s.add_argument("--kind", required=True, choices=sorted({k for a in ADAPTERS.values() for k in a.METADATA_KINDS}))
     s.add_argument("--issue-type")
     s.add_argument("--input", default="-")
     s.set_defaults(fn=cmd_metadata_store)

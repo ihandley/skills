@@ -13,12 +13,18 @@ import hashlib
 import json
 import os
 import re
-import shlex
 import subprocess
 import sys
-from contextlib import contextmanager
+from contextlib import contextmanager, nullcontext
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+import hooks_host  # noqa: E402
+import lifecycle  # noqa: E402
+import selection  # noqa: E402
 
 VERSION = 1
 MAX_DEPTH = 2
@@ -139,21 +145,29 @@ def home() -> Path:
     return Path(override).expanduser() if override else Path.home()
 
 
-def resolve_root(arg: str | None) -> Path:
-    if arg:
-        root = Path(arg).expanduser().resolve()
-    else:
-        try:
-            out = subprocess.check_output(
-                ["git", "rev-parse", "--show-toplevel"],
-                text=True,
-                stderr=subprocess.DEVNULL,
-            ).strip()
-            root = Path(out)
-        except (subprocess.CalledProcessError, FileNotFoundError):
-            root = Path.cwd().resolve()
+def git_toplevel(path: Path) -> Path | None:
+    try:
+        out = subprocess.check_output(
+            ["git", "-C", str(path), "rev-parse", "--show-toplevel"],
+            text=True,
+            stderr=subprocess.DEVNULL,
+        ).strip()
+    except (subprocess.CalledProcessError, FileNotFoundError, OSError):
+        return None
+    return Path(out).resolve() if out else None
+
+
+def project_root(start: Path) -> Path:
+    """The one root policy: the git top-level of start, else start. The skill directory is refused."""
+    start = start.expanduser().resolve()
+    root = git_toplevel(start) or start
     refuse_skill_checkout(root)
+    refuse_skill_checkout(start)
     return root
+
+
+def resolve_root(arg: str | None) -> Path:
+    return project_root(Path(arg) if arg else Path.cwd())
 
 
 def refuse_skill_checkout(root: Path) -> None:
@@ -164,6 +178,23 @@ def refuse_skill_checkout(root: Path) -> None:
         f"refusing {root} because it is the stepper skill directory. "
         "Pass --root with the project root from the Stepper session line."
     )
+
+
+@dataclass(frozen=True)
+class Invocation:
+    """The project root and session key for one run, from arguments or from a hook payload."""
+
+    root: Path
+    session_key: str | None
+    platform: str | None = None
+
+    @classmethod
+    def from_args(cls, args: argparse.Namespace) -> "Invocation":
+        return cls(resolve_root(args.root), getattr(args, "session", None))
+
+    @classmethod
+    def from_payload(cls, payload: dict, platform: str) -> "Invocation":
+        return cls(hook_root(payload), session_key_from(payload, platform), platform)
 
 
 def store(_checkout: Path | None = None) -> Path:
@@ -323,7 +354,10 @@ def hook_checkouts(payload: dict) -> list[Path]:
         for item in roots:
             if not isinstance(item, str) or not item.strip():
                 continue
-            path = Path(item).expanduser().resolve()
+            try:
+                path = project_root(Path(item))
+            except StepperError:
+                continue
             if path not in found:
                 found.append(path)
     if found:
@@ -402,7 +436,7 @@ def load_json(root: Path, path: Path) -> dict:
 
 
 def session_path(root: Path, key: str) -> Path:
-    platform, _, sid = key.partition(":")
+    platform, sid = split_session_key(key)
     safe = re.sub(r"[^A-Za-z0-9._-]", "_", sid)
     return store(root) / "sessions" / f"{platform}_{safe}.json"
 
@@ -601,11 +635,7 @@ def read_contexts(root: Path) -> tuple[list[dict], list[str]]:
 
 def held_by(root: Path, session_key: str) -> list[dict]:
     contexts, _bad = read_contexts(root)
-    return [
-        ctx
-        for ctx in contexts
-        if ctx["lease"] and ctx["lease"]["session_key"] == session_key and not ctx["closed"]
-    ]
+    return lifecycle.held_by(contexts, session_key)
 
 
 def leased_by(root: Path, session_key: str) -> dict | None:
@@ -650,11 +680,6 @@ def has_outstanding(ctx: dict) -> bool:
 
 def _depends(item: dict) -> list[str]:
     return list(item.get("depends_on") or [])
-
-
-def _dep_met(ctx: dict, dep_id: str) -> bool:
-    match = next((item for item in ctx["items"] if item["id"] == dep_id), None)
-    return match is not None and match["status"] in ("verified", "cancelled")
 
 
 def _top_level(ctx: dict) -> list[dict]:
@@ -959,7 +984,7 @@ def _depth(ctx: dict, item: dict) -> int:
 
 
 def _eligible(ctx: dict, item: dict) -> bool:
-    return all(child["status"] in ("verified", "cancelled") for child in _descendants(ctx, item))
+    return selection.eligible(ctx, item)
 
 
 def _blocking_descendants(ctx: dict, item: dict, statuses: tuple[str, ...]) -> list[dict]:
@@ -978,33 +1003,6 @@ def _guard_ancestors(ctx: dict, item: dict) -> None:
             raise StepperError(
                 f"cannot change {item['id']} because {ancestor['id']} is {ancestor['status']}"
             )
-
-
-def _select_branch(ctx: dict, node: dict) -> dict | None:
-    if node["status"] != "pending":
-        return None
-    for child in _children(ctx, node["id"]):
-        chosen = _select_branch(ctx, child)
-        if chosen is not None:
-            return chosen
-    if not _children(ctx, node["id"]) or _eligible(ctx, node):
-        return node
-    return None
-
-
-def _next_hierarchical(ctx: dict, finished: dict) -> dict | None:
-    for sibling in _children(ctx, finished.get("parent_id")):
-        if sibling["id"] == finished["id"]:
-            continue
-        chosen = _select_branch(ctx, sibling)
-        if chosen is not None:
-            return chosen
-    parent = _parent(ctx, finished)
-    if parent is not None and parent["status"] == "pending" and _eligible(ctx, parent):
-        return parent
-    if parent is not None:
-        return _next_hierarchical(ctx, parent)
-    return None
 
 
 def _progress(ctx: dict) -> dict:
@@ -1050,33 +1048,6 @@ def _hierarchy_reminder(ctx: dict) -> str:
     return "Stepper: " + ". ".join(parts) + ". Stick to the active item. Brief before any new start."
 
 
-def _demote_active(ctx: dict) -> None:
-    for item in ctx["items"]:
-        if item["status"] == "active":
-            item["status"] = "pending"
-
-
-def _activate_next(ctx: dict, finished: dict | None = None) -> None:
-    if any(item.get("parent_id") for item in ctx["items"]):
-        if finished is None:
-            for item in _children(ctx, None):
-                chosen = _select_branch(ctx, item)
-                if chosen is not None:
-                    chosen["status"] = "active"
-                    return
-            return
-        chosen = _next_hierarchical(ctx, finished)
-        if chosen is not None:
-            chosen["status"] = "active"
-        return
-    pending = sorted(
-        (item for item in ctx["items"] if item["status"] == "pending"),
-        key=lambda item: item["order"],
-    )
-    if pending:
-        pending[0]["status"] = "active"
-
-
 def transition(
     ctx: dict,
     item_id: str,
@@ -1112,7 +1083,7 @@ def transition(
         raise StepperError(f"cannot move {item_id} from {current} to {new_status}")
     was_active = current == "active"
     if new_status == "active":
-        _demote_active(ctx)
+        selection.demote_active(ctx)
         item["blocked_reason"] = None
     elif new_status == "verified":
         if not evidence:
@@ -1126,7 +1097,7 @@ def transition(
         item["blocked_reason"] = None
     item["status"] = new_status
     if was_active and new_status == "verified":
-        _activate_next(ctx, item)
+        selection.activate_next(ctx, item)
 
 
 def require_holder(root: Path, session_key: str, context_id: str) -> dict:
@@ -1164,6 +1135,17 @@ def result(ctx: dict, **extra) -> dict:
     return body
 
 
+def context_ids(root: Path) -> lifecycle.ContextIds:
+    return lifecycle.ContextIds(
+        live=store(root) / "contexts",
+        archive=store(root) / "archive",
+        load=lambda context_id: load_context(root, context_id),
+        stamp=stamp,
+        refuse=open_context_error,
+        corrupt_types=(CorruptError,),
+    )
+
+
 def open_context_error(context_id: str, existing: dict) -> StepperError:
     lease = existing["lease"]
     if lease:
@@ -1177,13 +1159,8 @@ def cmd_capture(root: Path, session_key: str, context_id: str | None, items: lis
     require_session(root, session_key)
     if not context_id:
         raise StepperError("capture needs a context name")
-    path = context_path(root, context_id)
-    to_archive = None
-    if path.exists():
-        existing = load_context(root, context_id)
-        if not existing["closed"]:
-            raise open_context_error(context_id, existing)
-        to_archive = path
+    book = context_ids(root)
+    claimed = book.check_claim(context_id, session_key)
     seq = 1
     built = []
     source_hash = None
@@ -1235,10 +1212,8 @@ def cmd_capture(root: Path, session_key: str, context_id: str | None, items: lis
         "next_seq": seq,
         "items": built,
     }
-    if to_archive is not None:
-        archive = store(root) / "archive"
-        archive.mkdir(parents=True, exist_ok=True)
-        os.replace(to_archive, archive / f"{context_id}-{stamp()}.json")
+    if claimed.state is lifecycle.State.CLOSED:
+        book.archive_live(context_id)
     save_context(root, ctx)
     if source_hash:
         suggestions = load_suggestions(root)
@@ -1275,13 +1250,13 @@ def cmd_add(root: Path, session_key: str, context_id: str, items: list[str], par
         ctx["items"].append(item)
     ctx["next_seq"] = seq
     if not any(item["status"] == "active" for item in ctx["items"]):
-        _activate_next(ctx)
+        selection.activate_next(ctx)
     save_context(root, ctx)
     return result(ctx)
 
 
 def _unmet(ctx: dict, item: dict) -> list[str]:
-    return [dep for dep in _depends(item) if not _dep_met(ctx, dep)]
+    return selection.unmet(ctx, item)
 
 
 def cmd_focus(root: Path, session_key: str, context_id: str, item_id: str) -> dict:
@@ -1354,19 +1329,9 @@ def cmd_skip(root: Path, session_key: str, context_id: str) -> dict:
     held = _held(ctx)
     if held is None:
         raise StepperError("nothing to skip")
-    later = [
-        item
-        for item in _top_level(ctx)
-        if item["order"] > held["order"] and item["status"] not in ("verified", "cancelled")
-    ]
-    if not later:
-        raise StepperError("no later item")
-    nxt = later[0]
-    if held["id"] in _depends(nxt):
-        raise StepperError(f"{nxt['id']} depends on {held['id']}; hold")
-    unmet = _unmet(ctx, nxt)
-    if unmet:
-        raise StepperError(f"{nxt['id']} depends on {', '.join(unmet)}")
+    nxt, reason = selection.skip_target(ctx, held)
+    if nxt is None:
+        raise StepperError(reason)
     return cmd_focus(root, session_key, context_id, nxt["id"])
 
 
@@ -1398,12 +1363,9 @@ def cmd_order(root: Path, session_key: str, context_id: str, item_ids: list[str]
 def archive_closed(root: Path, ctx: dict) -> dict:
     ctx["closed"] = True
     ctx["paused"] = False
-    ctx["lease"] = None
+    lifecycle.release(ctx)
     save_context(root, ctx)
-    live = context_path(root, ctx["id"])
-    archive = store(root) / "archive"
-    archive.mkdir(parents=True, exist_ok=True)
-    os.replace(live, archive / f"{ctx['id']}-{stamp()}.json")
+    context_ids(root).archive_live(ctx["id"])
     return ctx
 
 
@@ -1464,9 +1426,7 @@ def cmd_replace(root: Path, session_key: str, context_id: str, items: list[str])
         raise StepperError("replace needs at least one outstanding item")
     for index, item in enumerate(outstanding):
         item["order"] = index
-    for item in ctx["items"]:
-        if item["status"] == "active":
-            item["status"] = "pending"
+    selection.demote_active(ctx)
     outstanding[0]["status"] = "active"
     ctx["next_seq"] = seq
     save_context(root, ctx)
@@ -1488,25 +1448,26 @@ def cmd_detach(root: Path, session_key: str, context_id: str) -> dict:
             return {"ok": True, "context": None, "reminder": "Stepper: this session holds no context."}
         names = ", ".join(item["id"] for item in held)
         raise StepperError(f"session {session_key} holds {names}, not {context_id}")
-    ctx["lease"] = None
+    lifecycle.release(ctx)
     save_context(root, ctx)
     return result(ctx)
 
 
 def cmd_attach(root: Path, session_key: str, context_id: str, take: bool) -> dict:
     require_session(root, session_key)
-    ctx = load_context(root, context_id)
-    if ctx["closed"]:
-        raise StepperError(f"context {context_id} is closed")
-    lease = ctx["lease"]
-    if lease and lease["session_key"] == session_key:
-        return result(ctx)
-    if lease and not take:
-        raise StepperError(
-            f"context {context_id} is held by {lease['session_key']}. "
+    seen = context_ids(root).check_attach(
+        context_id, session_key, take,
+        missing=StepperError(f"no context {context_id}"),
+        closed=StepperError(f"context {context_id} is closed"),
+        held=lambda ctx: StepperError(
+            f"context {context_id} is held by {ctx['lease']['session_key']}. "
             "Pass --take only after the user asks to continue that work in this session."
-        )
-    ctx["lease"] = {"session_key": session_key, "acquired_at": now()}
+        ),
+    )
+    ctx = seen.ctx
+    if seen.state is lifecycle.State.HELD_BY_ME:
+        return result(ctx)
+    lifecycle.take(ctx, session_key, now())
     save_context(root, ctx)
     return result(ctx)
 
@@ -1623,7 +1584,7 @@ def mark_offered(root: Path, session_key: str, candidate: dict) -> None:
 def release_lease(root: Path, session_key: str) -> None:
     for ctx in held_by(root, session_key):
         items = json.dumps(ctx["items"])
-        ctx["lease"] = None
+        lifecycle.release(ctx)
         save_context(root, ctx)
         saved = load_context(root, ctx["id"])
         if json.dumps(saved["items"]) != items:
@@ -1648,19 +1609,28 @@ def event_allowed(event: str, platform: str) -> bool:
 def hook_root(payload: dict) -> Path:
     roots = payload.get("workspace_roots") or []
     if roots:
-        return Path(str(roots[0])).expanduser().resolve()
+        return project_root(Path(str(roots[0])))
     cwd = payload.get("cwd")
     if isinstance(cwd, str) and cwd.strip():
-        return Path(cwd).expanduser().resolve()
-    return Path.cwd()
+        return project_root(Path(cwd))
+    return project_root(Path.cwd())
+
+
+def join_session_key(platform: str, ident: str) -> str:
+    return f"{platform}:{ident}"
+
+
+def split_session_key(key: str) -> tuple[str, str]:
+    platform, _, ident = key.partition(":")
+    return platform, ident
 
 
 def session_key_from(payload: dict, platform: str) -> str | None:
     if platform == "cursor":
         ident = payload.get("conversation_id") or payload.get("session_id")
-        return f"cursor:{ident}" if ident else None
-    ident = payload.get("session_id")
-    return f"claude:{ident}" if ident else None
+    else:
+        ident = payload.get("session_id")
+    return join_session_key(platform, str(ident)) if ident else None
 
 
 def generation_of(payload: dict) -> str | None:
@@ -1678,11 +1648,11 @@ def consider_candidate(root: Path, sess: dict, candidate: dict | None, _ctx: dic
     sess["candidate_generation"] = generation
 
 
-def handle_hook(root: Path, platform: str, payload: dict) -> dict | None:
+def handle_hook(inv: Invocation, payload: dict) -> dict | None:
+    root, platform, key = inv.root, inv.platform, inv.session_key
     event = payload.get("hook_event_name") or ""
     if not event_allowed(event, platform):
         return None
-    key = session_key_from(payload, platform)
     if not key:
         return None
     generation = generation_of(payload)
@@ -1860,203 +1830,49 @@ def _hook_json(platform: str, event: str, text: str | None) -> dict | None:
     return None
 
 
-def hook_command(platform: str) -> str:
-    script = Path(__file__).resolve()
-    return (
-        f"{shlex.quote(sys.executable)} {shlex.quote(str(script))} "
-        f"hook --platform {platform} --tag stepper"
+def hook_spec() -> hooks_host.Spec:
+    return hooks_host.Spec(
+        tag="stepper",
+        state_dir=home() / ".stepper",
+        script=Path(__file__).resolve(),
+        events={
+            "cursor": [
+                hooks_host.Event("sessionStart"),
+                hooks_host.Event("sessionEnd"),
+                hooks_host.Event("beforeSubmitPrompt"),
+                hooks_host.Event("afterAgentResponse"),
+                hooks_host.Event("postToolUse"),
+                hooks_host.Event("stop", extra={"loop_limit": 1}),
+                hooks_host.Event("preCompact"),
+            ],
+            "claude": [
+                hooks_host.Event("SessionStart", matcher="startup|resume|compact"),
+                hooks_host.Event("SessionEnd"),
+                hooks_host.Event("UserPromptSubmit"),
+                hooks_host.Event("PostToolUse"),
+                hooks_host.Event("Stop"),
+                hooks_host.Event("PreCompact"),
+            ],
+        },
     )
 
 
-def config_paths(platform: str) -> tuple[Path, Path]:
-    base = home()
-    if platform == "cursor":
-        return base / ".cursor" / "hooks.json", base / ".stepper" / "hook-install.json"
-    return base / ".claude" / "settings.json", base / ".stepper" / "hook-install.json"
-
-
-def load_receipt() -> dict:
-    path = home() / ".stepper" / "hook-install.json"
-    if not path.exists():
-        return {}
-    return json.loads(path.read_text())
-
-
-def save_receipt(data: dict) -> None:
-    path = home() / ".stepper" / "hook-install.json"
-    path.parent.mkdir(parents=True, exist_ok=True)
-    atomic_write(path, json.dumps(data, indent=2) + "\n")
-
-
-def ours(command: str | None, platform: str) -> bool:
-    return bool(command and "--tag stepper" in command and f"--platform {platform}" in command)
-
-
-def read_settings(path: Path) -> tuple[dict, bool]:
-    if not path.exists():
-        return {}, False
-    raw = path.read_bytes()
-    try:
-        data = json.loads(raw.decode())
-    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
-        raise StepperError(f"refusing to edit {path}: not valid JSON") from exc
-    if not isinstance(data, dict):
-        raise StepperError(f"refusing to edit {path}: expected a JSON object")
-    return data, True
-
-
-def backup(path: Path, platform: str) -> None:
-    if not path.exists():
-        return
-    dest = home() / ".stepper" / "backups" / f"{platform}-{stamp()}.json"
-    dest.parent.mkdir(parents=True, exist_ok=True)
-    dest.write_bytes(path.read_bytes())
-
-
-def write_settings(path: Path, data: dict) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    atomic_write(path, json.dumps(data, indent=2) + "\n")
-
-
 def install_hooks(platform: str) -> dict:
-    path, _receipt_path = config_paths(platform)
-    data, existed = read_settings(path)
-    added_hooks_key = existed and "hooks" not in data
-    command = hook_command(platform)
-    hooks = data.setdefault("hooks", {})
-    if platform == "cursor":
-        if "version" not in data and not existed:
-            data["version"] = 1
-        specs = {
-            "sessionStart": {},
-            "sessionEnd": {},
-            "beforeSubmitPrompt": {},
-            "afterAgentResponse": {},
-            "postToolUse": {},
-            "stop": {"loop_limit": 1},
-            "preCompact": {},
-        }
-        for event, extra in specs.items():
-            entries = hooks.setdefault(event, [])
-            if any(entry.get("command") == command for entry in entries):
-                continue
-            entry = {"command": command}
-            entry.update(extra)
-            entries.append(entry)
-    else:
-        groups = {
-            "SessionStart": "startup|resume|compact",
-            "SessionEnd": None,
-            "UserPromptSubmit": None,
-            "PostToolUse": None,
-            "Stop": None,
-            "PreCompact": None,
-        }
-        for event, matcher in groups.items():
-            found = None
-            for group in hooks.setdefault(event, []):
-                if group.get("matcher") == matcher or (matcher is None and "matcher" not in group):
-                    found = group
-                    break
-            if found is None:
-                found = {"hooks": []}
-                if matcher:
-                    found["matcher"] = matcher
-                hooks[event].append(found)
-            if any(item.get("command") == command for item in found["hooks"]):
-                continue
-            found["hooks"].append({"type": "command", "command": command})
-    backup(path, platform)
-    write_settings(path, data)
-    receipt = load_receipt()
-    receipt[platform] = {
-        "path": str(path),
-        "created_file": not existed,
-        "added_hooks_key": added_hooks_key,
-    }
-    save_receipt(receipt)
-    return {"ok": True, "platform": platform, "path": str(path), "installed": True}
-
-
-def _strip_cursor(hooks: dict, platform: str) -> None:
-    for event in list(hooks):
-        kept = [entry for entry in hooks[event] if not ours(entry.get("command"), platform)]
-        if kept:
-            hooks[event] = kept
-        else:
-            del hooks[event]
-
-
-def _strip_claude(hooks: dict, platform: str) -> None:
-    for event in list(hooks):
-        kept_groups = []
-        for group in hooks[event]:
-            if "hooks" not in group:
-                kept_groups.append(group)
-                continue
-            group["hooks"] = [
-                item for item in group["hooks"] if not ours(item.get("command"), platform)
-            ]
-            if group["hooks"]:
-                kept_groups.append(group)
-        if kept_groups:
-            hooks[event] = kept_groups
-        else:
-            del hooks[event]
+    try:
+        return hooks_host.install(hook_spec(), home(), platform)
+    except hooks_host.HostError as exc:
+        raise StepperError(str(exc)) from exc
 
 
 def uninstall_hooks(platform: str) -> dict:
-    path, _receipt_path = config_paths(platform)
-    if not path.exists():
-        return {"ok": True, "platform": platform, "path": str(path), "installed": False}
-    data, _existed = read_settings(path)
-    receipt = load_receipt().get(platform) or {}
-    hooks = data.get("hooks")
-    if isinstance(hooks, dict):
-        if platform == "cursor":
-            _strip_cursor(hooks, platform)
-        else:
-            _strip_claude(hooks, platform)
-        if not hooks and receipt.get("added_hooks_key"):
-            data.pop("hooks", None)
-    backup(path, platform)
-    if isinstance(data.get("hooks"), dict) and not data["hooks"]:
-        data.pop("hooks", None)
-    leftover = {
-        key: value
-        for key, value in data.items()
-        if not (key == "version" and receipt.get("created_file"))
-    }
-    if receipt.get("created_file") and not leftover:
-        path.unlink()
-    else:
-        write_settings(path, data)
-    return {"ok": True, "platform": platform, "path": str(path), "installed": False}
+    try:
+        return hooks_host.uninstall(hook_spec(), home(), platform)
+    except hooks_host.HostError as exc:
+        raise StepperError(str(exc)) from exc
 
 
 def hooks_status() -> dict:
-    report = {"ok": True}
-    for platform in ("cursor", "claude"):
-        path, _receipt = config_paths(platform)
-        installed = []
-        if path.exists():
-            try:
-                data, _existed = read_settings(path)
-            except StepperError as exc:
-                report[platform] = {"path": str(path), "error": str(exc)}
-                continue
-            hooks = data.get("hooks") or {}
-            if platform == "cursor":
-                for event, entries in hooks.items():
-                    if any(ours(entry.get("command"), platform) for entry in entries):
-                        installed.append(event)
-            else:
-                for event, groups in hooks.items():
-                    for group in groups:
-                        if any(ours(item.get("command"), platform) for item in group.get("hooks") or []):
-                            installed.append(event)
-        report[platform] = {"path": str(path), "installed": bool(installed), "events": installed}
-    return report
+    return hooks_host.status(hook_spec(), home())
 
 
 def emit(data: dict, code: int = 0) -> int:
@@ -2065,7 +1881,7 @@ def emit(data: dict, code: int = 0) -> int:
 
 
 def run_command(args: argparse.Namespace) -> dict:
-    root = resolve_root(args.root)
+    root = Invocation.from_args(args).root
     context_id = getattr(args, "context", None)
     with locked(root, block=True):
         if args.cmd == "capture":
@@ -2227,16 +2043,25 @@ def main(argv: list[str] | None = None) -> int:
                 return 0
             if not isinstance(payload, dict):
                 return 0
-            root = hook_root(payload)
             try:
-                with locked(root, block=False):
-                    for extra in hook_checkouts(payload):
-                        if extra != root:
-                            import_checkout(extra)
-                    output = handle_hook(root, args.platform, payload)
+                inv = Invocation.from_payload(payload, args.platform)
+            except StepperError:
+                return 0
+            checkouts = hook_checkouts(payload)
+            needs_store = store(inv.root).is_dir() or any(
+                (path / ".stepper").is_dir() for path in checkouts
+            )
+            guard = locked(inv.root, block=False) if needs_store else nullcontext()
+            try:
+                with guard:
+                    if needs_store:
+                        for extra in checkouts:
+                            if extra != inv.root:
+                                import_checkout(extra)
+                    output = handle_hook(inv, payload)
                     leftovers = []
                     seen = set()
-                    for extra in hook_checkouts(payload):
+                    for extra in checkouts:
                         for item in checkout_leftovers(extra):
                             marker = (item.get("path"), item.get("reason"))
                             if marker in seen:

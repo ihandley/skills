@@ -1,0 +1,5 @@
+interface:
+  display_name: "Friction"
+  short_description: "Review one pasted workflow"
+policy:
+  allow_implicit_invocation: false

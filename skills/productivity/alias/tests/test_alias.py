@@ -233,6 +233,59 @@ class AliasTests(unittest.TestCase):
         _, status = self.run_cli("hooks", "status")
         self.assertFalse(status["claude"]["installed"])
 
+    def settings(self, platform):
+        rel = Path(".claude") / "settings.json" if platform == "claude" else Path(".cursor") / "hooks.json"
+        return self.home / rel
+
+    def test_install_registers_the_same_events_as_before(self):
+        self.run_cli("hooks", "install", "claude")
+        claude = json.loads(self.settings("claude").read_text())["hooks"]
+        self.assertEqual(sorted(claude), ["PostToolUse", "PreToolUse", "SessionStart"])
+        self.assertEqual(claude["PostToolUse"][0]["matcher"], "mcp__acme__find_employee")
+        self.run_cli("hooks", "install", "cursor")
+        cursor = json.loads(self.settings("cursor").read_text())
+        self.assertEqual(cursor["version"], 1)
+        self.assertEqual(sorted(cursor["hooks"]), ["postToolUse", "preToolUse", "sessionStart"])
+
+    def test_install_leaves_a_receipt_and_no_temp_file(self):
+        self.run_cli("hooks", "install", "claude")
+        receipt = json.loads((self.home / ".alias" / "hook-install.json").read_text())
+        self.assertTrue(receipt["claude"]["created_file"])
+        self.assertEqual(list(self.settings("claude").parent.glob("*.tmp")), [])
+        self.assertEqual(list((self.home / ".alias").glob("*.tmp")), [])
+
+    def test_uninstall_removes_a_settings_file_the_install_created(self):
+        for platform in ("claude", "cursor"):
+            self.run_cli("hooks", "install", platform)
+            self.assertTrue(self.settings(platform).exists())
+            self.run_cli("hooks", "uninstall", platform)
+            self.assertFalse(self.settings(platform).exists(), platform)
+
+    def test_uninstall_keeps_a_settings_file_it_did_not_create(self):
+        path = self.settings("claude")
+        path.parent.mkdir(parents=True)
+        path.write_text(json.dumps({"theme": "dark"}))
+        self.run_cli("hooks", "install", "claude")
+        self.run_cli("hooks", "uninstall", "claude")
+        self.assertEqual(json.loads(path.read_text()), {"theme": "dark"})
+
+    def test_install_backs_up_an_existing_settings_file(self):
+        path = self.settings("claude")
+        path.parent.mkdir(parents=True)
+        path.write_text(json.dumps({"theme": "dark"}))
+        self.run_cli("hooks", "install", "claude")
+        backups = list((self.home / ".alias" / "backups").glob("claude-*.json"))
+        self.assertEqual([json.loads(b.read_text()) for b in backups], [{"theme": "dark"}])
+
+    def test_a_settings_file_that_is_not_json_is_refused_and_left_alone(self):
+        path = self.settings("claude")
+        path.parent.mkdir(parents=True)
+        path.write_text("{oops")
+        code, data = self.run_cli("hooks", "install", "claude")
+        self.assertEqual(code, 1)
+        self.assertIn("not valid JSON", data["error"])
+        self.assertEqual(path.read_text(), "{oops")
+
     def test_extract_must_have_one_group(self):
         self.config.write_text(
             "cache: {cache}\ntools:\n  - tool: t\n    query: q\n    type: person\n    id: employee\n    extract: 'no group'\n".format(

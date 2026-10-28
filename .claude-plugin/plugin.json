@@ -20,6 +20,7 @@
     "./skills/engineering/skill-compress",
     "./skills/engineering/pr-review",
     "./skills/engineering/dependabot-review",
+    "./skills/engineering/friction",
     "./skills/engineering/pr-queue",
     "./skills/productivity/terse",
     "./skills/productivity/stepper",

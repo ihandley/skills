@@ -390,6 +390,21 @@ class JiraMetadataTests(Base):
         code, data, _ = self.draft(jira_payload(fields={"customfield_1": {"value": "Edge"}}))
         self.assertEqual(code, 0, data)
 
+    def test_extra_default_by_id_validates_once_metadata_is_cached(self):
+        self.store("fields", {"fields": [
+            {"fieldId": "customfield_10001", "required": True, "name": "Team",
+             "allowedValues": [{"id": "team-1", "value": "Core"}, {"id": "team-2", "value": "Edge"}]},
+        ]}, "Task")
+        code, data, _ = self.draft(jira_payload())
+        self.assertEqual(code, 0, data)
+
+    def test_unknown_name_fails_and_lists_allowed_names(self):
+        self.store_select()
+        code, data, _ = self.draft(jira_payload(fields={"customfield_1": {"value": "Nope"}}))
+        self.assertEqual(code, 2)
+        error = next(e for e in data["errors"] if e["code"] == "bad_value")
+        self.assertIn("Core, Edge", error["message"])
+
     def test_unknown_id_fails_and_lists_allowed_names(self):
         self.store_select()
         code, data, _ = self.draft(jira_payload(fields={"customfield_1": {"id": "999"}}))
@@ -568,6 +583,61 @@ class GithubTests(Base):
         self.assertEqual(code, 2)
         code, data, _ = self.draft({"operation": "update", "key": "PROJ-1", "summary": "x"})
         self.assertEqual(code, 2)
+
+
+class UnsupportedMetadataKindTests(Base):
+    def test_each_tracker_returns_a_json_error_not_a_traceback(self):
+        self.write_config(JIRA_TOML)
+        cases = [("jira", "PROJ", "labels"), ("github", "acme/repo", "fields")]
+        for tracker, scope, kind in cases:
+            with self.subTest(tracker=tracker, kind=kind):
+                code, data, stderr = self.run_cli(
+                    "metadata", "store", "--tracker", tracker, "--scope", scope,
+                    "--kind", kind, "--issue-type", "Task", stdin={})
+                self.assertNotEqual(code, 0)
+                self.assertFalse(data["ok"])
+                self.assertIn(kind, data["error"])
+                self.assertNotIn("Traceback", stderr)
+
+
+class AdapterContractTests(unittest.TestCase):
+    """The same checks run against every registered adapter."""
+
+    def adapters(self):
+        sys.path.insert(0, str(TICKETER.parent))
+        from adapters import ADAPTERS
+        return ADAPTERS.values()
+
+    def test_each_adapter_declares_the_interface(self):
+        for adapter in self.adapters():
+            with self.subTest(adapter=adapter.NAME):
+                self.assertTrue(set(adapter.FIELDS.values()) <= {"str", "list", "object"})
+                self.assertEqual(adapter.DRAFT_KEYS, set(adapter.FIELDS))
+                self.assertTrue(set(adapter.DISPLAY_ORDER) <= adapter.DRAFT_KEYS)
+                self.assertTrue(adapter.MERGE_LIST_KEYS <= adapter.DRAFT_KEYS)
+                self.assertTrue(adapter.METADATA_KINDS)
+                self.assertTrue(callable(adapter.find_parent))
+
+    def test_scope_and_validation_handle_an_empty_draft(self):
+        for adapter in self.adapters():
+            with self.subTest(adapter=adapter.NAME):
+                draft = {"operation": "create"}
+                self.assertIsInstance(adapter.scope(draft), str)
+                self.assertIsInstance(adapter.validate(draft, {}, None), list)
+
+    def test_unsupported_metadata_kind_is_a_value_error_or_not_listed(self):
+        for adapter in self.adapters():
+            with self.subTest(adapter=adapter.NAME):
+                self.assertNotIn("no-such-kind", adapter.METADATA_KINDS)
+                with self.assertRaises(ValueError):
+                    adapter.store_metadata({}, "no-such-kind", {}, "Task")
+
+    def test_cli_metadata_kinds_come_from_the_adapters(self):
+        proc = subprocess.run([sys.executable, str(TICKETER), "metadata", "store", "--help"],
+                              text=True, capture_output=True, check=False)
+        for adapter in self.adapters():
+            for kind in adapter.METADATA_KINDS:
+                self.assertIn(kind, proc.stdout)
 
 
 if __name__ == "__main__":

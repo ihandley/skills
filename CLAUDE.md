@@ -21,3 +21,5 @@ Every `SKILL.md` is either user-invoked (`disable-model-invocation: true` plus `
 To (re)link every skill outside `deprecated/` and `misc/` into the local harness skill directories (`~/.claude/skills`, `~/.agents/skills`), run `scripts/link-skills.sh`. Each entry is a symlink into this repo, so a `git pull` keeps installed skills current. Re-run the script after adding, removing, or renaming a skill.
 
 Shared vocabulary for the skills themselves lives in `GLOSSARY.md`. Rejections of a concept live as one file each under `.out-of-scope/`. See `SCOPE.md`.
+
+To promote, rename, or remove a skill: move the folder, run `python3 scripts/promotion.py generate` to rewrite the plugin manifest and the README skill lists, write the docs page, then run `python3 scripts/promotion.py check`. It reads the skills on disk and fails when the manifest, READMEs, agent manifests, docs pages, install commands, or archived pages disagree. When a promoted skill is removed outright, add `<bucket>/<name>` to `.agents/removed-skills.txt` so its archived page stays enforced.

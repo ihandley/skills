@@ -5,9 +5,14 @@ from __future__ import annotations
 import re
 
 NAME = "github"
-DRAFT_KEYS = {
-    "operation", "key", "summary", "description", "labels", "assignees", "milestone", "repo", "issue_type",
+FIELDS = {
+    "operation": "str", "key": "str", "summary": "str", "description": "str", "labels": "list",
+    "assignees": "list", "milestone": "str", "repo": "str", "issue_type": "str",
 }
+DRAFT_KEYS = set(FIELDS)
+MERGE_LIST_KEYS = {"labels"}
+DISPLAY_ORDER = ("key", "repo", "issue_type", "summary", "assignees", "milestone", "labels")
+METADATA_KINDS = ("labels",)
 IDENT_KEYS = ("repo",)
 SUPPORTS_EXTRA = False
 NORMALIZE_LABELS = False
@@ -50,6 +55,11 @@ def metadata_needs(draft, scope_value):
         "kind": "labels", "operation": "github.list_labels", "payload": {"repo": repo},
         "then": "ticketer.py metadata store --tracker github --scope %s --kind labels --input -" % repo,
     }]
+
+
+def find_parent(query, config):
+    """GitHub issues have no parent search."""
+    return None
 
 
 def store_metadata(data, kind, raw, issue_type):

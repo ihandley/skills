@@ -184,6 +184,67 @@ class TurnTests(unittest.TestCase):
         ]
         self.assertEqual(left, ["echo keep"])
 
+    def settings(self, platform):
+        rel = Path(".claude") / "settings.json" if platform == "claude" else Path(".cursor") / "hooks.json"
+        return self.home / rel
+
+    def cli(self, *args):
+        return subprocess.run(
+            [sys.executable, str(TURN), *args], text=True, capture_output=True, env=self.env, check=False
+        )
+
+    def test_install_registers_the_same_events_as_before(self):
+        self.cli("hooks", "install", "claude")
+        claude = json.loads(self.settings("claude").read_text())["hooks"]
+        self.assertEqual(sorted(claude), ["SessionStart", "UserPromptSubmit"])
+        self.assertEqual(claude["SessionStart"][0]["matcher"], "startup|resume|compact")
+        self.assertNotIn("matcher", claude["UserPromptSubmit"][0])
+        self.cli("hooks", "install", "cursor")
+        cursor = json.loads(self.settings("cursor").read_text())
+        self.assertEqual(cursor["version"], 1)
+        self.assertEqual(sorted(cursor["hooks"]), ["beforeSubmitPrompt", "sessionStart"])
+
+    def test_install_leaves_a_receipt_and_no_temp_file(self):
+        self.cli("hooks", "install", "claude")
+        receipt = json.loads((self.home / ".understand" / "hook-install.json").read_text())
+        self.assertTrue(receipt["claude"]["created_file"])
+        self.assertEqual(list(self.settings("claude").parent.glob("*.tmp")), [])
+
+    def test_uninstall_removes_a_settings_file_the_install_created(self):
+        for platform in ("claude", "cursor"):
+            self.cli("hooks", "install", platform)
+            self.assertTrue(self.settings(platform).exists())
+            self.cli("hooks", "uninstall", platform)
+            self.assertFalse(self.settings(platform).exists(), platform)
+
+    def test_uninstall_keeps_a_settings_file_it_did_not_create(self):
+        path = self.settings("claude")
+        path.parent.mkdir(parents=True)
+        path.write_text(json.dumps({"theme": "dark"}))
+        self.cli("hooks", "install", "claude")
+        self.cli("hooks", "uninstall", "claude")
+        self.assertEqual(json.loads(path.read_text()), {"theme": "dark"})
+
+    def test_status_reports_installed_events(self):
+        self.cli("hooks", "install", "claude")
+        status = json.loads(self.cli("hooks", "status").stdout)
+        self.assertTrue(status["claude"]["installed"])
+        self.assertFalse(status["cursor"]["installed"])
+
+    def test_a_settings_file_that_is_not_json_is_refused_and_left_alone(self):
+        path = self.settings("claude")
+        path.parent.mkdir(parents=True)
+        path.write_text("{oops")
+        proc = self.cli("hooks", "install", "claude")
+        self.assertEqual(proc.returncode, 1)
+        self.assertIn("not valid JSON", json.loads(proc.stdout)["error"])
+        self.assertEqual(path.read_text(), "{oops")
+
+    def test_host_module_matches_the_other_copies(self):
+        here = TURN.parent / "hooks_host.py"
+        other = TURN.parents[2] / "productivity" / "alias" / "hooks_host.py"
+        self.assertEqual(here.read_text(), other.read_text())
+
 
 if __name__ == "__main__":
     unittest.main()
