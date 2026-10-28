@@ -51,7 +51,7 @@ def unmet(ctx: dict, item: dict) -> list[str]:
 
 
 def _branch(ctx: dict, node: dict) -> dict | None:
-    if node["status"] != "pending":
+    if node["status"] != "pending" or unmet(ctx, node):
         return None
     for child in children(ctx, node["id"]):
         chosen = _branch(ctx, child)
@@ -70,7 +70,7 @@ def _after(ctx: dict, finished: dict) -> dict | None:
         if chosen is not None:
             return chosen
     parent = parent_of(ctx, finished)
-    if parent is not None and parent["status"] == "pending" and eligible(ctx, parent):
+    if parent is not None and parent["status"] == "pending" and eligible(ctx, parent) and not unmet(ctx, parent):
         return parent
     if parent is not None:
         return _after(ctx, parent)

@@ -1548,6 +1548,31 @@ class StepperTests(unittest.TestCase):
         self.assertEqual(self.item(skipped, "AC-4")["status"], "active")
         self.assertEqual(self.item(skipped, "AC-3")["status"], "blocked")
 
+    def test_add_after_a_block_leaves_the_dependent_successor_pending(self):
+        self.capture()
+        self.cli("block", "--session", "cursor:aaa", "AC-3", "--reason", "waiting on Blaze")
+        code, added = self.cli("add", "--session", "cursor:aaa", "--item", "AC-5: audit log")
+        self.assertEqual(code, 0)
+        self.assertEqual(self.item(added, "AC-4")["status"], "pending")
+        self.assertEqual(self.item(added, "AC-5")["status"], "pending")
+        self.assertEqual(self.item(added, "AC-3")["status"], "blocked")
+        self.assertFalse([i for i in added["context"]["items"] if i["status"] == "active"])
+
+    def test_add_agrees_with_skip_about_the_dependent_successor(self):
+        self.capture()
+        self.cli("block", "--session", "cursor:aaa", "AC-3", "--reason", "waiting on Blaze")
+        code, denied = self.cli("skip", "--session", "cursor:aaa")
+        self.assertEqual(code, 1)
+        code, added = self.cli("add", "--session", "cursor:aaa", "--item", "AC-5: audit log")
+        self.assertNotEqual(self.item(added, "AC-4")["status"], "active")
+
+    def test_add_while_an_item_is_active_leaves_focus_where_it_was(self):
+        self.capture()
+        code, added = self.cli("add", "--session", "cursor:aaa", "--item", "AC-5: audit log")
+        self.assertEqual(code, 0)
+        self.assertEqual(self.item(added, "AC-3")["status"], "active")
+        self.assertEqual([i["id"] for i in added["context"]["items"] if i["status"] == "active"], ["AC-3"])
+
     def test_order_marks_an_item_free_so_skip_can_pass_the_held_item(self):
         self.capture()
         self.cli("block", "--session", "cursor:aaa", "AC-3", "--reason", "waiting on Blaze")
