@@ -390,6 +390,21 @@ class JiraMetadataTests(Base):
         code, data, _ = self.draft(jira_payload(fields={"customfield_1": {"value": "Edge"}}))
         self.assertEqual(code, 0, data)
 
+    def test_extra_default_by_id_validates_once_metadata_is_cached(self):
+        self.store("fields", {"fields": [
+            {"fieldId": "customfield_10001", "required": True, "name": "Team",
+             "allowedValues": [{"id": "team-1", "value": "Core"}, {"id": "team-2", "value": "Edge"}]},
+        ]}, "Task")
+        code, data, _ = self.draft(jira_payload())
+        self.assertEqual(code, 0, data)
+
+    def test_unknown_name_fails_and_lists_allowed_names(self):
+        self.store_select()
+        code, data, _ = self.draft(jira_payload(fields={"customfield_1": {"value": "Nope"}}))
+        self.assertEqual(code, 2)
+        error = next(e for e in data["errors"] if e["code"] == "bad_value")
+        self.assertIn("Core, Edge", error["message"])
+
     def test_unknown_id_fails_and_lists_allowed_names(self):
         self.store_select()
         code, data, _ = self.draft(jira_payload(fields={"customfield_1": {"id": "999"}}))

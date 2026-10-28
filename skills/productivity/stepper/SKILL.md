@@ -12,7 +12,7 @@ metadata:
 
 # Stepper
 
-One ordered list. One active item. The CLI in this directory is the source of truth. Leave files under `.stepper/` untouched; report the CLI error. Record evidence only for a criterion you have actually established, and pass that sentence to `verify`.
+A session may hold several contexts. Each context is one ordered list with one active item. The CLI in this directory is the source of truth. Leave files in the home store untouched; report the CLI error. Record evidence only for a criterion you have actually established, and pass that sentence to `verify`.
 
 **Brief.** The status spoken when an item becomes active, and again when the user moves to start something else: what is done, what is left, what is blocked, and where this item sits.
 
@@ -24,11 +24,11 @@ One ordered list. One active item. The CLI in this directory is the source of tr
 
 ## Session
 
-Run `python3 <this-skill>/stepper.py` from any directory. Pass `--session` and `--root` on every command that changes state. Copy both from a hook message that starts with `Stepper session:`. That line names the project root the hook registered. The session key looks like `cursor:<conversation_id>` or `claude:<session_id>`. Do not construct a key from a transcript path, filename, or any other UUID. Do not ask the user to approve a key you constructed. If that hook message is absent, say that the hook did not provide a session key, and stop. If the CLI says the root is the stepper skill directory, pass the project root from the hook line.
+Run `python3 <this-skill>/stepper.py` from any directory. Pass `--session`, `--root`, and `--context` on every command that changes state. Copy `--session` and `--root` from a hook message that starts with `Stepper session:`. That line names the checkout the hook registered. `--root` is that checkout. It is not where the list is stored. The list is stored in the home store, `~/.stepper`. `--context` is the list's name. The session key looks like `cursor:<conversation_id>` or `claude:<session_id>`. Do not construct a key from a transcript path, filename, or any other UUID. Do not ask the user to approve a key you constructed. If that hook message is absent, say that the hook did not provide a session key, and stop. If the CLI says the root is the stepper skill directory, pass the checkout from the hook line.
 
 Flags for a command are `python3 <this-skill>/stepper.py <command> -h`.
 
-Done when every state change in this turn passed `--session` and `--root` from that line.
+Done when every state change in this turn passed `--session` and `--root` from that line, and `--context` with the name of the list.
 
 ## Brief
 

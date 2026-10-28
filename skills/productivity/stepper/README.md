@@ -137,17 +137,18 @@ Blocked and deferred work remains outstanding. Closing tracking does not mark un
 
 ## Sessions and persistence
 
-Stepper stores state under `.stepper/` in the **working repository**, separate from the installed skill. This directory is locally excluded from Git using `.git/info/exclude`; it is not committed to the project's `.gitignore`.
+Stepper stores state under `~/.stepper` in the home directory, separate from the installed skill and from the checkout. Nothing is written into the project's git exclude or `.gitignore`.
 
 - Each tracked context has its own JSON file.
 - Each Cursor conversation or Claude Code session has a separate session binding.
 - A context is leased to one session at a time, preventing two conversations from silently changing the same tracked list.
-- A new capture never overwrites another session's open list. Without `--context` it takes the first free id of `default`, `default-2`, `default-3`.
+- A session may hold several contexts. Each command that changes one names it.
+- A new capture never overwrites another session's open list. Capture names the context. An open name is refused, and the lease stays where it is.
 - The same supported session can recover its state after resume or compaction.
 - A **new** conversation does not automatically take over an existing context. Ask it to continue that tracked work explicitly; takeover requires your authorization.
 - A crashed session may retain its lease until you explicitly transfer it.
 
-Hooks pass the session identifier and the project root to the agent. The agent copies both from the `Stepper session:` line and does not construct a key from a transcript path. **Do not manually edit files in `.stepper/`.**
+Hooks pass the session identifier and the checkout to the agent. The agent copies both from the `Stepper session:` line and does not construct a key from a transcript path. A command that changes a list also passes that list's name as `--context`. **Do not manually edit files in `~/.stepper`.**
 
 ## CLI reference
 
@@ -157,14 +158,15 @@ Most users should not need to run these commands directly. For troubleshooting o
 python3 stepper.py status --root /path/to/project
 python3 stepper.py status --session 'cursor:<conversation-id>' --root /path/to/project
 python3 stepper.py capture --session 'cursor:<conversation-id>' --root /path/to/project \
+  --context auth-fix \
   --item 'AC-3: reset email is sent' \
   --item 'AC-4: expired tokens are rejected'
-python3 stepper.py focus --session 'cursor:<conversation-id>' --root /path/to/project AC-4
-python3 stepper.py verify --session 'cursor:<conversation-id>' --root /path/to/project AC-3 \
+python3 stepper.py focus --session 'cursor:<conversation-id>' --root /path/to/project --context auth-fix AC-4
+python3 stepper.py verify --session 'cursor:<conversation-id>' --root /path/to/project --context auth-fix AC-3 \
   --evidence 'Integration test passed'
-python3 stepper.py pause --session 'cursor:<conversation-id>' --root /path/to/project
-python3 stepper.py resume --session 'cursor:<conversation-id>' --root /path/to/project
-python3 stepper.py close --session 'cursor:<conversation-id>' --root /path/to/project
+python3 stepper.py pause --session 'cursor:<conversation-id>' --root /path/to/project --context auth-fix
+python3 stepper.py resume --session 'cursor:<conversation-id>' --root /path/to/project --context auth-fix
+python3 stepper.py close --session 'cursor:<conversation-id>' --root /path/to/project --context auth-fix
 ```
 
 The agent should supply the session key and project root from the hook line, not the placeholders above. Other commands include `add`, `block`, `unblock`, `defer`, `cancel`, `attach`, `detach`, and `decline`.

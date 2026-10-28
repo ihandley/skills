@@ -13,7 +13,7 @@ Reach for it when you want to walk one feature through to the end without losing
 ## Common questions
 
 **Where does the list live?**
-In `.stepper/` inside the project named on the `Stepper session:` line. Commands pass that path as `--root`. The skill directory itself is refused. The repository that contains the skill is a normal project root.
+In `~/.stepper` on this machine, outside any checkout. The `Stepper session:` line names the checkout. Commands pass that path as `--root` so a list about one repo can record that repo's origin. The checkout itself gains no store. The skill directory is refused as a checkout. The repository that contains the skill is a normal checkout.
 
 **What happens when the active item is blocked?**
 Stepper recommends waiting, and says why. You can skip to the next item when that item does not depend on the blocked one. Skipping is available. Waiting is the recommendation.

@@ -1,6 +1,6 @@
 # Replace
 
-The user explicitly says to drop this list or replace it. An inference that priorities changed is not that request. Another session's list stays. A corrupt context stays in place. Do not delete `.stepper/` for the repo, and do not pick a new context id to get around a corrupt file.
+The user explicitly says to drop this list or replace it. An inference that priorities changed is not that request. Another session's list stays. A corrupt context stays in place. Do not delete the home store, and do not pick a new context id to get around a corrupt file.
 
 **Drop.** `drop` archives the list this session holds, without marking leftovers verified, and releases the lease. The session file stays. `capture` the new list with the same `--session` and `--root`.
 
