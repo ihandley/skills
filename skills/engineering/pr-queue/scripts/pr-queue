@@ -38,6 +38,7 @@ OptionParser.new do |opts|
   opts.on("--stepper PATH") { |value| options[:stepper] = value }
   opts.on("--github-fixture PATH") { |value| options[:fixture] = value }
   opts.on("--today DATE") { |value| options[:today] = Date.parse(value) }
+  opts.on("--print-queries") { options[:print_queries] = true }
 end.parse!
 abort "pass --viewer" if options[:viewer].to_s.empty?
 
@@ -244,7 +245,12 @@ old_prefix = "is:pr is:open updated:<#{cutoff}"
 prefix = options[:backlog] ? old_prefix : recent_prefix
 repo_query = "#{prefix} #{repo_qualifiers}"
 author_query = "#{prefix} #{author_qualifiers}"
-quiet_query = "is:pr is:open org:#{org} updated:<#{cutoff}"
+quiet_query = "is:pr is:open updated:<#{cutoff} #{repo_qualifiers}"
+
+if options[:print_queries]
+  puts quiet_query unless options[:backlog]
+  exit
+end
 
 jobs = {
   repos: -> { search(repo_query, required: true).map { |node| project_pr(node, options[:viewer], project) }.compact },
