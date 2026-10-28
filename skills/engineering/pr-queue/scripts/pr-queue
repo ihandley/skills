@@ -172,6 +172,7 @@ logins = authors.map do |name|
 
   login
 end
+abort "missing authors" if logins.empty?
 
 lists = team.keys.select { |key| key.start_with?("repos_") }.map { |key| [key, Array(team[key])] }
 repo_set = if options[:all]
@@ -211,13 +212,13 @@ unless options[:backlog] || $stdin.tty?
 end
 
 cutoff = (Date.today - 7).strftime("%Y-%m-%d")
-repo_qualifiers = repo_set.map { |repo| "repo:#{org}/#{repo}" }.join(" ")
-author_qualifiers = logins.map { |login| "author:#{login}" }.join(" ")
+repo_qualifiers = repo_set.map { |repo| "repo:#{org}/#{repo}" }.join(" OR ")
+author_qualifiers = logins.map { |login| "author:#{login}" }.join(" OR ")
 recent_prefix = "is:pr is:open draft:false updated:>=#{cutoff}"
 old_prefix = "is:pr is:open updated:<#{cutoff}"
 prefix = options[:backlog] ? old_prefix : recent_prefix
-repo_query = "#{prefix} #{repo_qualifiers}"
-author_query = "#{prefix} #{author_qualifiers}"
+repo_query = "#{prefix} (#{repo_qualifiers})"
+author_query = "#{prefix} (#{author_qualifiers})"
 quiet_query = "is:pr is:open org:#{org} updated:<#{cutoff}"
 
 jobs = {
