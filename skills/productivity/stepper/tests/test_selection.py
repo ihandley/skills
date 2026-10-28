@@ -104,5 +104,39 @@ class SkipTargetTests(unittest.TestCase):
         self.assertEqual(selection.skip_target(c, selection.find(c, "a")), (None, "no later item"))
 
 
+class DependencyRuleTests(unittest.TestCase):
+    def test_a_successor_of_a_blocked_item_is_not_chosen(self):
+        c = ctx(item("a", 0, "blocked"), item("b", 1, depends=["a"]), item("c", 2, depends=["b"]))
+        self.assertIsNone(selection.choose_next(c))
+
+    def test_activate_next_leaves_that_successor_pending(self):
+        c = ctx(item("a", 0, "blocked"), item("b", 1, depends=["a"]))
+        selection.activate_next(c)
+        self.assertEqual(status(c, "b"), "pending")
+
+    def test_an_independent_item_is_still_chosen_past_a_blocked_one(self):
+        c = ctx(item("a", 0, "blocked"), item("b", 1, depends=["a"]), item("c", 2))
+        self.assertEqual(selection.choose_next(c)["id"], "c")
+
+    def test_skip_and_choose_agree_for_that_list(self):
+        c = ctx(item("a", 0, "blocked"), item("b", 1, depends=["a"]))
+        held = selection.find(c, "a")
+        self.assertIsNone(selection.skip_target(c, held)[0])
+        self.assertIsNone(selection.choose_next(c))
+
+    def test_a_tree_refuses_a_leaf_with_an_unmet_dependency(self):
+        c = ctx(
+            item("p", 0, "pending"),
+            item("p1", 0, "blocked", parent="p"),
+            item("p2", 1, "pending", parent="p", depends=["p1"]),
+        )
+        self.assertIsNone(selection.choose_next(c))
+
+    def test_a_tree_parent_with_an_unmet_dependency_is_not_chosen(self):
+        c = ctx(item("a", 0, "blocked"), item("p", 1, "pending", depends=["a"]),
+                item("p1", 0, "pending", parent="p"))
+        self.assertIsNone(selection.choose_next(c))
+
+
 if __name__ == "__main__":
     unittest.main()
