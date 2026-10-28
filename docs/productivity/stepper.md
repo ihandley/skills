@@ -13,7 +13,7 @@ Reach for it when you want to walk one feature through to the end without losing
 ## Common questions
 
 **Where does the list live?**
-In `.stepper/` inside the project named on the `Stepper session:` line. Commands pass that path as `--root`. A command run from the skill directory without it looks in the skills repository, which has no session.
+In `.stepper/` inside the project named on the `Stepper session:` line. Commands pass that path as `--root`. The skill directory itself is refused. The repository that contains the skill is a normal project root.
 
 **What happens when the active item is blocked?**
 Stepper recommends waiting, and says why. You can skip to the next item when that item does not depend on the blocked one. Skipping is available. Waiting is the recommendation.
@@ -32,4 +32,5 @@ No. The chat that starts the list holds it. Another chat can take it only when y
 - After you accept a list, the agent starts at the first item and stays there.
 - A blocked item comes back as "wait" before any offer to skip.
 - Starting something new gets a status first: done, left, blocked, and where you are.
+- Asking for status shows each item on its own row.
 - Saying the list is wrong archives it or replaces it, and the next status matches that.

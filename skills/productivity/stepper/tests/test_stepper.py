@@ -143,13 +143,30 @@ class StepperTests(unittest.TestCase):
         self.assertTrue((self.root / ".stepper" / "contexts" / "default.json").exists())
         self.assertFalse((other / ".stepper").exists())
 
-    def test_skill_checkout_is_refused(self):
-        repo = STEPPER.resolve().parents[3]
-        self.assertTrue((repo / "skills" / "productivity" / "stepper" / "stepper.py").is_file())
-        code, data = self.cli("status", "--root", str(repo))
+    def test_skill_directory_is_refused_and_its_repository_is_not(self):
+        skill = STEPPER.resolve().parent
+        code, data = self.cli("status", "--root", str(skill))
         self.assertEqual(code, 1)
-        self.assertIn("contains stepper.py", data["error"])
+        self.assertIn("skill directory", data["error"])
         self.assertIn("project root", data["error"])
+        repo = STEPPER.resolve().parents[3]
+        proc = subprocess.run(
+            [
+                sys.executable,
+                "-c",
+                "import importlib.util\n"
+                "from pathlib import Path\n"
+                f"spec = importlib.util.spec_from_file_location('stepper_under_test', {str(STEPPER)!r})\n"
+                "mod = importlib.util.module_from_spec(spec)\n"
+                "spec.loader.exec_module(mod)\n"
+                f"mod.refuse_skill_checkout(Path({str(repo)!r}))\n",
+            ],
+            text=True,
+            capture_output=True,
+            env=self.env,
+            check=False,
+        )
+        self.assertEqual(proc.returncode, 0, proc.stderr)
 
     def test_second_session_cannot_mutate_or_receive_reminders(self):
         self.capture()
@@ -1272,6 +1289,69 @@ class StepperTests(unittest.TestCase):
         self.assertEqual(brief["blocked"], [])
         self.assertEqual(brief["left"], ["AC-3", "AC-4"])
         self.assertEqual(brief["position"], "1 of 2")
+
+    def test_status_puts_each_item_on_its_own_row(self):
+        self.capture()
+        code, data = self.cli("status", "--session", "cursor:aaa")
+        self.assertEqual(code, 0)
+        self.assertEqual(
+            data["table"],
+            "\n".join(
+                [
+                    "1 of 2",
+                    "",
+                    "| Item | Status | Description |",
+                    "| --- | --- | --- |",
+                    "| AC-3 | active | reset email is sent |",
+                    "| AC-4 | pending | rate limit returns 429 |",
+                ]
+            ),
+        )
+
+    def test_status_table_notes_evidence_and_a_block_reason(self):
+        self.capture()
+        self.cli("verify", "--session", "cursor:aaa", "AC-3", "--evidence", "sent | ok")
+        self.cli("block", "--session", "cursor:aaa", "AC-4", "--reason", "waiting\non Blaze")
+        code, data = self.cli("status", "--session", "cursor:aaa")
+        self.assertEqual(code, 0)
+        self.assertIn("| AC-3 | verified | reset email is sent | sent \\| ok |", data["table"])
+        self.assertIn("| AC-4 | blocked | rate limit returns 429 | waiting on Blaze |", data["table"])
+        self.assertTrue(data["table"].startswith("2 of 2\n"))
+
+    def test_status_table_names_the_parent_of_a_child(self):
+        self.capture()
+        code, added = self.cli(
+            "add",
+            "--session",
+            "cursor:aaa",
+            "--parent",
+            "AC-3",
+            "--item",
+            "AC-3a: send the message",
+        )
+        self.assertEqual(code, 0, added)
+        code, data = self.cli("status", "--session", "cursor:aaa")
+        self.assertEqual(code, 0)
+        self.assertEqual(
+            data["table"],
+            "\n".join(
+                [
+                    "1 of 2",
+                    "",
+                    "| Item | Parent | Status | Description |",
+                    "| --- | --- | --- | --- |",
+                    "| AC-3 |  | active | reset email is sent |",
+                    "| AC-3a | AC-3 | pending | send the message |",
+                    "| AC-4 |  | pending | rate limit returns 429 |",
+                ]
+            ),
+        )
+
+    def test_status_table_is_empty_when_no_list_is_held(self):
+        code, data = self.cli("status", "--session", "cursor:aaa")
+        self.assertEqual(code, 0)
+        self.assertIsNone(data["context"])
+        self.assertEqual(data["table"], "")
 
     def test_skip_refuses_while_the_next_item_depends_on_the_held_item(self):
         self.capture()
