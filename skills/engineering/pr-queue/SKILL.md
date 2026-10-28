@@ -24,7 +24,7 @@ The viewer's `ids.github` equals that login. Any other result: stop and print bo
 
 On a list invocation, copy `--session` and `--root` from the hook line that starts with `Stepper session:`. Read it from the prompt, or from the context attached to those MCP results. A line that is still absent then stops the run: say the stepper hook did not provide a session key.
 
-Run `date +%s` in the terminal as the first call of the run and keep it as the **start**. The run is under five minutes from the start to the printed list. Never reword, split, or retry a search to get a different result: a failed search stops the run and names the query.
+Run `date +%s` in the terminal as the first call of the run and keep it as the **start**. The run is under five minutes from the start to the printed list. Never reword or retry a search to get a different result: a failed search stops the run and names the query.
 
 Done when the start, the cloud id, the viewer, and (on a list invocation) a session key are in hand, or the run has stopped.
 
