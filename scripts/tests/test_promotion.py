@@ -19,7 +19,7 @@ KEEP = ("README.md", ".agents", ".claude-plugin", "docs", "skills")
 SKIP = shutil.ignore_patterns("__pycache__", ".stepper", ".claude", "node_modules", "*.pyc")
 
 
-class PromotionCheckTests(unittest.TestCase):
+class RepoCopy(unittest.TestCase):
     def setUp(self):
         self.tmp = Path(tempfile.mkdtemp())
         self.addCleanup(shutil.rmtree, self.tmp, True)
@@ -34,6 +34,9 @@ class PromotionCheckTests(unittest.TestCase):
         path = self.tmp / rel
         path.write_text(fn(path.read_text(encoding="utf-8")), encoding="utf-8")
 
+
+
+class PromotionCheckTests(RepoCopy):
     def assert_reports(self, needle):
         problems = promotion.check(self.tmp)
         self.assertTrue(any(needle in p for p in problems), problems)
@@ -90,6 +93,54 @@ class PromotionCheckTests(unittest.TestCase):
     def test_removed_skill_with_no_page(self):
         (self.tmp / "docs/engineering/chad-learn.md").unlink()
         self.assert_reports("chad-learn.md: removed skill has no archived page")
+
+
+class GenerateTests(RepoCopy):
+    def generate(self):
+        return promotion.generate(self.tmp)
+
+    def test_generate_is_a_no_op_on_a_consistent_repo(self):
+        self.assertEqual(self.generate(), [])
+
+    def test_moving_a_skill_folder_then_generate_updates_every_list_and_check_passes(self):
+        shutil.move(str(self.tmp / "skills/engineering/deslop"), str(self.tmp / "skills/productivity/deslop"))
+        shutil.move(str(self.tmp / "docs/engineering/deslop.md"), str(self.tmp / "docs/productivity/deslop.md"))
+        self.assertNotEqual(promotion.check(self.tmp), [])
+        changed = self.generate()
+        for rel in (".claude-plugin/plugin.json", "README.md", "skills/engineering/README.md",
+                    "skills/productivity/README.md"):
+            self.assertIn(rel, changed)
+        self.assertEqual(promotion.check(self.tmp), [])
+        manifest = json.loads((self.tmp / ".claude-plugin/plugin.json").read_text())
+        self.assertIn("./skills/productivity/deslop", manifest["skills"])
+        self.assertNotIn("./skills/engineering/deslop", manifest["skills"])
+
+    def test_a_new_skill_gets_its_frontmatter_description_and_check_passes(self):
+        new = self.tmp / "skills/productivity/newbie"
+        (new / "agents").mkdir(parents=True)
+        (new / "SKILL.md").write_text("---\nname: newbie\ndescription: Does a new thing.\n---\n")
+        (new / "agents/openai.yaml").write_text("interface:\n  display_name: \"Newbie\"\n")
+        (self.tmp / "docs/productivity/newbie.md").write_text(
+            "## What it does\n\nx\n\n## When to reach for it\n\nx\n\n## Common questions\n\nx\n\n## It's working if\n\nx\n")
+        self.generate()
+        self.assertIn("**[newbie](./skills/productivity/newbie/SKILL.md)**: Does a new thing.",
+                      (self.tmp / "README.md").read_text())
+        self.assertEqual(promotion.check(self.tmp), [])
+
+    def test_hand_written_prose_and_descriptions_are_left_alone(self):
+        self.edit("README.md", lambda t: t.replace("Skills for daily code work.", "My own intro.", 1))
+        self.edit("docs/engineering/deslop.md", lambda t: t + "\nExtra note.\n")
+        before_skill = (self.tmp / "skills/engineering/deslop/SKILL.md").read_text()
+        before_page = (self.tmp / "docs/engineering/deslop.md").read_text()
+        self.generate()
+        self.assertIn("My own intro.", (self.tmp / "README.md").read_text())
+        self.assertEqual((self.tmp / "docs/engineering/deslop.md").read_text(), before_page)
+        self.assertEqual((self.tmp / "skills/engineering/deslop/SKILL.md").read_text(), before_skill)
+
+    def test_an_empty_group_reads_none_yet(self):
+        shutil.move(str(self.tmp / "skills/engineering/deslop"), str(self.tmp / "skills/misc_deslop"))
+        self.generate()
+        self.assertNotIn("deslop", (self.tmp / "README.md").read_text())
 
 
 if __name__ == "__main__":
