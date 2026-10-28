@@ -14,6 +14,10 @@ import sys
 import tempfile
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+import hooks_host  # noqa: E402
+
 TAG = "alias"
 CLAUDE_SESSION_MATCHER = "startup|resume|compact|clear|fork"
 
@@ -524,137 +528,48 @@ def script_path() -> Path:
     return here
 
 
-def hook_command(platform: str) -> str:
-    return f"{sys.executable} {script_path()} hook --platform {platform} --tag {TAG}"
+def hook_spec(config: dict | None) -> hooks_host.Spec:
+    tools = config["tools"] if config else []
+    claude = [hooks_host.Event("SessionStart", matcher=CLAUDE_SESSION_MATCHER)]
+    for tool in tools:
+        claude += [hooks_host.Event("PreToolUse", matcher=tool["tool"]),
+                   hooks_host.Event("PostToolUse", matcher=tool["tool"])]
+    return hooks_host.Spec(
+        tag=TAG,
+        state_dir=home() / ".alias",
+        script=script_path(),
+        events={
+            "cursor": [hooks_host.Event(name) for name in ("sessionStart", "preToolUse", "postToolUse")],
+            "claude": claude,
+        },
+    )
 
 
-def settings_paths(platform: str) -> Path:
-    if platform == "cursor":
-        return home() / ".cursor" / "hooks.json"
-    return home() / ".claude" / "settings.json"
-
-
-def ours(command: str | None, platform: str) -> bool:
-    return bool(command and f"--tag {TAG}" in command and f"--platform {platform}" in command)
-
-
-def read_json(path: Path) -> dict:
-    if not path.exists():
-        return {}
-    data = json.loads(path.read_text())
-    if not isinstance(data, dict):
-        raise AliasError(f"{path} is not a JSON object")
-    return data
-
-
-def write_json(path: Path, data: dict) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(data, indent=2, ensure_ascii=False) + "\n")
-
-
-def strip_ours(data: dict, platform: str) -> None:
-    hooks = data.get("hooks")
-    if not isinstance(hooks, dict):
-        return
-    if platform == "cursor":
-        for event in list(hooks):
-            kept = [entry for entry in hooks[event] if not ours(entry.get("command"), platform)]
-            if kept:
-                hooks[event] = kept
-            else:
-                del hooks[event]
-        return
-    for event in list(hooks):
-        kept_groups = []
-        for group in hooks[event]:
-            if "hooks" not in group:
-                kept_groups.append(group)
-                continue
-            group["hooks"] = [
-                item for item in group["hooks"] if not ours(item.get("command"), platform)
-            ]
-            if group["hooks"]:
-                kept_groups.append(group)
-        if kept_groups:
-            hooks[event] = kept_groups
-        else:
-            del hooks[event]
-
-
-def ensure_claude_group(hooks: dict, event: str, matcher: str | None) -> dict:
-    groups = hooks.setdefault(event, [])
-    for group in groups:
-        if matcher is None and "matcher" not in group:
-            return group
-        if matcher is not None and group.get("matcher") == matcher:
-            return group
-    group = {"hooks": []}
-    if matcher is not None:
-        group["matcher"] = matcher
-    groups.append(group)
-    return group
+def check_platform(platform: str) -> None:
+    if platform not in hooks_host.PLATFORMS:
+        raise AliasError("platform must be claude or cursor")
 
 
 def install_hooks(platform: str) -> dict:
-    if platform not in ("claude", "cursor"):
-        raise AliasError("platform must be claude or cursor")
+    check_platform(platform)
     config = load_config()
-    path = settings_paths(platform)
-    data = read_json(path)
-    if platform == "cursor" and "version" not in data:
-        data["version"] = 1
-    hooks = data.setdefault("hooks", {})
-    strip_ours(data, platform)
-    command = hook_command(platform)
-    if platform == "cursor":
-        for event in ("sessionStart", "preToolUse", "postToolUse"):
-            entries = hooks.setdefault(event, [])
-            entries.append({"command": command})
-    else:
-        group = ensure_claude_group(hooks, "SessionStart", CLAUDE_SESSION_MATCHER)
-        group["hooks"].append({"type": "command", "command": command})
-        for tool in config["tools"]:
-            for event in ("PreToolUse", "PostToolUse"):
-                found = ensure_claude_group(hooks, event, tool["tool"])
-                found["hooks"].append({"type": "command", "command": command})
-    write_json(path, data)
-    return {"ok": True, "platform": platform, "path": str(path), "tools": len(config["tools"])}
+    try:
+        result = hooks_host.install(hook_spec(config), home(), platform)
+    except hooks_host.HostError as exc:
+        raise AliasError(str(exc)) from exc
+    return {"ok": True, "platform": platform, "path": result["path"], "tools": len(config["tools"])}
 
 
 def uninstall_hooks(platform: str) -> dict:
-    if platform not in ("claude", "cursor"):
-        raise AliasError("platform must be claude or cursor")
-    path = settings_paths(platform)
-    if not path.exists():
-        return {"ok": True, "platform": platform, "path": str(path), "installed": False}
-    data = read_json(path)
-    strip_ours(data, platform)
-    if isinstance(data.get("hooks"), dict) and not data["hooks"]:
-        data.pop("hooks", None)
-    write_json(path, data)
-    return {"ok": True, "platform": platform, "path": str(path), "installed": False}
+    check_platform(platform)
+    try:
+        return hooks_host.uninstall(hook_spec(None), home(), platform)
+    except hooks_host.HostError as exc:
+        raise AliasError(str(exc)) from exc
 
 
 def hooks_status() -> dict:
-    report: dict = {"ok": True}
-    for platform in ("claude", "cursor"):
-        path = settings_paths(platform)
-        events = []
-        if path.exists():
-            data = read_json(path)
-            hooks = data.get("hooks") or {}
-            if platform == "cursor":
-                for event, entries in hooks.items():
-                    if any(ours(entry.get("command"), platform) for entry in entries):
-                        events.append(event)
-            else:
-                for event, groups in hooks.items():
-                    for group in groups:
-                        if any(ours(item.get("command"), platform) for item in group.get("hooks") or []):
-                            events.append(event)
-                            break
-        report[platform] = {"path": str(path), "installed": bool(events), "events": events}
-    return report
+    return hooks_host.status(hook_spec(None), home())
 
 
 def emit(data, code: int = 0) -> int:
