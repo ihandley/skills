@@ -6,10 +6,10 @@
 
 **Status:** ready-for-agent
 
-- [ ] Capturing a second name while this session already holds a context leases both
-- [ ] Status for the session lists every context it holds, each with its name and its brief: done, left, blocked, and position
-- [ ] The reminder names every unpaused context this session holds, with those same four parts
-- [ ] Pausing one context removes it from the reminder and leaves the session's other contexts there
-- [ ] Closing or detaching one context leaves the session's other leases in place
-- [ ] Ending the session releases every lease that session holds
-- [ ] A session that stops without an end event keeps its leases. Taking one of them happens only after you ask for that context by name
+- [x] Capturing a second name while this session already holds a context leases both
+- [x] Status for the session lists every context it holds, each with its name and its brief: done, left, blocked, and position
+- [x] The reminder names every unpaused context this session holds, with those same four parts
+- [x] Pausing one context removes it from the reminder and leaves the session's other contexts there
+- [x] Closing or detaching one context leaves the session's other leases in place
+- [x] Ending the session releases every lease that session holds
+- [x] A session that stops without an end event keeps its leases. Taking one of them happens only after you ask for that context by name

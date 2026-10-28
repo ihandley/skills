@@ -456,13 +456,18 @@ def read_contexts(root: Path) -> tuple[list[dict], list[str]]:
     return good, bad
 
 
-def leased_by(root: Path, session_key: str) -> dict | None:
+def held_by(root: Path, session_key: str) -> list[dict]:
     contexts, _bad = read_contexts(root)
-    for ctx in contexts:
-        lease = ctx["lease"]
-        if lease and lease["session_key"] == session_key and not ctx["closed"]:
-            return ctx
-    return None
+    return [
+        ctx
+        for ctx in contexts
+        if ctx["lease"] and ctx["lease"]["session_key"] == session_key and not ctx["closed"]
+    ]
+
+
+def leased_by(root: Path, session_key: str) -> dict | None:
+    held = held_by(root, session_key)
+    return held[0] if held else None
 
 
 def suggestions_path(root: Path) -> Path:
@@ -984,18 +989,23 @@ def transition(
 def require_holder(root: Path, session_key: str, context_id: str) -> dict:
     require_session(root, session_key)
     contexts, bad = read_contexts(root)
-    for ctx in contexts:
-        lease = ctx["lease"]
-        if lease and lease["session_key"] == session_key and not ctx["closed"]:
-            if ctx["id"] != context_id:
-                raise StepperError(f"session {session_key} holds {ctx['id']}, not {context_id}")
-            return ctx
-    if bad:
+    held = [
+        ctx
+        for ctx in contexts
+        if ctx["lease"] and ctx["lease"]["session_key"] == session_key and not ctx["closed"]
+    ]
+    match = next((ctx for ctx in held if ctx["id"] == context_id), None)
+    if match is not None:
+        return match
+    if bad and not held:
         names = ", ".join(bad)
         raise StepperError(
             f"corrupt state at {names}. The original file was left in place. "
             "No replacement context was created."
         )
+    if held:
+        names = ", ".join(ctx["id"] for ctx in held)
+        raise StepperError(f"session {session_key} holds {names}, not {context_id}")
     raise StepperError(f"session {session_key} does not hold {context_id}")
 
 
@@ -1024,8 +1034,6 @@ def cmd_capture(root: Path, session_key: str, context_id: str | None, items: lis
     require_session(root, session_key)
     if not context_id:
         raise StepperError("capture needs a context name")
-    if leased_by(root, session_key) is not None:
-        raise StepperError("this session already holds a context; detach or close it first")
     path = context_path(root, context_id)
     to_archive = None
     if path.exists():
@@ -1330,11 +1338,13 @@ def cmd_close(root: Path, session_key: str, context_id: str) -> dict:
 
 def cmd_detach(root: Path, session_key: str, context_id: str) -> dict:
     require_session(root, session_key)
-    ctx = leased_by(root, session_key)
+    held = held_by(root, session_key)
+    ctx = next((item for item in held if item["id"] == context_id), None)
     if ctx is None:
-        return {"ok": True, "context": None, "reminder": "Stepper: this session holds no context."}
-    if ctx["id"] != context_id:
-        raise StepperError(f"session {session_key} holds {ctx['id']}, not {context_id}")
+        if not held:
+            return {"ok": True, "context": None, "reminder": "Stepper: this session holds no context."}
+        names = ", ".join(item["id"] for item in held)
+        raise StepperError(f"session {session_key} holds {names}, not {context_id}")
     ctx["lease"] = None
     save_context(root, ctx)
     return result(ctx)
@@ -1342,14 +1352,9 @@ def cmd_detach(root: Path, session_key: str, context_id: str) -> dict:
 
 def cmd_attach(root: Path, session_key: str, context_id: str, take: bool) -> dict:
     require_session(root, session_key)
-    current = leased_by(root, session_key)
     ctx = load_context(root, context_id)
     if ctx["closed"]:
         raise StepperError(f"context {context_id} is closed")
-    if current and current["id"] != ctx["id"]:
-        raise StepperError(
-            f"session already holds {current['id']}; detach before attaching {context_id}"
-        )
     lease = ctx["lease"]
     if lease and lease["session_key"] == session_key:
         return result(ctx)
@@ -1405,7 +1410,8 @@ def cmd_status(root: Path, session_key: str | None, tree: bool = False) -> dict:
             "corrupt_files": corrupt,
         }
     session = load_session(root, session_key)
-    ctx = leased_by(root, session_key)
+    held = held_by(root, session_key)
+    ctx = held[0] if len(held) == 1 else None
     return {
         "ok": True,
         "session": None
@@ -1415,6 +1421,10 @@ def cmd_status(root: Path, session_key: str | None, tree: bool = False) -> dict:
         "reminder": None if ctx is None else reminder(ctx),
         "progress": None if ctx is None else _progress(ctx),
         "brief": brief_of(ctx),
+        "held": [
+            {"id": item["id"], "paused": item["paused"], "brief": brief_of(item)}
+            for item in held_by(root, session_key)
+        ],
         "table": status_table(ctx),
         **({"tree": [_tree_node(ctx, item) for item in _children(ctx, None)]} if tree and ctx is not None else {}),
         "corrupt_files": corrupt,
@@ -1452,15 +1462,20 @@ def mark_offered(root: Path, session_key: str, candidate: dict) -> None:
 
 
 def release_lease(root: Path, session_key: str) -> None:
-    ctx = leased_by(root, session_key)
-    if ctx is None:
-        return
-    items = json.dumps(ctx["items"])
-    ctx["lease"] = None
-    save_context(root, ctx)
-    saved = load_context(root, ctx["id"])
-    if json.dumps(saved["items"]) != items:
-        raise StepperError("lease release changed items")
+    for ctx in held_by(root, session_key):
+        items = json.dumps(ctx["items"])
+        ctx["lease"] = None
+        save_context(root, ctx)
+        saved = load_context(root, ctx["id"])
+        if json.dumps(saved["items"]) != items:
+            raise StepperError("lease release changed items")
+
+
+def active_reminder(contexts: list[dict]) -> str:
+    shown = [ctx for ctx in contexts if not ctx["paused"]]
+    if len(shown) == 1:
+        return reminder(shown[0])
+    return "\n".join(f"{ctx['id']}: {reminder(ctx)}" for ctx in shown)
 
 
 def event_allowed(event: str, platform: str) -> bool:
@@ -1564,10 +1579,15 @@ def handle_hook(root: Path, platform: str, payload: dict) -> dict | None:
             return None
         if teaching_owner(root, key):
             return None
-        if holds and ctx is not None and not ctx["paused"]:
-            if has_outstanding(ctx) or any(item["status"] == "deferred" for item in ctx["items"]):
-                text = reminder(ctx) + "\n" + session_line(key, root)
-                return _hook_json(platform, event, text)
+        shown = [
+            item
+            for item in held_by(root, key)
+            if not item["paused"]
+            and (has_outstanding(item) or any(row["status"] == "deferred" for row in item["items"]))
+        ]
+        if shown:
+            text = active_reminder(shown) + "\n" + session_line(key, root)
+            return _hook_json(platform, event, text)
         # A restarted Claude session loses the earlier prompt injection. Repeat
         # the key when this session already registered, without tracking text.
         if (
@@ -1588,16 +1608,12 @@ def handle_hook(root: Path, platform: str, payload: dict) -> dict | None:
         if sess.get("announce_key"):
             parts.append(session_line(key, root))
             sess["announce_key"] = False
-        if (
-            sess.get("compaction_pending")
-            and holds
-            and ctx is not None
-            and not ctx["paused"]
-            and not teaching_owner(root, key)
-        ):
-            parts.append(reminder(ctx))
-            sess["compaction_pending"] = False
-            sess["reminded_generation"] = generation
+        if sess.get("compaction_pending") and not teaching_owner(root, key):
+            shown = [item for item in held_by(root, key) if not item["paused"]]
+            if shown:
+                parts.append(active_reminder(shown))
+                sess["compaction_pending"] = False
+                sess["reminded_generation"] = generation
         candidate = sess.get("candidate")
         same_turn = (
             bool(candidate)
@@ -1639,19 +1655,19 @@ def handle_hook(root: Path, platform: str, payload: dict) -> dict | None:
         if assistant:
             sess["last_assistant_text"] = assistant
             consider_candidate(root, sess, parse_candidates(assistant), ctx, generation)
-        if holds and ctx["paused"]:
+        held = held_by(root, key)
+        if held and all(item["paused"] for item in held):
             save_session(root, sess)
             return None
         parts = []
+        shown = [item for item in held if not item["paused"] and has_outstanding(item)]
         if (
-            holds
-            and not ctx["paused"]
+            shown
             and sess.get("prompt_class") == "tracked"
-            and has_outstanding(ctx)
             and sess.get("reminded_generation") != token
             and not teaching_owner(root, key)
         ):
-            parts.append(reminder(ctx))
+            parts.append(active_reminder(shown))
             sess["reminded_generation"] = token
         if not holds:
             candidate = sess.get("candidate") or sess.get("parked")

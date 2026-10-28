@@ -319,18 +319,95 @@ class StepperTests(unittest.TestCase):
         code, data = self.cli(
             "capture", "--session", "cursor:aaa", "--context", "other", "--item", "AC-9: another"
         )
-        self.assertEqual(code, 1)
-        self.cli("detach", "--session", "cursor:aaa")
-        code, data = self.cli(
+        self.assertEqual(code, 0, data)
+        self.assertEqual(data["context"]["lease"]["session_key"], "cursor:aaa")
+        code, again = self.cli(
             "capture", "--session", "cursor:aaa", "--context", "default", "--item", "AC-9: another"
         )
         self.assertEqual(code, 1)
-        code, data = self.cli(
-            "capture", "--session", "cursor:aaa", "--context", "other", "--item", "AC-9: another"
-        )
-        self.assertEqual(code, 0)
+        self.assertIn("is open", again["error"])
         self.assertTrue((self.store / "contexts" / "default.json").exists())
         self.assertTrue((self.store / "contexts" / "other.json").exists())
+
+    def test_session_holds_several_contexts(self):
+        self.capture()
+        code, _second = self.cli(
+            "capture",
+            "--session",
+            "cursor:aaa",
+            "--context",
+            "other",
+            "--item",
+            "M-5: waiting on Blaze",
+        )
+        self.assertEqual(code, 0)
+        code, status = self.cli("status", "--session", "cursor:aaa")
+        briefs = {row["id"]: row["brief"] for row in status["held"]}
+        self.assertEqual(set(briefs), {"default", "other"})
+        self.assertEqual(briefs["default"]["position"], "1 of 2")
+        self.assertEqual(briefs["default"]["done"], [])
+        self.assertEqual(briefs["other"]["left"], ["M-5"])
+        self.cli("pause", "--session", "cursor:aaa", "--context", "default")
+        self.register("cursor:aaa", prompt="fix AC-3", generation="g-held")
+        code, reminded, _out = self.hook(
+            "cursor",
+            {
+                "hook_event_name": "stop",
+                "conversation_id": "aaa",
+                "generation_id": "g-held",
+                "status": "completed",
+                "loop_count": 0,
+            },
+        )
+        self.assertIn("M-5", reminded["followup_message"])
+        self.assertNotIn("AC-3 active", reminded["followup_message"])
+        self.cli("detach", "--session", "cursor:aaa", "--context", "other")
+        code, status = self.cli("status", "--session", "cursor:aaa")
+        self.assertEqual([row["id"] for row in status["held"]], ["default"])
+        self.cli(
+            "capture",
+            "--session",
+            "cursor:aaa",
+            "--context",
+            "third",
+            "--item",
+            "M-6: another",
+        )
+        self.hook(
+            "cursor",
+            {"hook_event_name": "sessionEnd", "conversation_id": "aaa"},
+        )
+        for name in ("default", "third"):
+            stored = json.loads((self.store / "contexts" / f"{name}.json").read_text())
+            self.assertIsNone(stored["lease"])
+            self.assertTrue(stored["items"])
+        self.cli(
+            "capture",
+            "--session",
+            "cursor:aaa",
+            "--context",
+            "fresh",
+            "--item",
+            "M-8: fresh",
+        )
+        self.cli(
+            "capture",
+            "--session",
+            "cursor:aaa",
+            "--context",
+            "kept",
+            "--item",
+            "M-7: stays",
+        )
+        self.register("cursor:bbb")
+        code, denied = self.cli("attach", "--session", "cursor:bbb", "fresh")
+        self.assertEqual(code, 1)
+        self.assertIn("--take", denied["error"])
+        code, taken = self.cli("attach", "--session", "cursor:bbb", "fresh", "--take")
+        self.assertEqual(code, 0)
+        self.assertEqual(taken["context"]["lease"]["session_key"], "cursor:bbb")
+        code, status = self.cli("status", "--session", "cursor:aaa")
+        self.assertEqual([row["id"] for row in status["held"]], ["kept"])
 
     def test_capture_after_close_archives_the_closed_context(self):
         self.capture()
