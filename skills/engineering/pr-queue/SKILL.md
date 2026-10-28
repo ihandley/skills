@@ -1,6 +1,6 @@
 ---
 name: pr-queue
-description: List this week's review queue, the open sprint's In Review tickets and the last 7 days of team pull requests.
+description: List this week's review queue, the open sprint's In Review tickets and the last 7 days of team pull requests, then walk them one at a time.
 disable-model-invocation: true
 ---
 
@@ -14,7 +14,7 @@ The script is `scripts/pr-queue` in the directory of this file. It reads `~/.cla
 
 ## Stop
 
-Call `getAccessibleAtlassianResources` once and keep its cloud id and site URL. Call GitHub `get_me` once and keep its login. A missing MCP tool, a namespace that is not authenticated, or a failed call stops the run.
+Call `getAccessibleAtlassianResources` once and keep its cloud id. Call GitHub `get_me` once and keep its login. A missing MCP tool, a namespace that is not authenticated, or a failed call stops the run.
 
 The viewer is the person aliased "me". That person's `ids.github` equals the login from `get_me`. Any other result: stop and print both logins. The script also checks this and exits when they differ.
 
@@ -54,24 +54,28 @@ Write the issues to the script's stdin as one line each, in rank order: `KEY|ass
 
 Run `ruby` on `scripts/pr-queue` with `--viewer` set to the login from `get_me` and `--started` set to the start time. Add `--all` for an `all` invocation. A backlog run adds `--backlog` and sends no issues.
 
-A list run also passes `--session` and `--root` from the hook line, `--stepper` set to the stepper CLI path named in the stepper skill, and `--site` set to the Atlassian site URL. The script prints the list, then captures every item under `--context pr-queue`, orders them all free, and prints a `pr-queue brief` line on stderr.
+A list run also passes `--session` and `--root` from the hook line, `--stepper` set to the stepper CLI path named in the stepper skill. The script prints the list, then captures every item under `--context pr-queue`, orders them all free, and prints a `pr-queue brief` line on stderr. Only open, non-draft pull requests you have not approved on the current head become items. An In Review ticket with no such pull request is counted beside the quiet count, not captured.
 
 Print its stdout. A non-zero exit stops the run. Say its stderr. A search that returns no pull requests is a non-zero exit that names the query.
 
 Speak `done`, `left`, `blocked`, and `position` from the `pr-queue brief` line. Print the `pr-queue total` line as the run time. It covers the clock from the prompt to the printed list, not only GitHub.
 
-Done when stdout is printed, the brief is spoken, and the total is printed. The script has captured the list, and qpre has not been started. An empty home is the quiet line and no capture.
+Done when stdout is printed, the brief is spoken, and the total is printed. The script has captured the list. Do not start qpre. An empty home is the quiet line and no capture.
 
 ## Later
 
 A later message uses the captured list or the printed table. It does not fetch again.
 
-**Start** on a list runs `qpre` with the active item's pull request URL when that item's criteria say to start.
+**Start** on a list runs `qpre` with the active item's pull request URL and waits for it to exit. Quitting qpre leaves the item active.
 
-A **row number** on the backlog table runs `qpre` with that row's URL, rebuilt as `https://github.com/<github_org>/<repo>/pull/<number>`, when the pull request is open and not draft.
+After qpre exits, read the one outcome line qpre wrote for that pull request, and speak `posted`, `clean`, or `unfinished`. Read nothing else qpre wrote. The findings stay on the terminal. A missing outcome line is a missing outcome: say so, and prompt the same way.
 
-The user says the review is **done**: `verify` the active item with that evidence, then speak the four brief parts.
+Then ask the user to strike the item or do something else. Something else is handled, then the same question comes back. An unfinished walk still offers a strike.
 
-`skip` only when the user asks to skip. Quitting qpre leaves the active item active.
+A **strike** is the user's decision that the item is finished. `verify` the active item with the outcome and the user's decision as evidence, then speak the four brief parts for the next item. Do not start qpre until the user says start.
 
-Done when qpre has been started for a startable item, or the item was verified, or a draft, merged, closed, or ticket-only item was named and qpre was not started.
+A **row number** on the backlog table runs `qpre` with that row's URL, rebuilt as `https://github.com/<github_org>/<repo>/pull/<number>`. It captures no list.
+
+`skip` only when the user asks to skip.
+
+Done when qpre has been started for the active item, or a backlog row was named, or the item was struck and the next item briefed.
