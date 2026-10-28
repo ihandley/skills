@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import importlib.util
 import json
 import os
 import subprocess
@@ -99,6 +100,15 @@ class StepperTests(unittest.TestCase):
             "--item",
             "AC-4: rate limit returns 429",
         )
+
+    def archived_contexts(self, context_id):
+        sys.path.insert(0, str(STEPPER.parent))
+        spec = importlib.util.spec_from_file_location("stepper_for_archive", STEPPER)
+        mod = importlib.util.module_from_spec(spec)
+        os.environ["STEPPER_HOME"] = str(self.home)
+        self.addCleanup(os.environ.pop, "STEPPER_HOME", None)
+        spec.loader.exec_module(mod)
+        return mod.context_ids(self.root).archived(context_id)
 
     def git_repo(self):
         subprocess.run(["git", "init", "-q", str(self.root)], check=True)
@@ -521,9 +531,9 @@ class StepperTests(unittest.TestCase):
         self.assertEqual(code, 0, data)
         self.assertFalse(data["context"]["closed"])
         self.assertEqual(data["context"]["lease"]["session_key"], "cursor:aaa")
-        archived = list((self.store / "archive").glob("default-*.json"))
+        archived = self.archived_contexts("default")
         self.assertEqual(len(archived), 1)
-        self.assertTrue(json.loads(archived[0].read_text())["closed"])
+        self.assertTrue(archived[0]["closed"])
 
     def test_capture_over_open_context_says_it_is_open(self):
         self.capture()
@@ -1708,9 +1718,9 @@ class StepperTests(unittest.TestCase):
         self.assertIsNone(dropped["context"])
         self.assertEqual(dropped["brief"], {"done": [], "left": [], "blocked": [], "position": "none"})
         self.assertEqual(list((self.store / "contexts").glob("*.json")), [])
-        archived = list((self.store / "archive").glob("default-*.json"))
+        archived = self.archived_contexts("default")
         self.assertEqual(len(archived), 1)
-        stored = json.loads(archived[0].read_text())
+        stored = archived[0]
         self.assertTrue(stored["closed"])
         self.assertIsNone(stored["lease"])
         self.assertTrue(all(item["status"] != "verified" for item in stored["items"]))
