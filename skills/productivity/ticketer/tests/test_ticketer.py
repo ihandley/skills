@@ -600,5 +600,45 @@ class UnsupportedMetadataKindTests(Base):
                 self.assertNotIn("Traceback", stderr)
 
 
+class AdapterContractTests(unittest.TestCase):
+    """The same checks run against every registered adapter."""
+
+    def adapters(self):
+        sys.path.insert(0, str(TICKETER.parent))
+        from adapters import ADAPTERS
+        return ADAPTERS.values()
+
+    def test_each_adapter_declares_the_interface(self):
+        for adapter in self.adapters():
+            with self.subTest(adapter=adapter.NAME):
+                self.assertTrue(set(adapter.FIELDS.values()) <= {"str", "list", "object"})
+                self.assertEqual(adapter.DRAFT_KEYS, set(adapter.FIELDS))
+                self.assertTrue(set(adapter.DISPLAY_ORDER) <= adapter.DRAFT_KEYS)
+                self.assertTrue(adapter.MERGE_LIST_KEYS <= adapter.DRAFT_KEYS)
+                self.assertTrue(adapter.METADATA_KINDS)
+                self.assertTrue(callable(adapter.find_parent))
+
+    def test_scope_and_validation_handle_an_empty_draft(self):
+        for adapter in self.adapters():
+            with self.subTest(adapter=adapter.NAME):
+                draft = {"operation": "create"}
+                self.assertIsInstance(adapter.scope(draft), str)
+                self.assertIsInstance(adapter.validate(draft, {}, None), list)
+
+    def test_unsupported_metadata_kind_is_a_value_error_or_not_listed(self):
+        for adapter in self.adapters():
+            with self.subTest(adapter=adapter.NAME):
+                self.assertNotIn("no-such-kind", adapter.METADATA_KINDS)
+                with self.assertRaises(ValueError):
+                    adapter.store_metadata({}, "no-such-kind", {}, "Task")
+
+    def test_cli_metadata_kinds_come_from_the_adapters(self):
+        proc = subprocess.run([sys.executable, str(TICKETER), "metadata", "store", "--help"],
+                              text=True, capture_output=True, check=False)
+        for adapter in self.adapters():
+            for kind in adapter.METADATA_KINDS:
+                self.assertIn(kind, proc.stdout)
+
+
 if __name__ == "__main__":
     unittest.main()
