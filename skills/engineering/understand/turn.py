@@ -13,12 +13,14 @@ import argparse
 import json
 import os
 import re
-import shlex
 import sys
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+import hooks_host  # noqa: E402
+
 OWNERS = ("understand", "pair")
-RECEIPT_NAME = "hook-install.json"
 
 UNDERSTAND_CMD = re.compile(
     r"(?:^|\s)/understand\b|<command-name>/understand</command-name>",
@@ -202,183 +204,31 @@ def handle_hook(root: Path, platform: str, payload: dict) -> dict | None:
     return emit_context(platform, event, text)
 
 
-def hook_command(platform: str) -> str:
-    script = Path(__file__).resolve()
-    return (
-        f"{shlex.quote(sys.executable)} {shlex.quote(str(script))} "
-        f"hook --platform {platform} --tag turn-owner"
+def hook_spec() -> hooks_host.Spec:
+    return hooks_host.Spec(
+        tag="turn-owner",
+        state_dir=home() / ".understand",
+        script=Path(__file__).resolve(),
+        events={
+            "cursor": [hooks_host.Event(name) for name in ("sessionStart", "beforeSubmitPrompt")],
+            "claude": [
+                hooks_host.Event("SessionStart", matcher="startup|resume|compact"),
+                hooks_host.Event("UserPromptSubmit"),
+            ],
+        },
     )
 
 
-def config_path(platform: str) -> Path:
-    base = home()
-    if platform == "cursor":
-        return base / ".cursor" / "hooks.json"
-    return base / ".claude" / "settings.json"
-
-
-def receipt_path() -> Path:
-    return home() / ".understand" / RECEIPT_NAME
-
-
-def load_receipt() -> dict:
-    path = receipt_path()
-    if not path.exists():
-        return {}
-    try:
-        data = json.loads(path.read_text(encoding="utf-8"))
-    except json.JSONDecodeError:
-        return {}
-    return data if isinstance(data, dict) else {}
-
-
-def save_receipt(data: dict) -> None:
-    path = receipt_path()
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
-
-
-def ours(command: str | None, platform: str) -> bool:
-    return bool(command and "--tag turn-owner" in command and f"--platform {platform}" in command)
-
-
-def read_settings(path: Path) -> tuple[dict, bool]:
-    if not path.exists():
-        return {}, False
-    data = json.loads(path.read_text(encoding="utf-8"))
-    if not isinstance(data, dict):
-        raise ValueError(f"refusing to edit {path}: expected a JSON object")
-    return data, True
-
-
-def write_settings(path: Path, data: dict) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    temporary = path.with_suffix(path.suffix + ".tmp")
-    temporary.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
-    temporary.replace(path)
-
-
 def install_hooks(platform: str) -> dict:
-    path = config_path(platform)
-    data, existed = read_settings(path)
-    added_hooks_key = existed and "hooks" not in data
-    command = hook_command(platform)
-    hooks = data.setdefault("hooks", {})
-    if platform == "cursor":
-        if "version" not in data and not existed:
-            data["version"] = 1
-        for event in ("sessionStart", "beforeSubmitPrompt"):
-            entries = hooks.setdefault(event, [])
-            if any(entry.get("command") == command for entry in entries):
-                continue
-            entries.append({"command": command})
-    else:
-        groups = {"SessionStart": "startup|resume|compact", "UserPromptSubmit": None}
-        for event, matcher in groups.items():
-            found = None
-            for group in hooks.setdefault(event, []):
-                if group.get("matcher") == matcher or (matcher is None and "matcher" not in group):
-                    found = group
-                    break
-            if found is None:
-                found = {"hooks": []}
-                if matcher:
-                    found["matcher"] = matcher
-                hooks[event].append(found)
-            if any(item.get("command") == command for item in found["hooks"]):
-                continue
-            found["hooks"].append({"type": "command", "command": command})
-    write_settings(path, data)
-    receipt = load_receipt()
-    receipt[platform] = {
-        "path": str(path),
-        "created_file": not existed,
-        "added_hooks_key": added_hooks_key,
-    }
-    save_receipt(receipt)
-    return {"ok": True, "platform": platform, "path": str(path), "installed": True}
-
-
-def _strip_cursor(hooks: dict, platform: str) -> None:
-    for event in list(hooks):
-        kept = [entry for entry in hooks[event] if not ours(entry.get("command"), platform)]
-        if kept:
-            hooks[event] = kept
-        else:
-            del hooks[event]
-
-
-def _strip_claude(hooks: dict, platform: str) -> None:
-    for event in list(hooks):
-        kept_groups = []
-        for group in hooks[event]:
-            if "hooks" not in group:
-                kept_groups.append(group)
-                continue
-            group["hooks"] = [
-                item for item in group["hooks"] if not ours(item.get("command"), platform)
-            ]
-            if group["hooks"]:
-                kept_groups.append(group)
-        if kept_groups:
-            hooks[event] = kept_groups
-        else:
-            del hooks[event]
+    return hooks_host.install(hook_spec(), home(), platform)
 
 
 def uninstall_hooks(platform: str) -> dict:
-    path = config_path(platform)
-    if not path.exists():
-        return {"ok": True, "platform": platform, "path": str(path), "installed": False}
-    data, _existed = read_settings(path)
-    receipt = load_receipt().get(platform) or {}
-    hooks = data.get("hooks")
-    if isinstance(hooks, dict):
-        if platform == "cursor":
-            _strip_cursor(hooks, platform)
-        else:
-            _strip_claude(hooks, platform)
-        if not hooks and receipt.get("added_hooks_key"):
-            data.pop("hooks", None)
-    if isinstance(data.get("hooks"), dict) and not data["hooks"]:
-        data.pop("hooks", None)
-    leftover = {
-        key: value
-        for key, value in data.items()
-        if not (key == "version" and receipt.get("created_file"))
-    }
-    if receipt.get("created_file") and not leftover:
-        path.unlink()
-    else:
-        write_settings(path, data)
-    return {"ok": True, "platform": platform, "path": str(path), "installed": False}
+    return hooks_host.uninstall(hook_spec(), home(), platform)
 
 
 def hooks_status() -> dict:
-    report = {"ok": True}
-    for platform in ("cursor", "claude"):
-        path = config_path(platform)
-        installed = []
-        if path.exists():
-            try:
-                data, _existed = read_settings(path)
-            except (OSError, json.JSONDecodeError, ValueError) as exc:
-                report[platform] = {"path": str(path), "error": str(exc)}
-                continue
-            hooks = data.get("hooks") or {}
-            if platform == "cursor":
-                for event, entries in hooks.items():
-                    if any(ours(entry.get("command"), platform) for entry in entries):
-                        installed.append(event)
-            else:
-                for event, groups in hooks.items():
-                    for group in groups:
-                        if any(
-                            ours(item.get("command"), platform) for item in group.get("hooks") or []
-                        ):
-                            installed.append(event)
-        report[platform] = {"path": str(path), "installed": bool(installed), "events": installed}
-    return report
+    return hooks_host.status(hook_spec(), home())
 
 
 def emit(data: dict, code: int = 0) -> int:
@@ -420,7 +270,7 @@ def main(argv: list[str] | None = None) -> int:
         if args.hooks_cmd == "uninstall":
             return emit(uninstall_hooks(args.platform))
         return emit(hooks_status())
-    except (OSError, json.JSONDecodeError, ValueError) as exc:
+    except (OSError, json.JSONDecodeError, ValueError, hooks_host.HostError) as exc:
         return emit({"ok": False, "error": str(exc)}, 1)
 
 
