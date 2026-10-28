@@ -120,5 +120,18 @@ class HostContract(unittest.TestCase):
             self.assertEqual(report[platform]["installed"], False)
 
 
+    def test_reinstall_replaces_a_stale_command_instead_of_stacking(self):
+        for platform in self.each():
+            host.install(self.spec, self.home, platform)
+            path = self.settings(platform)
+            stale = path.read_text().replace(sys.executable, "/old/python")
+            path.write_text(stale)
+            host.install(self.spec, self.home, platform)
+            text = path.read_text()
+            self.assertNotIn("/old/python", text)
+            events = host.status(self.spec, self.home)[platform]["events"]
+            self.assertEqual(sorted(events), sorted(e.name for e in EVENTS[platform]))
+
+
 if __name__ == "__main__":
     unittest.main()

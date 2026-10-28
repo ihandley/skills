@@ -123,6 +123,10 @@ def _write_settings(path: Path, data: dict) -> None:
     atomic_write(path, json.dumps(data, indent=2) + "\n")
 
 
+def _drop(spec: Spec, command: str | None, platform: str, keep: str | None) -> bool:
+    return ours(spec, command, platform) and command != keep
+
+
 # ---------------------------------------------------------------- adapters
 
 class CursorAdapter:
@@ -138,9 +142,9 @@ class CursorAdapter:
                 continue
             entries.append({"command": command, **event.extra})
 
-    def strip(self, spec: Spec, hooks: dict) -> None:
+    def strip(self, spec: Spec, hooks: dict, keep: str | None = None) -> None:
         for name in list(hooks):
-            kept = [e for e in hooks[name] if not ours(spec, e.get("command"), self.platform)]
+            kept = [e for e in hooks[name] if not _drop(spec, e.get("command"), self.platform, keep)]
             if kept:
                 hooks[name] = kept
             else:
@@ -171,14 +175,15 @@ class ClaudeAdapter:
                 continue
             found["hooks"].append({"type": "command", "command": command})
 
-    def strip(self, spec: Spec, hooks: dict) -> None:
+    def strip(self, spec: Spec, hooks: dict, keep: str | None = None) -> None:
         for name in list(hooks):
             kept_groups = []
             for group in hooks[name]:
                 if "hooks" not in group:
                     kept_groups.append(group)
                     continue
-                group["hooks"] = [i for i in group["hooks"] if not ours(spec, i.get("command"), self.platform)]
+                group["hooks"] = [i for i in group["hooks"]
+                                  if not _drop(spec, i.get("command"), self.platform, keep)]
                 if group["hooks"]:
                     kept_groups.append(group)
             if kept_groups:
@@ -204,7 +209,11 @@ def install(spec: Spec, home: Path, platform: str) -> dict:
     path = settings_path(home, platform)
     data, existed = read_settings(path)
     added_hooks_key = existed and "hooks" not in data
-    ADAPTERS[platform].add(spec, data, existed, hook_command(spec, platform))
+    command = hook_command(spec, platform)
+    if isinstance(data.get("hooks"), dict):
+        # A reinstall replaces a stale command (another interpreter or path) instead of stacking.
+        ADAPTERS[platform].strip(spec, data["hooks"], keep=command)
+    ADAPTERS[platform].add(spec, data, existed, command)
     _backup(spec, path, platform)
     _write_settings(path, data)
     receipt = load_receipt(spec)
