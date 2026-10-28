@@ -33,6 +33,10 @@ OptionParser.new do |opts|
   opts.on("--backlog") { options[:backlog] = true }
   opts.on("--aliases PATH") { |value| options[:aliases] = value }
   opts.on("--started EPOCH", Integer) { |value| options[:started] = value }
+  opts.on("--session KEY") { |value| options[:session] = value }
+  opts.on("--root PATH") { |value| options[:root] = value }
+  opts.on("--stepper PATH") { |value| options[:stepper] = value }
+  opts.on("--site URL") { |value| options[:site] = value }
 end.parse!
 abort "pass --viewer" if options[:viewer].to_s.empty?
 
@@ -193,7 +197,7 @@ end
 issues = []
 unless options[:backlog] || $stdin.tty?
   raw = $stdin.read
-  unless raw.strip.empty?
+  if raw.lstrip.start_with?("{", "[")
     parsed = JSON.parse(raw)
     parsed = parsed["data"] if parsed.is_a?(Hash) && parsed["issues"].nil? && parsed["data"].is_a?(Hash)
     rows = parsed.is_a?(Hash) ? Array(parsed["issues"]) : Array(parsed)
@@ -206,6 +210,13 @@ unless options[:backlog] || $stdin.tty?
         "assignee" => assignee.is_a?(Hash) ? assignee["displayName"] : assignee,
         "updated" => fields["updated"] || issue["updated"]
       }
+    end
+  elsif !raw.strip.empty?
+    issues = raw.lines.map(&:chomp).reject { |line| line.strip.empty? }.map do |line|
+      key, assignee, updated, summary = line.split("|", 4).map(&:strip)
+      abort "bad issue line: #{line}" if key.to_s.empty? || summary.nil?
+
+      { "key" => key, "summary" => summary, "assignee" => assignee, "updated" => updated }
     end
   end
 end
@@ -296,6 +307,20 @@ if options[:backlog]
 else
   homed = {}
   lines = []
+  items = []
+  site = options[:site].to_s.chomp("/")
+  tidy = ->(text) { id = text.gsub(/[^A-Za-z0-9-]/, ""); id.match?(/\A[A-Za-z]/) ? id : "pr-#{id}" }
+  pr_item = lambda do |issue_key, pr, text|
+    repo = pr["repository"]
+    id = issue_key ? "#{issue_key}-#{repo.gsub(/[^A-Za-z0-9]/, "")}-#{pr["number"]}" : tidy.call("#{repo.gsub(/[^A-Za-z0-9]/, "")}-#{pr["number"]}")
+    state = state_mark(pr)
+    criteria = if state
+                 "No qpre: #{state}. Done when the user says this item is done."
+               else
+                 "Start runs qpre on https://github.com/#{org}/#{repo}/pull/#{pr["number"]}. Done when the user says the review is done. Quitting qpre leaves the item active."
+               end
+    items << [id, text, criteria]
+  end
   issues.each do |issue|
     key = issue["key"]
     matched = []
@@ -309,19 +334,23 @@ else
     if matched.empty?
       assignee = issue["assignee"].to_s
       assignee = "unassigned" if assignee.empty?
-      lines << item_text(key, [], issue["summary"], assignee, age_days(issue["updated"]))
+      text = item_text(key, [], issue["summary"], assignee, age_days(issue["updated"]))
+      lines << text
+      items << [key, text, "No qpre: ticket-only. Done when the user says this item is done.#{site.empty? ? "" : " #{site}/browse/#{key}"}"]
       next
     end
 
     matched.sort_by { |pr| Time.parse(pr["updatedAt"]) }.reverse.each do |pr|
       homed[pr["id"]] = true
-      lines << item_text(
+      text = item_text(
         "#{pr["repository"]}##{pr["number"]}",
         marks_for(pr, options[:viewer], lists),
         pr["title"],
         author_name(pr, names),
         age_days(pr["updatedAt"])
       )
+      lines << text
+      pr_item.call(key, pr, text)
     end
   end
 
@@ -329,13 +358,15 @@ else
         .sort_by { |pr| Time.parse(pr["updatedAt"]) }
         .reverse
         .each do |pr|
-    lines << item_text(
+    text = item_text(
       "#{pr["repository"]}##{pr["number"]}",
       marks_for(pr, options[:viewer], lists),
       pr["title"],
       author_name(pr, names),
       age_days(pr["updatedAt"])
     )
+    lines << text
+    pr_item.call(nil, pr, text)
   end
 
   bots = pulled.count { |pr| pr.dig("author", "__typename") == "Bot" && !homed[pr["id"]] }
@@ -343,6 +374,22 @@ else
   quiet += " · #{bots} bots" if bots.positive?
   puts quiet
   puts lines
+
+  if options[:session] && !items.empty?
+    abort "pass --root and --stepper with --session" unless options[:root] && options[:stepper]
+
+    base = ["python3", options[:stepper]]
+    scope = ["--session", options[:session], "--root", options[:root], "--context", "pr-queue"]
+    run = lambda do |args|
+      out, err, status = Open3.capture3(*args)
+      fail(args.first(3).join(" "), err.empty? ? out : err) unless status.success?
+      out
+    end
+    run.call(base + ["capture"] + scope + items.flat_map { |id, text, criteria| ["--item", "#{id} | #{text} | #{criteria}"] })
+    run.call(base + ["order"] + scope + items.flat_map { |id, _text, _criteria| ["--item", id, "--free", id] })
+    brief = JSON.parse(run.call(base + ["status", "--session", options[:session], "--root", options[:root]]))["brief"]
+    warn "pr-queue brief #{JSON.generate(brief)}" if brief
+  end
 end
 
 elapsed = Process.clock_gettime(Process::CLOCK_MONOTONIC) - started

@@ -4,7 +4,7 @@ description: List this week's review queue, the open sprint's In Review tickets 
 disable-model-invocation: true
 ---
 
-Build the queue by running the script beside this file, then stop. A `backlog` invocation does Stop and Script with `--backlog`. Any other invocation does Stop, Sitting, and then either stops or does In review and Script. `all` adds `--all`. Later turns use what this invocation stored.
+Build the queue by running the script beside this file, then stop. A `backlog` invocation does Stop and Script with `--backlog`. Any other invocation does Stop, Sitting, and then either stops or does In review and Script, which also captures the list. `all` adds `--all`. Later turns use what this invocation stored.
 
 Run `date +%s` first and keep the number as the start time.
 
@@ -50,27 +50,17 @@ Done when every issue from that JQL is held in rank order. A failed call stops t
 
 ## Script
 
-Run `ruby` on `scripts/pr-queue` with `--viewer` set to the login from `get_me`. Pipe the Jira response to its stdin, unchanged. Pass `--started` with the start time. A backlog run passes `--backlog` and no issues, and is not written into the ledger. An `all` run passes `--all`.
+Write the issues to the script's stdin as one line each, in rank order: `KEY|assignee display name|updated|summary`. Use `unassigned` for no assignee. Do not write JSON. Do not read the script. Do not rebuild or retype its output.
 
-Print its stdout. A non-zero exit stops the run. Say its stderr. A search that returns no pull requests is a non-zero exit that names the query. Print the `pr-queue total` line from stderr as the run time. It covers the clock from the prompt to the printed list, not only GitHub.
+Run `ruby` on `scripts/pr-queue` with `--viewer` set to the login from `get_me` and `--started` set to the start time. Add `--all` for an `all` invocation. A backlog run adds `--backlog` and sends no issues.
 
-Done when stdout is printed.
+A list run also passes `--session` and `--root` from the hook line, `--stepper` set to the stepper CLI path named in the stepper skill, and `--site` set to the Atlassian site URL. The script prints the list, then captures every item under `--context pr-queue`, orders them all free, and prints a `pr-queue brief` line on stderr.
 
-## List
+Print its stdout. A non-zero exit stops the run. Say its stderr. A search that returns no pull requests is a non-zero exit that names the query.
 
-The printed lines are the list. An empty home is the quiet line and no capture.
+Speak `done`, `left`, `blocked`, and `position` from the `pr-queue brief` line. Print the `pr-queue total` line as the run time. It covers the clock from the prompt to the printed list, not only GitHub.
 
-Capture in home order under `--context pr-queue`. The id is the issue key, or `<key>-<repo>-<number>` when the issue has a pull request. A Recent id is `<repo>-<number>` after characters outside `A-Za-z0-9` are removed from the repo. An id that does not start with a letter gets a `pr-` prefix. Each `--item` is `id | text | criteria`. The text is the printed line.
-
-Criteria for an open, non-draft pull request: `Start runs qpre on https://github.com/<github_org>/<repo>/pull/<number>. Done when the user says the review is done. Quitting qpre leaves the item active.`
-
-Criteria otherwise: `No qpre: <draft, merged, closed, or ticket-only>. Done when the user says this item is done.` A ticket-only criterion includes the site URL from the Atlassian call plus `/browse/<key>`.
-
-Then `order` with every id as `--item`, in the same order, and every id as `--free`.
-
-Speak `done`, `left`, `blocked`, and `position` from `status`.
-
-Done when the lines are printed, every item is free, and the four brief parts match `status`. qpre has not been started.
+Done when stdout is printed, the brief is spoken, and the total is printed. The script has captured the list, and qpre has not been started. An empty home is the quiet line and no capture.
 
 ## Later
 
