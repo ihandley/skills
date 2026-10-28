@@ -16,7 +16,7 @@ Reach for it when you want the day's review queue. `/pr-queue backlog` is the op
 The `type: team` entry aliased "my team" in `~/.claude/aliases.yaml`. Authors are `members` and `qa`. The daily repos are `repos_active`. Sprint tickets are issues in an open sprint with status `In Review` whose Tech Domain is one of `jira_tech_domains`.
 
 **What does a normal run show?**
-One stepper list, not a table. In Review tickets stay in Jira rank, at any age. Recent pull requests are the ones updated in the last 7 days, newest first. A line such as `94 quiet` is the count of older open pull requests, including ones you already approved. Your own open pull requests stay in the recent section. A pull request you have approved on its latest commit does not.
+One stepper list, not a table. In Review tickets stay in Jira rank, at any age. Recent pull requests are the ones updated in the last 7 days, newest first. The quiet count is every open pull request in the org last updated more than 7 days ago, including pull requests outside the daily repos and pull requests you already approved. Your own open pull requests stay in the recent section. A pull request you have approved on its latest commit does not.
 
 **What is on a line?**
 `repo#number`, the title, the author's name, and days since the last update. A mark appears only when it applies: a repo list other than `repos_active` (`eol`, `lib`, and the other names shortened the same way), `asked` when you are a requested reviewer, and `draft`, `merged`, or `closed`.
@@ -36,3 +36,5 @@ The Atlassian connection or the GitHub connection is missing, or the stepper hoo
 - A second `/pr-queue` in the same chat says the list is already there.
 - "Start" runs `qpre` with the full pull request URL, and the item stays until you say the review is done.
 - The quiet count arrives without those older pull requests being downloaded.
+- The list is printed from searches that return pull requests. A search that comes back empty stops the run and names the query.
+- The run prints its total time from the prompt to the list, and it stays under five minutes.
