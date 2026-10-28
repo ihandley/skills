@@ -52,6 +52,7 @@ Skills for daily code work.
 - **[pair](./skills/engineering/pair/SKILL.md)**: Teach-as-you-go pairing. You write the code; the agent explains the design, plans the steps, and checks understanding before editing anything.
 - **[pr-queue](./skills/engineering/pr-queue/SKILL.md)**: List the open sprint's In Review tickets and the last 7 days of pull requests, and track that list until you start qpre.
 - **[dependabot-review](./skills/engineering/dependabot-review/SKILL.md)**: Review one dependency-bump pull request and file the ticket.
+- **[friction](./skills/engineering/friction/SKILL.md)**: Review one pasted workflow, separate friction from controls, and return a teardown, a blueprint, and a roadmap.
 
 **Model-invoked**
 
