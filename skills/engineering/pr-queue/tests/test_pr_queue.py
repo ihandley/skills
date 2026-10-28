@@ -50,6 +50,24 @@ class PrQueueOutput(unittest.TestCase):
         self.assertEqual(proc.returncode, 0, proc.stderr)
         self.assertEqual(proc.stdout, (FIXTURES / "normal.txt").read_text())
 
+    def test_normal_count_covers_the_daily_repos_older_than_seven_days(self):
+        proc = self.run_script("--print-queries")
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertEqual(proc.stdout, "is:pr is:open updated:<2026-10-21 repo:org/r1\n")
+
+    def test_all_count_adds_the_other_repo_lists(self):
+        proc = self.run_script("--all", "--print-queries")
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertEqual(
+            proc.stdout,
+            "is:pr is:open updated:<2026-10-21 repo:org/r1 repo:org/lib1\n",
+        )
+
+    def test_backlog_sends_no_count_query(self):
+        proc = self.run_script("--backlog", "--print-queries")
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertEqual(proc.stdout, "")
+
     def test_backlog_table(self):
         proc = self.run_script("--backlog")
         self.assertEqual(proc.returncode, 0, proc.stderr)
