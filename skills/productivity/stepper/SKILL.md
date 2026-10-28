@@ -12,7 +12,7 @@ metadata:
 
 # Stepper
 
-One ordered list. One active item. The CLI in this directory is the source of truth. Leave files in the home store untouched; report the CLI error. Record evidence only for a criterion you have actually established, and pass that sentence to `verify`.
+A session may hold several contexts. Each context is one ordered list with one active item. The CLI in this directory is the source of truth. Leave files in the home store untouched; report the CLI error. Record evidence only for a criterion you have actually established, and pass that sentence to `verify`.
 
 **Brief.** The status spoken when an item becomes active, and again when the user moves to start something else: what is done, what is left, what is blocked, and where this item sits.
 
