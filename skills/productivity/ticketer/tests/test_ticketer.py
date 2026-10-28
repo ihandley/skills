@@ -585,5 +585,20 @@ class GithubTests(Base):
         self.assertEqual(code, 2)
 
 
+class UnsupportedMetadataKindTests(Base):
+    def test_each_tracker_returns_a_json_error_not_a_traceback(self):
+        self.write_config(JIRA_TOML)
+        cases = [("jira", "PROJ", "labels"), ("github", "acme/repo", "fields")]
+        for tracker, scope, kind in cases:
+            with self.subTest(tracker=tracker, kind=kind):
+                code, data, stderr = self.run_cli(
+                    "metadata", "store", "--tracker", tracker, "--scope", scope,
+                    "--kind", kind, "--issue-type", "Task", stdin={})
+                self.assertNotEqual(code, 0)
+                self.assertFalse(data["ok"])
+                self.assertIn(kind, data["error"])
+                self.assertNotIn("Traceback", stderr)
+
+
 if __name__ == "__main__":
     unittest.main()
