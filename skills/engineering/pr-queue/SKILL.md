@@ -24,7 +24,9 @@ The viewer's `ids.github` equals that login. Any other result: stop and print bo
 
 On a list invocation, copy `--session` and `--root` from the hook line that starts with `Stepper session:`. Read it from the prompt, or from the context attached to those MCP results. A line that is still absent then stops the run: say the stepper hook did not provide a session key.
 
-Done when the cloud id, the viewer, and (on a list invocation) a session key are in hand, or the run has stopped.
+Run `date +%s` in the terminal as the first call of the run and keep it as the **start**. The run is under five minutes from the start to the printed list. Never reword, split, or retry a search to get a different result: a failed search stops the run and names the query.
+
+Done when the start, the cloud id, the viewer, and (on a list invocation) a session key are in hand, or the run has stopped.
 
 ## Sitting
 
@@ -54,17 +56,37 @@ Done when every issue from that JQL is held in rank order. A failed call stops t
 
 ## Fetch
 
-One GraphQL search, then one quiet count. Repeat the same search with `pageInfo.endCursor` while `hasNextPage` is true. A failed call stops the run.
+Three kinds of search. Recent and Keys use the GraphQL below; page them with `pageInfo.endCursor` while `hasNextPage` is true. A failed call stops the run and names the query.
 
-**Cutoff** is the calendar date 7 days ago, `YYYY-MM-DD`. **Scope** is `repo:ORG/name` for each repo in the repo set, plus `author:login` for each author, joined with `OR`.
+**Cutoff** is the calendar date 7 days ago, `YYYY-MM-DD`. `updated:>=2026-10-20` means on or after that cutoff.
 
-Search query, with the key clause omitted when In review is empty. The first example is the shape: `updated:>=2026-10-20` means on or after that cutoff.
+1. **Recent**, org-wide. The scope is filtered after the fetch, never in the query:
 
 ```
-is:pr org:ORG ((is:open draft:false updated:>=CUTOFF (SCOPE)) OR KEY OR KEY)
+is:pr is:open draft:false org:ORG updated:>=CUTOFF
 ```
 
-The first call passes no cursor. Later calls pass `pageInfo.endCursor`.
+An empty result stops the run and names this query, because a week of org activity is never empty.
+
+2. **Keys**, only when In review is not empty. Split the issue keys into groups of at most six, in rank order, one search per group. The query is `is:pr org:ORG` then the keys joined with ` OR `:
+
+```
+is:pr org:ORG KEY OR KEY OR KEY
+```
+
+A group with no pull requests is normal: its issues are ticket-only.
+
+3. **Quiet count**. `total_count` from one search, `per_page=1`, not paged. **Scope** is `repo:ORG/name` for each repo in the repo set, plus `author:login` for each author, joined with `OR`:
+
+```
+is:pr is:open org:ORG updated:<CUTOFF (SCOPE)
+```
+
+`updated:<2026-10-20` means updated before that cutoff.
+
+Done when every search is paged to the end and the quiet count is that `total_count`.
+
+Hold the pull requests from Recent and Keys as one set, one entry per repo and number. The recent set keeps a pull request when the repo is in the repo set or the author is an author.
 
 ```graphql
 query($q: String!, $cursor: String) {
@@ -85,14 +107,6 @@ query($q: String!, $cursor: String) {
 ```
 
 The **head** is approved when an `APPROVED` review's author is the viewer and its commit oid is `headRefOid`.
-
-The quiet count is `total_count` from one search, `per_page=1`, and it is not paged:
-
-```
-is:pr is:open org:ORG updated:<CUTOFF (SCOPE)
-```
-
-`updated:<2026-10-20` means updated before that cutoff. Done when the search pages are held and the quiet count is that `total_count`.
 
 ## Home
 
@@ -117,7 +131,7 @@ Done when every In review issue and every Recent pull request has one home, in t
 
 ## List
 
-Print `N quiet`, and ` · M bots` when the bot count is greater than zero. Then print each item's text on its own line. An empty home prints the quiet line and stops without a capture.
+Run `date +%s` and subtract the start. Print `N quiet`, and ` · M bots` when the bot count is greater than zero, then ` · took Ns`. Then print each item's text on its own line. An empty home prints that line and stops without a capture. When the time is 300 or more, add `over five minutes` to the line.
 
 Capture in home order under `--context pr-queue`. The id is the issue key, or `<key>-<repo>-<number>` when the issue has a pull request. A Recent id is `<repo>-<number>` after characters outside `A-Za-z0-9` are removed from the repo. An id that does not start with a letter gets a `pr-` prefix. Each `--item` is `id | text | criteria`.
 
@@ -133,7 +147,7 @@ Done when the lines are printed, every item is free, and the four brief parts ma
 
 ## Backlog
 
-Skip In review, the list, and stepper. The backlog is not written into the ledger. Fetch with the same GraphQL search and this query:
+Skip In review, the list, and stepper. The backlog is not written into the ledger. Fetch with the same GraphQL search and this query, one search with no rewording:
 
 ```
 is:pr is:open org:ORG updated:<CUTOFF (SCOPE)
@@ -141,7 +155,7 @@ is:pr is:open org:ORG updated:<CUTOFF (SCOPE)
 
 Page to the end. Keep a pull request when the repo is in the repo set or the author is an author, the author is not a Bot, and the viewer has not approved the head. Newest `updatedAt` first.
 
-Print a table. Cells are plain text. Columns: row number, PR, title, author, age, approvals. The PR cell is `repo#number` plus marks. Age is days since `updatedAt`. Approvals is the count of `APPROVED` reviews. The heading is `Backlog · <count>`, and when every row has 0 approvals, add `· none approved`. Print `M bots` when Bot authors were left off.
+Print a table. Cells are plain text. Columns: row number, PR, title, author, age, approvals. The PR cell is `repo#number` plus marks. Age is days since `updatedAt`. Approvals is the count of `APPROVED` reviews. The heading is `Backlog · <count>`, and when every row has 0 approvals, add `· none approved`. Print `M bots` when Bot authors were left off, and `took Ns` from `date +%s` minus the start.
 
 Done when the table and the bot line are printed. qpre has not been started.
 

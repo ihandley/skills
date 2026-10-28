@@ -30,6 +30,12 @@ A table of those older pull requests you have not approved on the latest commit,
 **What does a second `/pr-queue` do?**
 An unfinished sitting in this chat stays as it is, and nothing is fetched. An unfinished sitting nobody holds is attached to this chat. A finished sitting this chat holds, or that nobody holds, is closed and captured again from a fresh fetch. A sitting another chat holds stops the run and names that chat. A blocked or deferred item keeps the sitting.
 
+**How long does it take?**
+Under five minutes from the prompt to the printed list. The first call records the clock, and the printed line ends with `took Ns`. A run of 300 seconds or more says `over five minutes`.
+
+**What if a search fails or comes back empty?**
+The run stops and names the query. The agent does not reword it or try another. The recent search is never empty for a working org, so an empty one is treated as a failure. A group of ticket keys with no pull requests is normal and leaves those tickets ticket-only.
+
 **What if it stops before the queue?**
 The Atlassian connection or the GitHub connection is missing, or the stepper hook never named this chat. The session line arrives with the first tool result. Install the stepper hook when that line is absent after those calls.
 
@@ -38,4 +44,5 @@ The Atlassian connection or the GitHub connection is missing, or the stepper hoo
 - The list matches the open sprint's `In Review` tickets in rank order, then pull requests updated in the last 7 days.
 - A second `/pr-queue` leaves an unfinished sitting in place, and replaces a finished one.
 - "Start" runs `qpre` with the full pull request URL, and the item stays until you say the review is done.
+- The line above the list ends with `took Ns`, and that is under 300.
 - The quiet count arrives without those older pull requests being downloaded.
