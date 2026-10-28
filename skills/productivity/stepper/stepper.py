@@ -23,6 +23,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
+import lifecycle  # noqa: E402
 import selection  # noqa: E402
 
 VERSION = 1
@@ -488,11 +489,7 @@ def read_contexts(root: Path) -> tuple[list[dict], list[str]]:
 
 def held_by(root: Path, session_key: str) -> list[dict]:
     contexts, _bad = read_contexts(root)
-    return [
-        ctx
-        for ctx in contexts
-        if ctx["lease"] and ctx["lease"]["session_key"] == session_key and not ctx["closed"]
-    ]
+    return lifecycle.held_by(contexts, session_key)
 
 
 def leased_by(root: Path, session_key: str) -> dict | None:
@@ -992,6 +989,17 @@ def result(ctx: dict, **extra) -> dict:
     return body
 
 
+def context_ids(root: Path) -> lifecycle.ContextIds:
+    return lifecycle.ContextIds(
+        live=store(root) / "contexts",
+        archive=store(root) / "archive",
+        load=lambda context_id: load_context(root, context_id),
+        stamp=stamp,
+        refuse=open_context_error,
+        corrupt_types=(CorruptError,),
+    )
+
+
 def open_context_error(context_id: str, existing: dict) -> StepperError:
     lease = existing["lease"]
     if lease:
@@ -1005,13 +1013,8 @@ def cmd_capture(root: Path, session_key: str, context_id: str | None, items: lis
     require_session(root, session_key)
     if not context_id:
         raise StepperError("capture needs a context name")
-    path = context_path(root, context_id)
-    to_archive = None
-    if path.exists():
-        existing = load_context(root, context_id)
-        if not existing["closed"]:
-            raise open_context_error(context_id, existing)
-        to_archive = path
+    ids = context_ids(root)
+    claimed = ids.check_claim(context_id, session_key)
     seq = 1
     built = []
     source_hash = None
@@ -1063,10 +1066,8 @@ def cmd_capture(root: Path, session_key: str, context_id: str | None, items: lis
         "next_seq": seq,
         "items": built,
     }
-    if to_archive is not None:
-        archive = store(root) / "archive"
-        archive.mkdir(parents=True, exist_ok=True)
-        os.replace(to_archive, archive / f"{context_id}-{stamp()}.json")
+    if claimed.state is lifecycle.State.CLOSED:
+        ids.archive_live(context_id)
     save_context(root, ctx)
     if source_hash:
         suggestions = load_suggestions(root)
@@ -1216,12 +1217,9 @@ def cmd_order(root: Path, session_key: str, context_id: str, item_ids: list[str]
 def archive_closed(root: Path, ctx: dict) -> dict:
     ctx["closed"] = True
     ctx["paused"] = False
-    ctx["lease"] = None
+    lifecycle.release(ctx)
     save_context(root, ctx)
-    live = context_path(root, ctx["id"])
-    archive = store(root) / "archive"
-    archive.mkdir(parents=True, exist_ok=True)
-    os.replace(live, archive / f"{ctx['id']}-{stamp()}.json")
+    context_ids(root).archive_live(ctx["id"])
     return ctx
 
 
@@ -1304,25 +1302,26 @@ def cmd_detach(root: Path, session_key: str, context_id: str) -> dict:
             return {"ok": True, "context": None, "reminder": "Stepper: this session holds no context."}
         names = ", ".join(item["id"] for item in held)
         raise StepperError(f"session {session_key} holds {names}, not {context_id}")
-    ctx["lease"] = None
+    lifecycle.release(ctx)
     save_context(root, ctx)
     return result(ctx)
 
 
 def cmd_attach(root: Path, session_key: str, context_id: str, take: bool) -> dict:
     require_session(root, session_key)
-    ctx = load_context(root, context_id)
-    if ctx["closed"]:
-        raise StepperError(f"context {context_id} is closed")
-    lease = ctx["lease"]
-    if lease and lease["session_key"] == session_key:
-        return result(ctx)
-    if lease and not take:
-        raise StepperError(
-            f"context {context_id} is held by {lease['session_key']}. "
+    seen = context_ids(root).check_attach(
+        context_id, session_key, take,
+        missing=StepperError(f"no context {context_id}"),
+        closed=StepperError(f"context {context_id} is closed"),
+        held=lambda ctx: StepperError(
+            f"context {context_id} is held by {ctx['lease']['session_key']}. "
             "Pass --take only after the user asks to continue that work in this session."
-        )
-    ctx["lease"] = {"session_key": session_key, "acquired_at": now()}
+        ),
+    )
+    ctx = seen.ctx
+    if seen.state is lifecycle.State.HELD_BY_ME:
+        return result(ctx)
+    lifecycle.take(ctx, session_key, now())
     save_context(root, ctx)
     return result(ctx)
 
@@ -1423,7 +1422,7 @@ def mark_offered(root: Path, session_key: str, candidate: dict) -> None:
 def release_lease(root: Path, session_key: str) -> None:
     for ctx in held_by(root, session_key):
         items = json.dumps(ctx["items"])
-        ctx["lease"] = None
+        lifecycle.release(ctx)
         save_context(root, ctx)
         saved = load_context(root, ctx["id"])
         if json.dumps(saved["items"]) != items:
