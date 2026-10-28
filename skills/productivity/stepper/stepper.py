@@ -43,6 +43,7 @@ CONTEXT_KEYS = {
     "source_hash",
     "next_seq",
     "items",
+    "repo",
 }
 ITEM_KEYS = {
     "id",
@@ -107,7 +108,6 @@ STEPPER_PROMPT = re.compile(
 QUESTION = re.compile(
     r"(?i)^(how|why|what|when|who|where|can you explain|explain)\b"
 )
-DEFAULT_CONTEXT = "default"
 CONTEXT_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
 
 
@@ -166,38 +166,27 @@ def refuse_skill_checkout(root: Path) -> None:
     )
 
 
-def store(root: Path) -> Path:
-    return root / ".stepper"
+def store(_checkout: Path | None = None) -> Path:
+    return home() / ".stepper"
 
 
 def ensure_store(root: Path) -> Path:
     base = store(root)
     for name in ("contexts", "sessions", "quarantine"):
         (base / name).mkdir(parents=True, exist_ok=True)
-    _exclude(root)
     return base
 
 
-def _exclude(root: Path) -> None:
+def origin_url(checkout: Path) -> str | None:
     try:
         out = subprocess.check_output(
-            ["git", "-C", str(root), "rev-parse", "--git-path", "info/exclude"],
+            ["git", "-C", str(checkout), "remote", "get-url", "origin"],
             text=True,
             stderr=subprocess.DEVNULL,
         ).strip()
     except (subprocess.CalledProcessError, FileNotFoundError):
-        return
-    path = Path(out)
-    if not path.is_absolute():
-        path = (root / path).resolve()
-    path.parent.mkdir(parents=True, exist_ok=True)
-    text = path.read_text() if path.exists() else ""
-    lines = text.splitlines()
-    if ".stepper/" in lines:
-        return
-    if text and not text.endswith("\n"):
-        text += "\n"
-    path.write_text(text + ".stepper/\n")
+        return None
+    return out or None
 
 
 @contextmanager
@@ -326,7 +315,7 @@ def require_session(root: Path, key: str) -> dict:
     data = load_session(root, key)
     if data is None:
         raise StepperError(
-            f"unknown session {key} under {root}. "
+            f"unknown session {key}. "
             "A hook registers the session before commands can change state."
         )
     return data
@@ -355,6 +344,8 @@ def validate_context(data: dict) -> None:
         raise ValueError("flags")
     if data["closed"] and data["lease"] is not None:
         raise ValueError("closed context still leased")
+    if data["repo"] is not None and not isinstance(data["repo"], str):
+        raise ValueError("repo")
     lease = data["lease"]
     if lease is not None:
         if not isinstance(lease, dict) or set(lease) != {"session_key", "acquired_at"}:
@@ -612,6 +603,7 @@ def public_context(ctx: dict) -> dict:
         "paused": ctx["paused"],
         "lease": ctx["lease"],
         "source_hash": ctx["source_hash"],
+        "repo": ctx.get("repo"),
         "complete": is_complete(ctx),
         "reminder": reminder(ctx),
         "items": ctx["items"],
@@ -989,12 +981,14 @@ def transition(
         _activate_next(ctx, item)
 
 
-def require_holder(root: Path, session_key: str) -> dict:
+def require_holder(root: Path, session_key: str, context_id: str) -> dict:
     require_session(root, session_key)
     contexts, bad = read_contexts(root)
     for ctx in contexts:
         lease = ctx["lease"]
         if lease and lease["session_key"] == session_key and not ctx["closed"]:
+            if ctx["id"] != context_id:
+                raise StepperError(f"session {session_key} holds {ctx['id']}, not {context_id}")
             return ctx
     if bad:
         names = ", ".join(bad)
@@ -1002,7 +996,7 @@ def require_holder(root: Path, session_key: str) -> dict:
             f"corrupt state at {names}. The original file was left in place. "
             "No replacement context was created."
         )
-    raise StepperError(f"session {session_key} does not hold a context")
+    raise StepperError(f"session {session_key} does not hold {context_id}")
 
 
 def result(ctx: dict, **extra) -> dict:
@@ -1026,23 +1020,12 @@ def open_context_error(context_id: str, existing: dict) -> StepperError:
     return StepperError(f"context {context_id} already exists and is open ({who})")
 
 
-def free_default_id(root: Path) -> str:
-    context_id = DEFAULT_CONTEXT
-    n = 1
-    while True:
-        path = context_path(root, context_id)
-        if not path.exists() or load_context(root, context_id)["closed"]:
-            return context_id
-        n += 1
-        context_id = f"{DEFAULT_CONTEXT}-{n}"
-
-
-def cmd_capture(root: Path, session_key: str, context_id: str | None, items: list[str], suggestion: str | None) -> dict:
+def cmd_capture(root: Path, session_key: str, context_id: str | None, items: list[str], suggestion: str | None, repo: str | None) -> dict:
     require_session(root, session_key)
+    if not context_id:
+        raise StepperError("capture needs a context name")
     if leased_by(root, session_key) is not None:
         raise StepperError("this session already holds a context; detach or close it first")
-    if context_id is None:
-        context_id = free_default_id(root)
     path = context_path(root, context_id)
     to_archive = None
     if path.exists():
@@ -1097,6 +1080,7 @@ def cmd_capture(root: Path, session_key: str, context_id: str | None, items: lis
         "paused": False,
         "lease": {"session_key": session_key, "acquired_at": created},
         "source_hash": source_hash,
+        "repo": repo,
         "next_seq": seq,
         "items": built,
     }
@@ -1112,8 +1096,8 @@ def cmd_capture(root: Path, session_key: str, context_id: str | None, items: lis
     return result(ctx)
 
 
-def cmd_add(root: Path, session_key: str, items: list[str], parent_id: str | None) -> dict:
-    ctx = require_holder(root, session_key)
+def cmd_add(root: Path, session_key: str, context_id: str, items: list[str], parent_id: str | None) -> dict:
+    ctx = require_holder(root, session_key, context_id)
     if not items:
         raise StepperError("add needs at least one --item")
     parent = None
@@ -1149,8 +1133,8 @@ def _unmet(ctx: dict, item: dict) -> list[str]:
     return [dep for dep in _depends(item) if not _dep_met(ctx, dep)]
 
 
-def cmd_focus(root: Path, session_key: str, item_id: str) -> dict:
-    ctx = require_holder(root, session_key)
+def cmd_focus(root: Path, session_key: str, context_id: str, item_id: str) -> dict:
+    ctx = require_holder(root, session_key, context_id)
     item = _item(ctx, item_id)
     unmet = _unmet(ctx, item)
     if unmet and item["status"] != "active":
@@ -1169,22 +1153,22 @@ def cmd_focus(root: Path, session_key: str, item_id: str) -> dict:
     return result(ctx)
 
 
-def cmd_verify(root: Path, session_key: str, item_id: str, evidence: str) -> dict:
-    ctx = require_holder(root, session_key)
+def cmd_verify(root: Path, session_key: str, context_id: str, item_id: str, evidence: str) -> dict:
+    ctx = require_holder(root, session_key, context_id)
     transition(ctx, item_id, "verified", evidence=evidence)
     save_context(root, ctx)
     return result(ctx)
 
 
-def cmd_block(root: Path, session_key: str, item_id: str, reason: str) -> dict:
-    ctx = require_holder(root, session_key)
+def cmd_block(root: Path, session_key: str, context_id: str, item_id: str, reason: str) -> dict:
+    ctx = require_holder(root, session_key, context_id)
     transition(ctx, item_id, "blocked", reason=reason)
     save_context(root, ctx)
     return result(ctx)
 
 
-def cmd_unblock(root: Path, session_key: str, item_id: str) -> dict:
-    ctx = require_holder(root, session_key)
+def cmd_unblock(root: Path, session_key: str, context_id: str, item_id: str) -> dict:
+    ctx = require_holder(root, session_key, context_id)
     item = _item(ctx, item_id)
     if item["status"] not in ("blocked", "pending"):
         raise StepperError(f"cannot unblock {item_id} from {item['status']}")
@@ -1193,29 +1177,29 @@ def cmd_unblock(root: Path, session_key: str, item_id: str) -> dict:
     return result(ctx)
 
 
-def cmd_defer(root: Path, session_key: str, item_id: str) -> dict:
-    ctx = require_holder(root, session_key)
+def cmd_defer(root: Path, session_key: str, context_id: str, item_id: str) -> dict:
+    ctx = require_holder(root, session_key, context_id)
     transition(ctx, item_id, "deferred")
     save_context(root, ctx)
     return result(ctx)
 
 
-def cmd_cancel(root: Path, session_key: str, item_id: str) -> dict:
-    ctx = require_holder(root, session_key)
+def cmd_cancel(root: Path, session_key: str, context_id: str, item_id: str) -> dict:
+    ctx = require_holder(root, session_key, context_id)
     transition(ctx, item_id, "cancelled")
     save_context(root, ctx)
     return result(ctx)
 
 
-def cmd_pause(root: Path, session_key: str, paused: bool) -> dict:
-    ctx = require_holder(root, session_key)
+def cmd_pause(root: Path, session_key: str, context_id: str, paused: bool) -> dict:
+    ctx = require_holder(root, session_key, context_id)
     ctx["paused"] = paused
     save_context(root, ctx)
     return result(ctx)
 
 
-def cmd_skip(root: Path, session_key: str) -> dict:
-    ctx = require_holder(root, session_key)
+def cmd_skip(root: Path, session_key: str, context_id: str) -> dict:
+    ctx = require_holder(root, session_key, context_id)
     held = _held(ctx)
     if held is None:
         raise StepperError("nothing to skip")
@@ -1232,19 +1216,19 @@ def cmd_skip(root: Path, session_key: str) -> dict:
     unmet = _unmet(ctx, nxt)
     if unmet:
         raise StepperError(f"{nxt['id']} depends on {', '.join(unmet)}")
-    return cmd_focus(root, session_key, nxt["id"])
+    return cmd_focus(root, session_key, context_id, nxt["id"])
 
 
-def cmd_free(root: Path, session_key: str, item_id: str) -> dict:
-    ctx = require_holder(root, session_key)
+def cmd_free(root: Path, session_key: str, context_id: str, item_id: str) -> dict:
+    ctx = require_holder(root, session_key, context_id)
     item = _item(ctx, item_id)
     item["depends_on"] = []
     save_context(root, ctx)
     return result(ctx)
 
 
-def cmd_order(root: Path, session_key: str, item_ids: list[str], free_ids: list[str]) -> dict:
-    ctx = require_holder(root, session_key)
+def cmd_order(root: Path, session_key: str, context_id: str, item_ids: list[str], free_ids: list[str]) -> dict:
+    ctx = require_holder(root, session_key, context_id)
     tops = _top_level(ctx)
     if not item_ids or set(item_ids) != {item["id"] for item in tops} or len(item_ids) != len(set(item_ids)):
         raise StepperError("order needs every top-level id once")
@@ -1260,8 +1244,7 @@ def cmd_order(root: Path, session_key: str, item_ids: list[str], free_ids: list[
     return result(ctx)
 
 
-def cmd_drop(root: Path, session_key: str) -> dict:
-    ctx = require_holder(root, session_key)
+def archive_closed(root: Path, ctx: dict) -> dict:
     ctx["closed"] = True
     ctx["paused"] = False
     ctx["lease"] = None
@@ -1270,6 +1253,12 @@ def cmd_drop(root: Path, session_key: str) -> dict:
     archive = store(root) / "archive"
     archive.mkdir(parents=True, exist_ok=True)
     os.replace(live, archive / f"{ctx['id']}-{stamp()}.json")
+    return ctx
+
+
+def cmd_drop(root: Path, session_key: str, context_id: str) -> dict:
+    ctx = require_holder(root, session_key, context_id)
+    archive_closed(root, ctx)
     return {
         "ok": True,
         "context": None,
@@ -1285,8 +1274,8 @@ def _cancel_quietly(item: dict) -> None:
     item["blocked_reason"] = None
 
 
-def cmd_replace(root: Path, session_key: str, items: list[str]) -> dict:
-    ctx = require_holder(root, session_key)
+def cmd_replace(root: Path, session_key: str, context_id: str, items: list[str]) -> dict:
+    ctx = require_holder(root, session_key, context_id)
     if not items:
         raise StepperError("replace needs at least one --item")
     seq = ctx["next_seq"]
@@ -1333,20 +1322,19 @@ def cmd_replace(root: Path, session_key: str, items: list[str]) -> dict:
     return result(ctx)
 
 
-def cmd_close(root: Path, session_key: str) -> dict:
-    ctx = require_holder(root, session_key)
-    ctx["closed"] = True
-    ctx["paused"] = False
-    ctx["lease"] = None
-    save_context(root, ctx)
+def cmd_close(root: Path, session_key: str, context_id: str) -> dict:
+    ctx = require_holder(root, session_key, context_id)
+    archive_closed(root, ctx)
     return result(ctx)
 
 
-def cmd_detach(root: Path, session_key: str) -> dict:
+def cmd_detach(root: Path, session_key: str, context_id: str) -> dict:
     require_session(root, session_key)
     ctx = leased_by(root, session_key)
     if ctx is None:
         return {"ok": True, "context": None, "reminder": "Stepper: this session holds no context."}
+    if ctx["id"] != context_id:
+        raise StepperError(f"session {session_key} holds {ctx['id']}, not {context_id}")
     ctx["lease"] = None
     save_context(root, ctx)
     return result(ctx)
@@ -1406,6 +1394,7 @@ def cmd_status(root: Path, session_key: str | None, tree: bool = False) -> dict:
                     "closed": ctx["closed"],
                     "paused": ctx["paused"],
                     "lease": ctx["lease"],
+                    "repo": ctx.get("repo"),
                     "complete": is_complete(ctx),
                     "reminder": reminder(ctx),
                     "progress": {"top_level": _progress(ctx)["top_level"]},
@@ -1909,45 +1898,47 @@ def emit(data: dict, code: int = 0) -> int:
 
 def run_command(args: argparse.Namespace) -> dict:
     root = resolve_root(args.root)
+    context_id = getattr(args, "context", None)
     with locked(root, block=True):
         if args.cmd == "capture":
-            return cmd_capture(root, args.session, args.context, args.item or [], args.suggestion)
+            repo = origin_url(root) if args.root else None
+            return cmd_capture(root, args.session, args.context, args.item or [], args.suggestion, repo)
         if args.cmd == "add":
-            return cmd_add(root, args.session, args.item or [], args.parent)
+            return cmd_add(root, args.session, context_id, args.item or [], args.parent)
         if args.cmd == "status":
             return cmd_status(root, args.session, args.tree)
         if args.cmd == "focus":
-            return cmd_focus(root, args.session, args.item_id)
+            return cmd_focus(root, args.session, context_id, args.item_id)
         if args.cmd == "verify":
-            return cmd_verify(root, args.session, args.item_id, args.evidence)
+            return cmd_verify(root, args.session, context_id, args.item_id, args.evidence)
         if args.cmd == "block":
-            return cmd_block(root, args.session, args.item_id, args.reason)
+            return cmd_block(root, args.session, context_id, args.item_id, args.reason)
         if args.cmd == "unblock":
-            return cmd_unblock(root, args.session, args.item_id)
+            return cmd_unblock(root, args.session, context_id, args.item_id)
         if args.cmd == "defer":
-            return cmd_defer(root, args.session, args.item_id)
+            return cmd_defer(root, args.session, context_id, args.item_id)
         if args.cmd == "cancel":
-            return cmd_cancel(root, args.session, args.item_id)
+            return cmd_cancel(root, args.session, context_id, args.item_id)
         if args.cmd == "pause":
-            return cmd_pause(root, args.session, True)
+            return cmd_pause(root, args.session, context_id, True)
         if args.cmd == "resume":
-            return cmd_pause(root, args.session, False)
+            return cmd_pause(root, args.session, context_id, False)
         if args.cmd == "close":
-            return cmd_close(root, args.session)
+            return cmd_close(root, args.session, context_id)
         if args.cmd == "skip":
-            return cmd_skip(root, args.session)
+            return cmd_skip(root, args.session, context_id)
         if args.cmd == "free":
-            return cmd_free(root, args.session, args.item_id)
+            return cmd_free(root, args.session, context_id, args.item_id)
         if args.cmd == "order":
-            return cmd_order(root, args.session, args.item or [], args.free or [])
+            return cmd_order(root, args.session, context_id, args.item or [], args.free or [])
         if args.cmd == "drop":
-            return cmd_drop(root, args.session)
+            return cmd_drop(root, args.session, context_id)
         if args.cmd == "replace":
-            return cmd_replace(root, args.session, args.item or [])
+            return cmd_replace(root, args.session, context_id, args.item or [])
         if args.cmd == "attach":
             return cmd_attach(root, args.session, args.context_id, args.take)
         if args.cmd == "detach":
-            return cmd_detach(root, args.session)
+            return cmd_detach(root, args.session, context_id)
         if args.cmd == "decline":
             return cmd_decline(root, args.session, args.hash)
         raise StepperError(f"unknown command {args.cmd}")
@@ -1963,16 +1954,20 @@ def build_parser() -> argparse.ArgumentParser:
     def session(command: argparse.ArgumentParser, required: bool = True) -> None:
         command.add_argument("--session", required=required)
 
+    def context(command: argparse.ArgumentParser) -> None:
+        command.add_argument("--context", required=True)
+
     capture = sub.add_parser("capture")
     root(capture)
     session(capture)
-    capture.add_argument("--context")
+    context(capture)
     capture.add_argument("--item", action="append")
     capture.add_argument("--suggestion")
 
     add = sub.add_parser("add")
     root(add)
     session(add)
+    context(add)
     add.add_argument("--item", action="append")
     add.add_argument("--parent")
 
@@ -1985,17 +1980,20 @@ def build_parser() -> argparse.ArgumentParser:
         command = sub.add_parser(name)
         root(command)
         session(command)
+        context(command)
         command.add_argument("item_id")
 
     verify = sub.add_parser("verify")
     root(verify)
     session(verify)
+    context(verify)
     verify.add_argument("item_id")
     verify.add_argument("--evidence", required=True)
 
     block = sub.add_parser("block")
     root(block)
     session(block)
+    context(block)
     block.add_argument("item_id")
     block.add_argument("--reason", required=True)
 
@@ -2003,21 +2001,25 @@ def build_parser() -> argparse.ArgumentParser:
         command = sub.add_parser(name)
         root(command)
         session(command)
+        context(command)
 
     free = sub.add_parser("free")
     root(free)
     session(free)
+    context(free)
     free.add_argument("item_id")
 
     order = sub.add_parser("order")
     root(order)
     session(order)
+    context(order)
     order.add_argument("--item", action="append")
     order.add_argument("--free", action="append")
 
     replace = sub.add_parser("replace")
     root(replace)
     session(replace)
+    context(replace)
     replace.add_argument("--item", action="append")
 
     attach = sub.add_parser("attach")

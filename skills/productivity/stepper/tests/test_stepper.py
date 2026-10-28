@@ -25,11 +25,34 @@ class StepperTests(unittest.TestCase):
     def setUp(self):
         self.root = Path(tempfile.mkdtemp())
         self.home = Path(tempfile.mkdtemp())
+        self.store = self.home / ".stepper"
         self.env = {**os.environ, "STEPPER_HOME": str(self.home)}
 
     def cli(self, command, *args):
+        named = {
+            "capture",
+            "add",
+            "focus",
+            "verify",
+            "block",
+            "unblock",
+            "defer",
+            "cancel",
+            "pause",
+            "resume",
+            "close",
+            "skip",
+            "free",
+            "order",
+            "replace",
+            "drop",
+            "detach",
+        }
+        prefix = []
+        if command in named and "--context" not in args:
+            prefix = ["--context", "default"]
         proc = subprocess.run(
-            [sys.executable, str(STEPPER), command, "--root", str(self.root), *args],
+            [sys.executable, str(STEPPER), command, "--root", str(self.root), *prefix, *args],
             text=True,
             capture_output=True,
             env=self.env,
@@ -85,15 +108,16 @@ class StepperTests(unittest.TestCase):
         code, again = self.cli("status", "--session", "cursor:aaa")
         self.assertEqual(code, 0)
         self.assertEqual(again["context"]["items"][1]["id"], "AC-4")
-        path = self.root / ".stepper" / "contexts" / "default.json"
+        path = self.store / "contexts" / "default.json"
         self.assertTrue(path.exists())
+        self.assertFalse((self.root / ".stepper").exists())
+        self.assertIsNone(data["context"]["repo"])
 
     def test_unknown_session_is_rejected(self):
         code, data = self.cli("capture", "--session", "cursor:invented", "--item", "AC-3: x")
         self.assertEqual(code, 1)
         self.assertIn("unknown session", data["error"])
-        self.assertIn(str(self.root.resolve()), data["error"])
-        self.assertFalse((self.root / ".stepper" / "contexts" / "default.json").exists())
+        self.assertFalse((self.store / "contexts" / "default.json").exists())
 
     def test_commands_from_another_directory_use_the_injected_root(self):
         self.register("claude:sess", prompt="track these with stepper")
@@ -128,6 +152,8 @@ class StepperTests(unittest.TestCase):
                 "claude:sess",
                 "--root",
                 str(self.root),
+                "--context",
+                "default",
                 "--item",
                 "M-5: waiting on Blaze",
             ],
@@ -140,7 +166,8 @@ class StepperTests(unittest.TestCase):
         captured = json.loads(proc.stdout)
         self.assertEqual(proc.returncode, 0, proc.stdout)
         self.assertEqual(captured["context"]["items"][0]["id"], "M-5")
-        self.assertTrue((self.root / ".stepper" / "contexts" / "default.json").exists())
+        self.assertTrue((self.store / "contexts" / "default.json").exists())
+        self.assertFalse((self.root / ".stepper").exists())
         self.assertFalse((other / ".stepper").exists())
 
     def test_skill_directory_is_refused_and_its_repository_is_not(self):
@@ -205,10 +232,10 @@ class StepperTests(unittest.TestCase):
 
     def test_detach_and_session_end_keep_items(self):
         self.capture()
-        before = json.loads((self.root / ".stepper" / "contexts" / "default.json").read_text())
+        before = json.loads((self.store / "contexts" / "default.json").read_text())
         code, _data = self.cli("detach", "--session", "cursor:aaa")
         self.assertEqual(code, 0)
-        after = json.loads((self.root / ".stepper" / "contexts" / "default.json").read_text())
+        after = json.loads((self.store / "contexts" / "default.json").read_text())
         self.assertEqual(after["items"], before["items"])
         self.assertIsNone(after["lease"])
         self.cli("attach", "--session", "cursor:aaa", "default")
@@ -217,7 +244,7 @@ class StepperTests(unittest.TestCase):
             {"hook_event_name": "sessionEnd", "conversation_id": "aaa"},
         )
         self.assertEqual(code, 0)
-        ended = json.loads((self.root / ".stepper" / "contexts" / "default.json").read_text())
+        ended = json.loads((self.store / "contexts" / "default.json").read_text())
         self.assertEqual(ended["items"], before["items"])
         self.assertIsNone(ended["lease"])
 
@@ -302,8 +329,8 @@ class StepperTests(unittest.TestCase):
             "capture", "--session", "cursor:aaa", "--context", "other", "--item", "AC-9: another"
         )
         self.assertEqual(code, 0)
-        self.assertTrue((self.root / ".stepper" / "contexts" / "default.json").exists())
-        self.assertTrue((self.root / ".stepper" / "contexts" / "other.json").exists())
+        self.assertTrue((self.store / "contexts" / "default.json").exists())
+        self.assertTrue((self.store / "contexts" / "other.json").exists())
 
     def test_capture_after_close_archives_the_closed_context(self):
         self.capture()
@@ -312,7 +339,7 @@ class StepperTests(unittest.TestCase):
         self.assertEqual(code, 0, data)
         self.assertFalse(data["context"]["closed"])
         self.assertEqual(data["context"]["lease"]["session_key"], "cursor:aaa")
-        archived = list((self.root / ".stepper" / "archive").glob("default-*.json"))
+        archived = list((self.store / "archive").glob("default-*.json"))
         self.assertEqual(len(archived), 1)
         self.assertTrue(json.loads(archived[0].read_text())["closed"])
 
@@ -325,42 +352,122 @@ class StepperTests(unittest.TestCase):
         self.assertEqual(code, 1)
         self.assertIn("is open", data["error"])
 
-    def capture_unnamed(self, session):
-        self.register(session)
-        return self.cli("capture", "--session", session, "--item", "AC-9: x")
+    def test_capture_requires_a_name(self):
+        self.register()
+        proc = subprocess.run(
+            [
+                sys.executable,
+                str(STEPPER),
+                "capture",
+                "--session",
+                "cursor:aaa",
+                "--root",
+                str(self.root),
+                "--item",
+                "AC-9: x",
+            ],
+            text=True,
+            capture_output=True,
+            env=self.env,
+            check=False,
+        )
+        self.assertNotEqual(proc.returncode, 0)
+        self.assertFalse((self.store / "contexts").exists() and any((self.store / "contexts").glob("*.json")))
 
-    def test_capture_without_context_skips_an_open_unleased_default(self):
+    def test_state_change_names_the_context_it_changes(self):
         self.capture()
-        self.cli("detach", "--session", "cursor:aaa")
-        code, data = self.capture_unnamed("cursor:bbb")
-        self.assertEqual(code, 0, data)
-        self.assertEqual(data["context"]["id"], "default-2")
-        self.assertEqual(data["context"]["lease"]["session_key"], "cursor:bbb")
-        old = json.loads((self.root / ".stepper" / "contexts" / "default.json").read_text())
-        self.assertFalse(old["closed"])
-        self.assertIsNone(old["lease"])
+        code, data = self.cli(
+            "verify",
+            "--session",
+            "cursor:aaa",
+            "--context",
+            "other",
+            "AC-3",
+            "--evidence",
+            "sent",
+        )
+        self.assertEqual(code, 1)
+        self.assertIn("holds default, not other", data["error"])
+        stored = json.loads((self.store / "contexts" / "default.json").read_text())
+        self.assertEqual(stored["items"][0]["status"], "active")
 
-    def test_capture_without_context_skips_a_default_held_by_another_session(self):
-        self.capture()
-        code, data = self.capture_unnamed("cursor:bbb")
-        self.assertEqual(code, 0, data)
-        self.assertEqual(data["context"]["id"], "default-2")
-        old = json.loads((self.root / ".stepper" / "contexts" / "default.json").read_text())
-        self.assertEqual(old["lease"]["session_key"], "cursor:aaa")
+    def test_repo_label_is_the_origin_of_the_checkout(self):
+        remote = "https://github.com/example/widget.git"
+        subprocess.run(["git", "init"], cwd=self.root, check=True, capture_output=True)
+        subprocess.run(
+            ["git", "-C", str(self.root), "remote", "add", "origin", remote],
+            check=True,
+            capture_output=True,
+        )
+        code, data = self.capture()
+        self.assertEqual(code, 0)
+        self.assertEqual(data["context"]["repo"], remote)
+        code, status = self.cli("status", "--session", "cursor:aaa")
+        self.assertEqual(status["context"]["repo"], remote)
+        self.assertEqual(status["brief"]["position"], "1 of 2")
 
-    def test_capture_without_context_counts_past_each_open_default(self):
-        self.capture()
-        self.capture_unnamed("cursor:bbb")
-        code, data = self.capture_unnamed("cursor:ccc")
-        self.assertEqual(code, 0, data)
-        self.assertEqual(data["context"]["id"], "default-3")
+    def test_checkout_with_no_origin_leaves_the_repo_label_empty(self):
+        subprocess.run(["git", "init"], cwd=self.root, check=True, capture_output=True)
+        code, data = self.capture()
+        self.assertEqual(code, 0)
+        self.assertIsNone(data["context"]["repo"])
 
-    def test_capture_without_context_reuses_default_once_it_is_closed(self):
+    def test_omitted_checkout_leaves_the_repo_label_empty(self):
+        remote = "https://github.com/example/widget.git"
+        checkout = Path(tempfile.mkdtemp())
+        subprocess.run(["git", "init"], cwd=checkout, check=True, capture_output=True)
+        subprocess.run(
+            ["git", "-C", str(checkout), "remote", "add", "origin", remote],
+            check=True,
+            capture_output=True,
+        )
+        self.register()
+        proc = subprocess.run(
+            [
+                sys.executable,
+                str(STEPPER),
+                "capture",
+                "--session",
+                "cursor:aaa",
+                "--context",
+                "default",
+                "--item",
+                "AC-3: reset email is sent",
+            ],
+            cwd=checkout,
+            text=True,
+            capture_output=True,
+            env=self.env,
+            check=False,
+        )
+        data = json.loads(proc.stdout)
+        self.assertEqual(proc.returncode, 0, proc.stdout)
+        self.assertIsNone(data["context"]["repo"])
+
+    def test_two_names_can_carry_the_same_items(self):
         self.capture()
-        self.cli("close", "--session", "cursor:aaa")
-        code, data = self.capture_unnamed("cursor:bbb")
+        self.register("cursor:bbb")
+        code, data = self.cli(
+            "capture",
+            "--session",
+            "cursor:bbb",
+            "--context",
+            "other",
+            "--item",
+            "AC-3: reset email is sent",
+            "--item",
+            "AC-4: rate limit returns 429",
+        )
         self.assertEqual(code, 0, data)
-        self.assertEqual(data["context"]["id"], "default")
+        code, inventory = self.cli("status")
+        by_id = {ctx["id"]: ctx for ctx in inventory["contexts"]}
+        self.assertEqual(set(by_id), {"default", "other"})
+        code, held = self.cli("status", "--session", "cursor:aaa")
+        code, also = self.cli("status", "--session", "cursor:bbb")
+        self.assertEqual(
+            [item["description"] for item in held["context"]["items"]],
+            [item["description"] for item in also["context"]["items"]],
+        )
 
     def test_open_context_error_names_the_holder(self):
         self.capture()
@@ -383,27 +490,27 @@ class StepperTests(unittest.TestCase):
 
     def test_corrupt_file_is_preserved_and_not_replaced(self):
         self.capture()
-        path = self.root / ".stepper" / "contexts" / "default.json"
+        path = self.store / "contexts" / "default.json"
         original = b"{not json"
         path.write_bytes(original)
         code, data = self.cli("verify", "--session", "cursor:aaa", "AC-3", "--evidence", "sent")
         self.assertEqual(code, 1)
         self.assertIn("left in place", data["error"])
         self.assertEqual(path.read_bytes(), original)
-        contexts = list((self.root / ".stepper" / "contexts").glob("*.json"))
+        contexts = list((self.store / "contexts").glob("*.json"))
         self.assertEqual(contexts, [path])
-        copies = list((self.root / ".stepper" / "quarantine").glob("*"))
+        copies = list((self.store / "quarantine").glob("*"))
         self.assertEqual(len(copies), 1)
         self.assertEqual(copies[0].read_bytes(), original)
         code, status = self.cli("status")
         self.assertEqual(code, 0)
         self.assertTrue(any(Path(item).name == "default.json" for item in status["corrupt_files"]))
         self.assertEqual(path.read_bytes(), original)
-        self.assertEqual(list((self.root / ".stepper" / "contexts").glob("*.json")), [path])
+        self.assertEqual(list((self.store / "contexts").glob("*.json")), [path])
 
     def test_failed_hook_does_not_change_context_bytes(self):
         self.capture()
-        path = self.root / ".stepper" / "contexts" / "default.json"
+        path = self.store / "contexts" / "default.json"
         before = path.read_bytes()
         proc = subprocess.run(
             [sys.executable, str(STEPPER), "hook", "--platform", "cursor", "--tag", "stepper"],
@@ -428,7 +535,7 @@ class StepperTests(unittest.TestCase):
             },
         )
         self.assertEqual(out, "")
-        self.assertFalse((self.root / ".stepper" / "suggestions.json").exists())
+        self.assertFalse((self.store / "suggestions.json").exists())
         self.hook(
             "cursor",
             {
@@ -453,7 +560,7 @@ class StepperTests(unittest.TestCase):
         self.assertNotIn("AC-1", offer["followup_message"])
 
     def test_claude_tracking_prompt_registers_session_and_resume_repeats_key(self):
-        sessions = self.root / ".stepper" / "sessions"
+        sessions = self.store / "sessions"
         code, _data, out = self.hook(
             "claude",
             {
@@ -486,7 +593,7 @@ class StepperTests(unittest.TestCase):
             f"Pass --session {key} --root {root} on every stepper command.",
         )
         self.assertEqual(len(list(sessions.glob("*.json"))), 1)
-        self.assertEqual(list((self.root / ".stepper" / "contexts").glob("*.json")), [])
+        self.assertEqual(list((self.store / "contexts").glob("*.json")), [])
         code, _data, out = self.hook(
             "claude",
             {
@@ -521,8 +628,8 @@ class StepperTests(unittest.TestCase):
         self.assertEqual(out, "")
 
     def test_claude_stop_offers_once_without_a_prior_session(self):
-        sessions = self.root / ".stepper" / "sessions"
-        contexts = self.root / ".stepper" / "contexts"
+        sessions = self.store / "sessions"
+        contexts = self.store / "contexts"
         code, _data, out = self.hook(
             "claude",
             {
@@ -559,7 +666,7 @@ class StepperTests(unittest.TestCase):
         self.assertEqual(out, "")
 
     def test_pr_queue_prompt_registers_a_session_and_announces_the_key(self):
-        sessions = self.root / ".stepper" / "sessions"
+        sessions = self.store / "sessions"
         code, _data, out = self.hook(
             "cursor",
             {
@@ -601,8 +708,8 @@ class StepperTests(unittest.TestCase):
         self.assertIn("Stepper session: claude:5155e88d-741e-4fcb-9fbb-5e86a3830714.", submitted["hookSpecificOutput"]["additionalContext"])
 
     def test_cursor_offer_follows_the_observed_response_then_stop_order(self):
-        sessions = self.root / ".stepper" / "sessions"
-        contexts = self.root / ".stepper" / "contexts"
+        sessions = self.store / "sessions"
+        contexts = self.store / "contexts"
         code, _data, out = self.hook(
             "cursor",
             {
@@ -1017,24 +1124,18 @@ class StepperTests(unittest.TestCase):
         code, restored = self.cli("status", "--session", "cursor:aaa")
         self.assertTrue(restored["context"]["complete"])
 
-    def test_git_exclude_is_local(self):
+    def test_checkout_gains_no_store(self):
         subprocess.run(["git", "init"], cwd=self.root, check=True, capture_output=True)
         self.capture()
-        exclude = subprocess.check_output(
-            ["git", "-C", str(self.root), "rev-parse", "--git-path", "info/exclude"],
-            text=True,
-        ).strip()
-        path = Path(exclude)
-        if not path.is_absolute():
-            path = self.root / path
-        self.assertIn(".stepper/", path.read_text())
+        self.assertFalse((self.root / ".stepper").exists())
+        self.assertTrue((self.store / "contexts" / "default.json").exists())
 
     def item(self, data, item_id):
         return next(item for item in data["context"]["items"] if item["id"] == item_id)
 
     def test_legacy_flat_context_has_no_parent_and_keeps_its_reminder(self):
         self.capture()
-        path = self.root / ".stepper" / "contexts" / "default.json"
+        path = self.store / "contexts" / "default.json"
         stored = json.loads(path.read_text())
         for item in stored["items"]:
             item.pop("parent_id", None)
@@ -1186,7 +1287,7 @@ class StepperTests(unittest.TestCase):
 
     def test_walk_follows_a_branch_deeper_than_the_add_limit(self):
         self.capture()
-        path = self.root / ".stepper" / "contexts" / "default.json"
+        path = self.store / "contexts" / "default.json"
         stored = json.loads(path.read_text())
         stored["items"][0]["status"] = "pending"
         stored["items"][1]["status"] = "pending"
@@ -1393,14 +1494,14 @@ class StepperTests(unittest.TestCase):
 
     def test_drop_archives_without_verifying_and_the_same_session_can_capture(self):
         self.capture()
-        session = self.root / ".stepper" / "sessions"
+        session = self.store / "sessions"
         before = list(session.glob("*.json"))
         code, dropped = self.cli("drop", "--session", "cursor:aaa")
         self.assertEqual(code, 0)
         self.assertIsNone(dropped["context"])
         self.assertEqual(dropped["brief"], {"done": [], "left": [], "blocked": [], "position": "none"})
-        self.assertEqual(list((self.root / ".stepper" / "contexts").glob("*.json")), [])
-        archived = list((self.root / ".stepper" / "archive").glob("default-*.json"))
+        self.assertEqual(list((self.store / "contexts").glob("*.json")), [])
+        archived = list((self.store / "archive").glob("default-*.json"))
         self.assertEqual(len(archived), 1)
         stored = json.loads(archived[0].read_text())
         self.assertTrue(stored["closed"])
