@@ -8,6 +8,7 @@ import os
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 from pathlib import Path
 
@@ -1887,6 +1888,227 @@ class StepperTests(unittest.TestCase):
         finished = next(ctx for ctx in inventory["contexts"] if ctx["id"] == "default")
         self.assertTrue(finished["complete"])
         self.assertEqual(finished["lease"]["session_key"], "cursor:aaa")
+
+    def cli_at(self, home, *args, payload=None):
+        env = {**os.environ, "STEPPER_HOME": str(home)}
+        proc = subprocess.run(
+            [sys.executable, str(STEPPER), *args],
+            input=None if payload is None else json.dumps(payload),
+            text=True,
+            capture_output=True,
+            env=env,
+            check=False,
+        )
+        data = json.loads(proc.stdout) if proc.stdout.strip() else None
+        return proc.returncode, data, proc.stdout
+
+    def seed_checkout(self, checkout: Path, context="default", item="AC-9: stored in the checkout"):
+        subprocess.run(["git", "init"], cwd=checkout, check=True, capture_output=True)
+        subprocess.run(
+            ["git", "-C", str(checkout), "remote", "add", "origin", "https://github.com/example/widget.git"],
+            check=True,
+            capture_output=True,
+        )
+        code, _data, out = self.cli_at(
+            checkout,
+            "hook",
+            "--platform",
+            "cursor",
+            "--tag",
+            "stepper",
+            payload={
+                "hook_event_name": "beforeSubmitPrompt",
+                "conversation_id": "aaa",
+                "prompt": "stepper, track these",
+                "generation_id": "g0",
+                "workspace_roots": [str(checkout)],
+            },
+        )
+        self.assertEqual(code, 0, out)
+        code, data, out = self.cli_at(
+            checkout,
+            "capture",
+            "--root",
+            str(checkout),
+            "--session",
+            "cursor:aaa",
+            "--context",
+            context,
+            "--item",
+            item,
+        )
+        self.assertEqual(code, 0, out)
+        code, _data, out = self.cli_at(
+            checkout,
+            "pause",
+            "--root",
+            str(checkout),
+            "--session",
+            "cursor:aaa",
+            "--context",
+            context,
+        )
+        self.assertEqual(code, 0, out)
+        return data
+
+    def test_import_moves_an_open_checkout_store(self):
+        self.seed_checkout(self.root)
+        stored = json.loads((self.root / ".stepper" / "contexts" / "default.json").read_text())
+        del stored["repo"]
+        (self.root / ".stepper" / "contexts" / "default.json").write_text(json.dumps(stored))
+        (self.root / ".stepper" / "suggestions.json").write_text(
+            json.dumps({"version": 1, "items": {"abc": {"status": "offered", "count": 1, "entries": []}}})
+        )
+        code, status = self.cli("status")
+        self.assertEqual(code, 0, status)
+        row = status["contexts"][0]
+        self.assertEqual(row["id"], "default")
+        self.assertEqual(row["lease"]["session_key"], "cursor:aaa")
+        self.assertTrue(row["paused"])
+        self.assertEqual(row["repo"], "https://github.com/example/widget.git")
+        self.assertFalse((self.root / ".stepper" / "contexts" / "default.json").exists())
+        self.assertTrue((self.store / "sessions" / "cursor_aaa.json").exists())
+        self.assertFalse((self.root / ".stepper" / "sessions" / "cursor_aaa.json").exists())
+        moved = json.loads((self.store / "suggestions.json").read_text())
+        self.assertEqual(moved["items"]["abc"]["status"], "offered")
+        self.assertFalse((self.root / ".stepper" / "suggestions.json").exists())
+        sneaky = self.root / ".stepper" / "contexts" / "sneaky.json"
+        sneaky.write_text(json.dumps(stored))
+        code, again = self.cli("status")
+        self.assertEqual([ctx["id"] for ctx in again["contexts"]], ["default"])
+        self.assertTrue(sneaky.exists())
+
+    def test_import_leaves_conflicts_closed_files_and_corrupt_files(self):
+        self.capture()
+        self.seed_checkout(self.root, item="AC-9: stored in the checkout")
+        local = self.root / ".stepper"
+        closed = json.loads((local / "contexts" / "default.json").read_text())
+        closed["id"] = "done"
+        closed["closed"] = True
+        closed["lease"] = None
+        closed["paused"] = False
+        (local / "contexts" / "done.json").write_text(json.dumps(closed))
+        archive = local / "archive"
+        archive.mkdir()
+        (archive / "kept.json").write_text("stay")
+        (local / "contexts" / "bad.json").write_text("{")
+        before = (local / "contexts" / "default.json").read_text()
+        code, status = self.cli("status")
+        self.assertEqual(code, 0, status)
+        self.assertEqual([ctx["id"] for ctx in status["contexts"]], ["default"])
+        home_default = json.loads((self.store / "contexts" / "default.json").read_text())
+        self.assertEqual(home_default["items"][0]["description"], "reset email is sent")
+        self.assertEqual((local / "contexts" / "default.json").read_text(), before)
+        self.assertEqual((local / "contexts" / "bad.json").read_text(), "{")
+        self.assertTrue((local / "contexts" / "done.json").exists())
+        self.assertFalse((self.store / "contexts" / "done.json").exists())
+        self.assertEqual((archive / "kept.json").read_text(), "stay")
+        reasons = {item["reason"] for item in status["checkout_leftovers"]}
+        self.assertEqual(reasons, {"name taken", "session exists", "corrupt"})
+        for item in status["checkout_leftovers"]:
+            os.chmod(item["path"], 0)
+        try:
+            code, again = self.cli("status")
+            self.assertEqual(code, 0, again)
+            self.assertEqual(again["checkout_leftovers"], status["checkout_leftovers"])
+        finally:
+            for item in status["checkout_leftovers"]:
+                os.chmod(item["path"], 0o644)
+
+    def test_suggestion_merge_keeps_the_stronger_record(self):
+        (self.root / ".stepper" / "contexts").mkdir(parents=True)
+        (self.store / "contexts").mkdir(parents=True)
+        home = {
+            "version": 1,
+            "items": {
+                "same": {"status": "offered", "count": 1, "entries": [], "session_key": "cursor:aaa"},
+                "home-wins": {"status": "accepted", "count": 2, "entries": [], "session_key": "cursor:aaa"},
+                "checkout-wins": {"status": "accepted", "count": 3, "entries": [], "session_key": "cursor:aaa"},
+            },
+        }
+        local = {
+            "version": 1,
+            "items": {
+                "same": {"status": "offered", "count": 9, "entries": [], "session_key": "cursor:bbb"},
+                "home-wins": {"status": "offered", "count": 8, "entries": [], "session_key": "cursor:bbb"},
+                "checkout-wins": {"status": "declined", "count": 4, "entries": [], "session_key": "cursor:bbb"},
+                "only-there": {"status": "offered", "count": 5, "entries": [], "session_key": "cursor:bbb"},
+            },
+        }
+        (self.store / "suggestions.json").write_text(json.dumps(home))
+        (self.root / ".stepper" / "suggestions.json").write_text(json.dumps(local))
+        code, _status = self.cli("status")
+        self.assertEqual(code, 0)
+        merged = json.loads((self.store / "suggestions.json").read_text())["items"]
+        self.assertEqual(merged["same"]["count"], 1)
+        self.assertEqual(merged["home-wins"]["count"], 2)
+        self.assertEqual(merged["checkout-wins"]["status"], "declined")
+        self.assertEqual(merged["only-there"]["count"], 5)
+        self.assertFalse((self.root / ".stepper" / "suggestions.json").exists())
+
+    def test_import_covers_every_workspace_root(self):
+        other = Path(tempfile.mkdtemp())
+        self.seed_checkout(self.root, context="from-root")
+        self.seed_checkout(other, context="from-other")
+        code, _data, out = self.hook(
+            "cursor",
+            {
+                "hook_event_name": "sessionStart",
+                "conversation_id": "zzz",
+                "generation_id": "g1",
+                "workspace_roots": [str(self.root), str(other)],
+            },
+            workspace=False,
+        )
+        self.assertEqual(code, 0, out)
+        code, status = self.cli("status")
+        self.assertEqual({ctx["id"] for ctx in status["contexts"]}, {"from-root", "from-other"})
+
+    def test_second_command_waits_until_the_import_finishes(self):
+        self.seed_checkout(self.root)
+        self.store.mkdir(parents=True, exist_ok=True)
+        ready = self.home / "ready"
+        release = self.home / "release"
+        holder = subprocess.Popen(
+            [
+                sys.executable,
+                "-c",
+                "import fcntl, os, time\n"
+                "from pathlib import Path\n"
+                f"fd = os.open({str(self.store / '.lock')!r}, os.O_CREAT | os.O_RDWR, 0o644)\n"
+                "fcntl.flock(fd, fcntl.LOCK_EX)\n"
+                f"Path({str(ready)!r}).write_text('1')\n"
+                f"while not Path({str(release)!r}).exists():\n"
+                "    time.sleep(0.05)\n"
+                "fcntl.flock(fd, fcntl.LOCK_UN)\n"
+                "os.close(fd)\n",
+            ]
+        )
+        try:
+            for _ in range(50):
+                if ready.exists():
+                    break
+                time.sleep(0.05)
+            self.assertTrue(ready.exists())
+            status = subprocess.Popen(
+                [sys.executable, str(STEPPER), "status", "--root", str(self.root)],
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                env=self.env,
+            )
+            time.sleep(0.4)
+            self.assertIsNone(status.poll())
+            self.assertTrue((self.root / ".stepper" / "contexts" / "default.json").exists())
+            release.write_text("1")
+            out, err = status.communicate(timeout=5)
+            self.assertEqual(status.returncode, 0, err)
+            data = json.loads(out)
+            self.assertEqual(data["contexts"][0]["id"], "default")
+            self.assertFalse((self.root / ".stepper" / "contexts" / "default.json").exists())
+        finally:
+            release.write_text("1")
+            holder.wait(timeout=5)
 
     def cli_home(self, *args):
         proc = subprocess.run(

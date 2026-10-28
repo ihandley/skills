@@ -24,6 +24,9 @@ Yes, when you say so. Dropping archives it without marking the leftovers done. R
 **Does "verified" mean the tests passed?**
 It means the agent stored a non-empty note. You still have to trust, or check, that the note is true.
 
+**What happens to a list stored in the checkout?**
+The first command or hook in that checkout moves its open lists into `~/.stepper`. Each one keeps its name, who holds it, and whether it is paused, and records that checkout's origin. A name already taken, a session already stored, or a damaged file stays in the checkout and is reported. Closed lists stay where they are.
+
 **Can two chats share one list?**
 No. The chat that starts the list holds it. Another chat can take it only when you ask to continue that work there.
 

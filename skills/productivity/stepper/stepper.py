@@ -189,6 +189,148 @@ def origin_url(checkout: Path) -> str | None:
     return out or None
 
 
+SUGGESTION_RANK = {"offered": 1, "accepted": 2, "declined": 3}
+
+
+def imports_path() -> Path:
+    return store(None) / "imports.json"
+
+
+def load_imports() -> dict:
+    path = imports_path()
+    if not path.exists():
+        return {"version": VERSION, "checkouts": {}}
+    try:
+        data = json.loads(path.read_text())
+    except (OSError, json.JSONDecodeError):
+        return {"version": VERSION, "checkouts": {}}
+    if not isinstance(data, dict) or not isinstance(data.get("checkouts"), dict):
+        return {"version": VERSION, "checkouts": {}}
+    return data
+
+
+def save_imports(data: dict) -> None:
+    write_json(imports_path(), data)
+
+
+def read_checkout_json(path: Path) -> dict | None:
+    try:
+        data = json.loads(path.read_text())
+    except (OSError, json.JSONDecodeError):
+        return None
+    if not isinstance(data, dict):
+        return None
+    return data
+
+
+def checkout_leftovers(checkout: Path) -> list[dict]:
+    prior = load_imports()["checkouts"].get(str(checkout.resolve())) or {}
+    return list(prior.get("leftovers") or [])
+
+
+def attach_leftovers(checkout: Path, body: dict) -> dict:
+    leftovers = checkout_leftovers(checkout)
+    if not leftovers:
+        return body
+    reported = dict(body)
+    reported["checkout_leftovers"] = leftovers
+    return reported
+
+
+def import_checkout(checkout: Path) -> list[dict]:
+    checkout = checkout.expanduser().resolve()
+    local = checkout / ".stepper"
+    if local.resolve() == store(None).resolve():
+        return []
+    record = load_imports()
+    key = str(checkout)
+    prior = record["checkouts"].get(key)
+    if prior and prior.get("done"):
+        return list(prior.get("leftovers") or [])
+    if not local.is_dir():
+        return []
+    leftovers: list[dict] = []
+    origin = origin_url(checkout)
+    contexts = local / "contexts"
+    if contexts.is_dir():
+        for path in sorted(p for p in contexts.glob("*.json") if p.is_file()):
+            data = read_checkout_json(path)
+            if data is None:
+                leftovers.append({"path": str(path), "reason": "corrupt"})
+                continue
+            data["repo"] = origin
+            try:
+                validate_context(data)
+            except ValueError:
+                leftovers.append({"path": str(path), "reason": "corrupt"})
+                continue
+            if data["closed"]:
+                continue
+            dest = context_path(checkout, data["id"])
+            if dest.exists():
+                leftovers.append({"path": str(path), "reason": "name taken"})
+                continue
+            save_context(checkout, data)
+            path.unlink()
+    sessions = local / "sessions"
+    if sessions.is_dir():
+        for path in sorted(p for p in sessions.glob("*.json") if p.is_file()):
+            dest = store(checkout) / "sessions" / path.name
+            if dest.exists():
+                leftovers.append({"path": str(path), "reason": "session exists"})
+                continue
+            data = read_checkout_json(path)
+            if data is None:
+                leftovers.append({"path": str(path), "reason": "corrupt"})
+                continue
+            try:
+                validate_session(data)
+            except ValueError:
+                leftovers.append({"path": str(path), "reason": "corrupt"})
+                continue
+            if session_path(checkout, data["session_key"]).name != path.name:
+                leftovers.append({"path": str(path), "reason": "corrupt"})
+                continue
+            save_session(checkout, data)
+            path.unlink()
+    suggestions = local / "suggestions.json"
+    if suggestions.is_file():
+        data = read_checkout_json(suggestions)
+        items = None if data is None else data.get("items")
+        if data is None or data.get("version") != VERSION or not isinstance(items, dict):
+            leftovers.append({"path": str(suggestions), "reason": "corrupt"})
+        else:
+            home_suggestions = load_suggestions(checkout)
+            for digest, incoming in items.items():
+                if not isinstance(digest, str) or not isinstance(incoming, dict):
+                    continue
+                current = home_suggestions["items"].get(digest)
+                incoming_rank = SUGGESTION_RANK.get(incoming.get("status"), 0)
+                current_rank = SUGGESTION_RANK.get((current or {}).get("status"), 0)
+                if current is None or incoming_rank > current_rank:
+                    home_suggestions["items"][digest] = incoming
+            save_suggestions(checkout, home_suggestions)
+            suggestions.unlink()
+    record["checkouts"][key] = {"done": True, "leftovers": leftovers}
+    save_imports(record)
+    return leftovers
+
+
+def hook_checkouts(payload: dict) -> list[Path]:
+    found: list[Path] = []
+    roots = payload.get("workspace_roots") or []
+    if isinstance(roots, list):
+        for item in roots:
+            if not isinstance(item, str) or not item.strip():
+                continue
+            path = Path(item).expanduser().resolve()
+            if path not in found:
+                found.append(path)
+    if found:
+        return found
+    return [hook_root(payload)]
+
+
 @contextmanager
 def locked(root: Path, block: bool = True):
     base = ensure_store(root)
@@ -199,6 +341,7 @@ def locked(root: Path, block: bool = True):
             fcntl.flock(fd, flag)
         except BlockingIOError as exc:
             raise StepperError("state is locked by another stepper process") from exc
+        import_checkout(root)
         yield base
     finally:
         fcntl.flock(fd, fcntl.LOCK_UN)
@@ -1927,46 +2070,48 @@ def run_command(args: argparse.Namespace) -> dict:
     with locked(root, block=True):
         if args.cmd == "capture":
             repo = origin_url(root) if args.root else None
-            return cmd_capture(root, args.session, args.context, args.item or [], args.suggestion, repo)
-        if args.cmd == "add":
-            return cmd_add(root, args.session, context_id, args.item or [], args.parent)
-        if args.cmd == "status":
-            return cmd_status(root, args.session, args.tree)
-        if args.cmd == "focus":
-            return cmd_focus(root, args.session, context_id, args.item_id)
-        if args.cmd == "verify":
-            return cmd_verify(root, args.session, context_id, args.item_id, args.evidence)
-        if args.cmd == "block":
-            return cmd_block(root, args.session, context_id, args.item_id, args.reason)
-        if args.cmd == "unblock":
-            return cmd_unblock(root, args.session, context_id, args.item_id)
-        if args.cmd == "defer":
-            return cmd_defer(root, args.session, context_id, args.item_id)
-        if args.cmd == "cancel":
-            return cmd_cancel(root, args.session, context_id, args.item_id)
-        if args.cmd == "pause":
-            return cmd_pause(root, args.session, context_id, True)
-        if args.cmd == "resume":
-            return cmd_pause(root, args.session, context_id, False)
-        if args.cmd == "close":
-            return cmd_close(root, args.session, context_id)
-        if args.cmd == "skip":
-            return cmd_skip(root, args.session, context_id)
-        if args.cmd == "free":
-            return cmd_free(root, args.session, context_id, args.item_id)
-        if args.cmd == "order":
-            return cmd_order(root, args.session, context_id, args.item or [], args.free or [])
-        if args.cmd == "drop":
-            return cmd_drop(root, args.session, context_id)
-        if args.cmd == "replace":
-            return cmd_replace(root, args.session, context_id, args.item or [])
-        if args.cmd == "attach":
-            return cmd_attach(root, args.session, args.context_id, args.take)
-        if args.cmd == "detach":
-            return cmd_detach(root, args.session, context_id)
-        if args.cmd == "decline":
-            return cmd_decline(root, args.session, args.hash)
-        raise StepperError(f"unknown command {args.cmd}")
+            body = cmd_capture(root, args.session, args.context, args.item or [], args.suggestion, repo)
+        elif args.cmd == "add":
+            body = cmd_add(root, args.session, context_id, args.item or [], args.parent)
+        elif args.cmd == "status":
+            body = cmd_status(root, args.session, args.tree)
+        elif args.cmd == "focus":
+            body = cmd_focus(root, args.session, context_id, args.item_id)
+        elif args.cmd == "verify":
+            body = cmd_verify(root, args.session, context_id, args.item_id, args.evidence)
+        elif args.cmd == "block":
+            body = cmd_block(root, args.session, context_id, args.item_id, args.reason)
+        elif args.cmd == "unblock":
+            body = cmd_unblock(root, args.session, context_id, args.item_id)
+        elif args.cmd == "defer":
+            body = cmd_defer(root, args.session, context_id, args.item_id)
+        elif args.cmd == "cancel":
+            body = cmd_cancel(root, args.session, context_id, args.item_id)
+        elif args.cmd == "pause":
+            body = cmd_pause(root, args.session, context_id, True)
+        elif args.cmd == "resume":
+            body = cmd_pause(root, args.session, context_id, False)
+        elif args.cmd == "close":
+            body = cmd_close(root, args.session, context_id)
+        elif args.cmd == "skip":
+            body = cmd_skip(root, args.session, context_id)
+        elif args.cmd == "free":
+            body = cmd_free(root, args.session, context_id, args.item_id)
+        elif args.cmd == "order":
+            body = cmd_order(root, args.session, context_id, args.item or [], args.free or [])
+        elif args.cmd == "drop":
+            body = cmd_drop(root, args.session, context_id)
+        elif args.cmd == "replace":
+            body = cmd_replace(root, args.session, context_id, args.item or [])
+        elif args.cmd == "attach":
+            body = cmd_attach(root, args.session, args.context_id, args.take)
+        elif args.cmd == "detach":
+            body = cmd_detach(root, args.session, context_id)
+        elif args.cmd == "decline":
+            body = cmd_decline(root, args.session, args.hash)
+        else:
+            raise StepperError(f"unknown command {args.cmd}")
+        return attach_leftovers(root, body)
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -2085,7 +2230,22 @@ def main(argv: list[str] | None = None) -> int:
             root = hook_root(payload)
             try:
                 with locked(root, block=False):
+                    for extra in hook_checkouts(payload):
+                        if extra != root:
+                            import_checkout(extra)
                     output = handle_hook(root, args.platform, payload)
+                    leftovers = []
+                    seen = set()
+                    for extra in hook_checkouts(payload):
+                        for item in checkout_leftovers(extra):
+                            marker = (item.get("path"), item.get("reason"))
+                            if marker in seen:
+                                continue
+                            seen.add(marker)
+                            leftovers.append(item)
+                    if leftovers:
+                        output = dict(output or {})
+                        output["checkout_leftovers"] = leftovers
             except StepperError:
                 return 0
             if output:
@@ -2099,7 +2259,13 @@ def main(argv: list[str] | None = None) -> int:
             return emit(hooks_status())
         return emit(run_command(args))
     except StepperError as exc:
-        return emit({"ok": False, "error": str(exc)}, 1)
+        body = {"ok": False, "error": str(exc)}
+        if getattr(args, "cmd", None) not in ("hook", "hooks"):
+            try:
+                body = attach_leftovers(resolve_root(getattr(args, "root", None)), body)
+            except StepperError:
+                pass
+        return emit(body, 1)
 
 
 if __name__ == "__main__":
