@@ -25,6 +25,8 @@ from pathlib import Path
 
 BUCKETS = ("engineering", "productivity")
 SECTIONS = ["What it does", "When to reach for it", "Common questions", "It's working if"]
+HOST_MODULE = "hooks_host.py"
+HOST_MODULE_SKILLS = ("productivity/alias", "engineering/understand", "productivity/stepper")
 INSTALL_BLOCKS = ("claude-code", "skills-sh-whole-set", "skills-sh-one-skill")
 ENTRY = re.compile(r"^- \*\*\[([^\]]+)\]\(([^)]+)\)\*\*")
 INSTALL_LINE = re.compile(r"^\s*(claude plugin |npx skills@latest add |/plugin )")
@@ -184,6 +186,23 @@ def check(root: Path) -> list[str]:
             if INSTALL_LINE.match(line) and not canonical_line_ok(line.strip(), allowed):
                 problems.append("%s: install command is not in the canonical block: %s"
                                 % (path.relative_to(root), line.strip()))
+    problems += host_module_problems(root)
+    return problems
+
+
+def host_module_problems(root: Path) -> list[str]:
+    """Each skill that installs hooks carries its own copy of the host module. The copies must match."""
+    copies = {}
+    for rel in HOST_MODULE_SKILLS:
+        path = root / "skills" / rel / HOST_MODULE
+        if path.is_file():
+            copies[rel] = path.read_bytes()
+    problems = ["skills/%s/%s: missing" % (rel, HOST_MODULE) for rel in HOST_MODULE_SKILLS if rel not in copies]
+    if copies:
+        ref = next(iter(copies))
+        for rel, data in copies.items():
+            if data != copies[ref]:
+                problems.append("skills/%s/%s: differs from skills/%s/%s" % (rel, HOST_MODULE, ref, HOST_MODULE))
     return problems
 
 
