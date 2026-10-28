@@ -115,7 +115,8 @@ def store_metadata(data, kind, raw, issue_type):
             if not fid:
                 continue
             allowed = [s for s in (_scalar(a) for a in item.get("allowedValues", [])) if s]
-            fields[fid] = {"required": bool(item.get("required")), "name": item.get("name", fid), "allowed": allowed}
+            ids = [str(a["id"]) for a in item.get("allowedValues", []) if isinstance(a, dict) and a.get("id") is not None]
+            fields[fid] = {"required": bool(item.get("required")), "name": item.get("name", fid), "allowed": allowed, "allowed_ids": ids}
         data.setdefault("fields", {})[issue_type] = fields
     else:
         raise ValueError("jira has no metadata kind %r" % kind)
@@ -165,9 +166,11 @@ def validate(draft, config, metadata):
             if operation == "create" and info["required"] and value in (None, "", [], {}):
                 problems.append(_err("tracker_required", "tracker requires %r (%s) for %s" % (fid, info["name"], draft["issue_type"]), fid))
             if value not in (None, "", [], {}) and info["allowed"]:
-                got = _scalar(value)
-                for item in got if isinstance(got, list) else [got]:
-                    if item not in info["allowed"]:
+                ids = info.get("allowed_ids", [])
+                for entry in value if isinstance(value, list) else [value]:
+                    by_id = isinstance(entry, dict) and entry.get("value") is None and entry.get("name") is None and entry.get("id") is not None
+                    item = str(entry["id"]) if by_id else _scalar(entry)
+                    if item not in (ids if by_id else info["allowed"]):
                         problems.append(_err("bad_value", "%r is not allowed for %s; allowed: %s" % (item, info["name"], ", ".join(info["allowed"])), fid))
     return problems
 

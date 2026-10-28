@@ -374,6 +374,30 @@ class JiraMetadataTests(Base):
         code, data, _ = self.draft(jira_payload(priority="High"))
         self.assertEqual(code, 0, data)
 
+    def store_select(self):
+        self.store("fields", {"fields": [
+            {"fieldId": "customfield_1", "required": False, "name": "Team",
+             "allowedValues": [{"id": "123", "value": "Core"}, {"id": "456", "value": "Edge"}]},
+        ]}, "Task")
+
+    def test_id_form_select_value_validates_against_option_id(self):
+        self.store_select()
+        code, data, _ = self.draft(jira_payload(fields={"customfield_1": {"id": "123"}}))
+        self.assertEqual(code, 0, data)
+
+    def test_name_form_select_value_still_validates(self):
+        self.store_select()
+        code, data, _ = self.draft(jira_payload(fields={"customfield_1": {"value": "Edge"}}))
+        self.assertEqual(code, 0, data)
+
+    def test_unknown_id_fails_and_lists_allowed_names(self):
+        self.store_select()
+        code, data, _ = self.draft(jira_payload(fields={"customfield_1": {"id": "999"}}))
+        self.assertEqual(code, 2)
+        error = next(e for e in data["errors"] if e["code"] == "bad_value")
+        self.assertIn("Core", error["message"])
+        self.assertIn("Edge", error["message"])
+
     def test_require_metadata_blocks_without_cache(self):
         self.write_config(JIRA_TOML.replace('tracker = "jira"', 'tracker = "jira"\nrequire_metadata = true'))
         code, data, _ = self.draft(jira_payload())
