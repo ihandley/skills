@@ -4,7 +4,7 @@ description: List this week's review queue, the open sprint's In Review tickets 
 disable-model-invocation: true
 ---
 
-Build the queue and stop. A `backlog` invocation does Record, Stop, and Backlog. Any other invocation does Record, Stop, In review, Fetch, Home, and List. `all` on either invocation widens the repo set. Later turns use what this invocation stored.
+Build the queue and stop. A `backlog` invocation does Record, Stop, and Backlog. Any other invocation does Record, Stop, Sitting, and then either stops or does In review, Fetch, Home, and List. `all` on either invocation widens the repo set. Later turns use what this invocation stored.
 
 Call the Skill tool with `stepper` before any stepper command. The stepper CLI named in that skill is the one you run.
 
@@ -22,9 +22,25 @@ Call `getAccessibleAtlassianResources` once and keep its cloud id and site URL. 
 
 The viewer's `ids.github` equals that login. Any other result: stop and print both logins.
 
-On a list invocation, copy `--session` and `--root` from the hook line that starts with `Stepper session:`. Read it from the prompt, or from the context attached to those MCP results. A line that is still absent then stops the run: say the stepper hook did not provide a session key. `status` for that session already shows a list: say so and stop.
+On a list invocation, copy `--session` and `--root` from the hook line that starts with `Stepper session:`. Read it from the prompt, or from the context attached to those MCP results. A line that is still absent then stops the run: say the stepper hook did not provide a session key.
 
-Done when the cloud id, the viewer, and (on a list invocation) a free session are in hand, or the run has stopped.
+Done when the cloud id, the viewer, and (on a list invocation) a session key are in hand, or the run has stopped.
+
+## Sitting
+
+The context name is `pr-queue`. A capture outside this skill uses some other name.
+
+On a list invocation, run `status` with no `--session` and find the context `pr-queue`.
+
+- Another session holds it: stop and name that session. Do not fetch.
+- This session holds it and `complete` is false: say the sitting is already there. Do not fetch.
+- Nobody holds it and `complete` is false: `attach` it to this session. Do not fetch.
+- This session holds it, or nobody holds it, and `complete` is true: `attach` first when nobody holds it, then `close` it, and continue to a fresh fetch.
+- No `pr-queue` context: continue. Capture uses `--context pr-queue`.
+
+`complete` is true only when every item is verified or cancelled and at least one item is verified. A blocked or deferred item leaves the sitting in place. A finished context with any other name stays leased until the user closes it. Attaching or rolling `pr-queue` leaves this session's other contexts leased.
+
+Done when the run has stopped, an existing sitting is in this session, or a finished sitting was closed and a fresh fetch is next.
 
 ## In review
 
@@ -103,7 +119,7 @@ Done when every In review issue and every Recent pull request has one home, in t
 
 Print `N quiet`, and ` · M bots` when the bot count is greater than zero. Then print each item's text on its own line. An empty home prints the quiet line and stops without a capture.
 
-Capture in home order. The id is the issue key, or `<key>-<repo>-<number>` when the issue has a pull request. A Recent id is `<repo>-<number>` after characters outside `A-Za-z0-9` are removed from the repo. An id that does not start with a letter gets a `pr-` prefix. Each `--item` is `id | text | criteria`.
+Capture in home order under `--context pr-queue`. The id is the issue key, or `<key>-<repo>-<number>` when the issue has a pull request. A Recent id is `<repo>-<number>` after characters outside `A-Za-z0-9` are removed from the repo. An id that does not start with a letter gets a `pr-` prefix. Each `--item` is `id | text | criteria`.
 
 Criteria for an open, non-draft pull request: `Start runs qpre on https://github.com/<github_org>/<repo>/pull/<number>. Done when the user says the review is done. Quitting qpre leaves the item active.`
 
@@ -117,7 +133,7 @@ Done when the lines are printed, every item is free, and the four brief parts ma
 
 ## Backlog
 
-Skip In review, the list, and stepper. Fetch with the same GraphQL search and this query:
+Skip In review, the list, and stepper. The backlog is not written into the ledger. Fetch with the same GraphQL search and this query:
 
 ```
 is:pr is:open org:ORG updated:<CUTOFF (SCOPE)

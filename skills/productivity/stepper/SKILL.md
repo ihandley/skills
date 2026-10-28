@@ -24,7 +24,7 @@ A session may hold several contexts. Each context is one ordered list with one a
 
 ## Session
 
-Run `python3 <this-skill>/stepper.py` from any directory. Pass `--session`, `--root`, and `--context` on every command that changes state. Copy `--session` and `--root` from a hook message that starts with `Stepper session:`. That line names the checkout the hook registered. `--root` is that checkout. It is not where the list is stored. The list is stored in the home store, `~/.stepper`. `--context` is the list's name. The session key looks like `cursor:<conversation_id>` or `claude:<session_id>`. Do not construct a key from a transcript path, filename, or any other UUID. Do not ask the user to approve a key you constructed. If that hook message is absent, say that the hook did not provide a session key, and stop. If the CLI says the root is the stepper skill directory, pass the checkout from the hook line.
+Run `python3 <this-skill>/stepper.py` from any directory. Pass `--session`, `--root`, and `--context` on every command that changes state. Copy `--session` and `--root` from a hook message that starts with `Stepper session:`. That line names the checkout the hook registered. `--root` is that checkout. It is not where the list is stored. The list is stored in the home store, `~/.stepper`. A checkout that still has its own `.stepper` directory is moved there on the first command or hook. Leave a leftover file in the checkout; the CLI reports it and does not read or write it again. `--context` is the list's name. The session key looks like `cursor:<conversation_id>` or `claude:<session_id>`. Do not construct a key from a transcript path, filename, or any other UUID. Do not ask the user to approve a key you constructed. If that hook message is absent, say that the hook did not provide a session key, and stop. If the CLI says the root is the stepper skill directory, pass the checkout from the hook line.
 
 Flags for a command are `python3 <this-skill>/stepper.py <command> -h`.
 
@@ -38,11 +38,19 @@ Do this when an item becomes active, and again before any new start.
 
 Done when all four parts were spoken and match `status`.
 
+## Which context
+
+A state change names one context. The user's words select it when they name the sitting `pr-queue`, a pull request on that sitting, or a list name they already accepted. When a message asks for a state change and names none of those, ask once which context and wait. Do not choose the context that changed most recently. Do not choose from the checkout.
+
+A brief spoken after a change is the `brief` on that command's result. It covers the context that changed.
+
 ## Status
 
-When the user asks for status, the reply is the `table` from `status`. An empty `table` means no list is held.
+When the user asks for status and the session holds one context, the reply is that context's `table`. When it holds several, name each context in `held` and speak its brief. When no session is named, run `status` with no `--session` and list every open context, and for each one the session that holds it or that nobody holds it.
 
-Done when the reply is that table, or the statement that no list is held.
+An empty `table` means that session holds no list.
+
+Done when the reply is that table, those briefs, that inventory, or the statement that no list is held.
 
 ## Stick
 
@@ -60,7 +68,7 @@ Done when the user has been told to hold and why, or `skip` has moved the active
 
 ## When the list is not in this loop
 
-- No list is held, and there is a concrete list of work: [OFFER.md](references/OFFER.md).
+- There is a concrete list of work: [OFFER.md](references/OFFER.md). A list this session already holds does not suppress the offer.
 - A list is held and the user has not accepted an order: [ORDER.md](references/ORDER.md).
 - The user says to drop the list or replace it: [REPLACE.md](references/REPLACE.md).
 

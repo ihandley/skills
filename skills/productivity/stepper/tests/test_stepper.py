@@ -9,6 +9,7 @@ import os
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 from pathlib import Path
 
@@ -660,6 +661,59 @@ class StepperTests(unittest.TestCase):
             [item["description"] for item in held["context"]["items"]],
             [item["description"] for item in also["context"]["items"]],
         )
+
+    def test_status_lists_every_open_context_and_its_lease(self):
+        self.capture()
+        code, _data = self.cli(
+            "capture",
+            "--session",
+            "cursor:aaa",
+            "--context",
+            "other",
+            "--item",
+            "M-5: waiting on Blaze",
+        )
+        self.assertEqual(code, 0)
+        self.cli("detach", "--session", "cursor:aaa", "--context", "other")
+        code, inventory = self.cli("status")
+        by_id = {ctx["id"]: ctx for ctx in inventory["contexts"]}
+        self.assertEqual(set(by_id), {"default", "other"})
+        self.assertEqual(by_id["default"]["lease"]["session_key"], "cursor:aaa")
+        self.assertIsNone(by_id["other"]["lease"])
+        self.cli("close", "--session", "cursor:aaa")
+        code, inventory = self.cli("status")
+        self.assertEqual([ctx["id"] for ctx in inventory["contexts"]], ["other"])
+        self.assertIsNone(inventory["contexts"][0]["lease"])
+
+    def test_brief_after_a_change_covers_that_context(self):
+        self.capture()
+        self.cli(
+            "capture",
+            "--session",
+            "cursor:aaa",
+            "--context",
+            "other",
+            "--item",
+            "M-5: waiting on Blaze",
+        )
+        code, changed = self.cli(
+            "verify",
+            "--session",
+            "cursor:aaa",
+            "--context",
+            "other",
+            "M-5",
+            "--evidence",
+            "Blaze replied",
+        )
+        self.assertEqual(code, 0, changed)
+        self.assertEqual(changed["context"]["id"], "other")
+        self.assertEqual(changed["brief"]["done"], ["M-5"])
+        self.assertEqual(changed["brief"]["left"], [])
+        code, held = self.cli("status", "--session", "cursor:aaa")
+        default = next(row for row in held["held"] if row["id"] == "default")
+        self.assertIn("AC-3", default["brief"]["left"])
+        self.assertNotIn("M-5", default["brief"]["done"])
 
     def test_open_context_error_names_the_holder(self):
         self.capture()
@@ -1747,6 +1801,454 @@ class StepperTests(unittest.TestCase):
         self.assertEqual(replaced["brief"]["left"], ["M-5"])
         self.assertEqual(replaced["brief"]["done"], [])
         self.assertEqual(replaced["brief"]["blocked"], [])
+
+    def test_offer_while_a_context_is_held(self):
+        self.capture()
+        self.cli("pause", "--session", "cursor:aaa")
+        self.hook(
+            "cursor",
+            {
+                "hook_event_name": "afterAgentResponse",
+                "conversation_id": "aaa",
+                "generation_id": "g-offer",
+                "text": AC_REPORT,
+            },
+        )
+        code, offer, _out = self.hook(
+            "cursor",
+            {
+                "hook_event_name": "stop",
+                "conversation_id": "aaa",
+                "generation_id": "g-offer",
+                "status": "completed",
+                "loop_count": 0,
+            },
+        )
+        self.assertEqual(code, 0)
+        message = offer["followup_message"]
+        self.assertIn("Ask the user once", message)
+        self.assertIn("as AC-3", message)
+        self.assertNotIn("as pr-queue", message)
+        code, captured = self.cli(
+            "capture",
+            "--session",
+            "cursor:aaa",
+            "--context",
+            "AC-3",
+            "--item",
+            "AC-3: reset email is sent",
+            "--item",
+            "AC-4: rate limit returns 429",
+        )
+        self.assertEqual(code, 0, captured)
+        code, status = self.cli("status", "--session", "cursor:aaa")
+        self.assertEqual({row["id"] for row in status["held"]}, {"default", "AC-3"})
+        digest = message.split()[2].rstrip(":")
+        self.register("cursor:bbb")
+        self.cli("decline", "--session", "cursor:bbb", digest)
+        other = Path(tempfile.mkdtemp())
+        code, _data, out = self.hook(
+            "cursor",
+            {
+                "hook_event_name": "afterAgentResponse",
+                "conversation_id": "ccc",
+                "generation_id": "g-again",
+                "text": AC_REPORT,
+                "workspace_roots": [str(other)],
+            },
+            workspace=False,
+        )
+        self.assertEqual(out, "")
+        code, _data, out = self.hook(
+            "cursor",
+            {
+                "hook_event_name": "stop",
+                "conversation_id": "ccc",
+                "generation_id": "g-again",
+                "status": "completed",
+                "loop_count": 0,
+                "workspace_roots": [str(other)],
+            },
+            workspace=False,
+        )
+        self.assertEqual(out, "")
+
+    def test_proposed_name_skips_an_open_context_and_the_sitting(self):
+        self.register()
+        self.cli(
+            "capture",
+            "--session",
+            "cursor:aaa",
+            "--context",
+            "AC-3",
+            "--item",
+            "AC-3: already open",
+        )
+        sitting = (
+            "Acceptance criteria\n\n"
+            "- [ ] pr-queue: the sitting name stays reserved\n"
+        )
+        self.hook(
+            "cursor",
+            {
+                "hook_event_name": "afterAgentResponse",
+                "conversation_id": "aaa",
+                "generation_id": "g-name",
+                "text": sitting,
+            },
+        )
+        _code, offer, _out = self.hook(
+            "cursor",
+            {
+                "hook_event_name": "stop",
+                "conversation_id": "aaa",
+                "generation_id": "g-name",
+                "status": "completed",
+                "loop_count": 0,
+            },
+        )
+        self.assertIn("as list", offer["followup_message"])
+        self.assertNotIn("as pr-queue", offer["followup_message"])
+        self.hook(
+            "cursor",
+            {
+                "hook_event_name": "afterAgentResponse",
+                "conversation_id": "bbb",
+                "generation_id": "g-next",
+                "text": AC_REPORT,
+            },
+        )
+        _code, next_offer, _out = self.hook(
+            "cursor",
+            {
+                "hook_event_name": "stop",
+                "conversation_id": "bbb",
+                "generation_id": "g-next",
+                "status": "completed",
+                "loop_count": 0,
+            },
+        )
+        self.assertIn("as AC-3-2", next_offer["followup_message"])
+
+    def test_pr_queue_sitting_rolls_only_when_complete(self):
+        self.capture()
+        code, sitting = self.cli(
+            "capture",
+            "--session",
+            "cursor:aaa",
+            "--context",
+            "pr-queue",
+            "--item",
+            "AC-3: review the first",
+            "--item",
+            "AC-4: review the second",
+        )
+        self.assertEqual(code, 0, sitting)
+
+        def queue():
+            code, inventory = self.cli("status")
+            self.assertEqual(code, 0)
+            return next(ctx for ctx in inventory["contexts"] if ctx["id"] == "pr-queue")
+
+        self.assertFalse(queue()["complete"])
+        self.cli(
+            "block",
+            "--session",
+            "cursor:aaa",
+            "--context",
+            "pr-queue",
+            "AC-3",
+            "--reason",
+            "waiting on a review",
+        )
+        self.assertFalse(queue()["complete"])
+        self.cli("unblock", "--session", "cursor:aaa", "--context", "pr-queue", "AC-3")
+        self.cli("defer", "--session", "cursor:aaa", "--context", "pr-queue", "AC-3")
+        self.assertFalse(queue()["complete"])
+        self.cli("cancel", "--session", "cursor:aaa", "--context", "pr-queue", "AC-3")
+        self.cli(
+            "verify",
+            "--session",
+            "cursor:aaa",
+            "--context",
+            "pr-queue",
+            "AC-4",
+            "--evidence",
+            "reviewed",
+        )
+        self.assertTrue(queue()["complete"])
+        code, held = self.cli("status", "--session", "cursor:aaa")
+        self.assertEqual({row["id"] for row in held["held"]}, {"default", "pr-queue"})
+        code, closed = self.cli("close", "--session", "cursor:aaa", "--context", "pr-queue")
+        self.assertEqual(code, 0, closed)
+        code, held = self.cli("status", "--session", "cursor:aaa")
+        self.assertEqual([row["id"] for row in held["held"]], ["default"])
+
+        self.cli(
+            "capture",
+            "--session",
+            "cursor:aaa",
+            "--context",
+            "pr-queue",
+            "--item",
+            "AC-3: review again",
+        )
+        self.cli("detach", "--session", "cursor:aaa", "--context", "pr-queue")
+        self.assertIsNone(queue()["lease"])
+        self.assertFalse(queue()["complete"])
+        code, attached = self.cli("attach", "--session", "cursor:aaa", "pr-queue")
+        self.assertEqual(code, 0, attached)
+        code, held = self.cli("status", "--session", "cursor:aaa")
+        self.assertEqual({row["id"] for row in held["held"]}, {"default", "pr-queue"})
+        self.register("cursor:bbb")
+        code, denied = self.cli("attach", "--session", "cursor:bbb", "pr-queue")
+        self.assertEqual(code, 1)
+        self.assertIn("cursor:aaa", denied["error"])
+
+        self.cli(
+            "verify",
+            "--session",
+            "cursor:aaa",
+            "--context",
+            "pr-queue",
+            "AC-3",
+            "--evidence",
+            "reviewed",
+        )
+        self.cli("detach", "--session", "cursor:aaa", "--context", "pr-queue")
+        self.assertTrue(queue()["complete"])
+        self.assertIsNone(queue()["lease"])
+        self.cli("attach", "--session", "cursor:aaa", "pr-queue")
+        self.cli("close", "--session", "cursor:aaa", "--context", "pr-queue")
+        code, held = self.cli("status", "--session", "cursor:aaa")
+        self.assertEqual([row["id"] for row in held["held"]], ["default"])
+        self.cli("verify", "--session", "cursor:aaa", "AC-3", "--evidence", "sent")
+        self.cli("verify", "--session", "cursor:aaa", "AC-4", "--evidence", "429")
+        code, inventory = self.cli("status")
+        finished = next(ctx for ctx in inventory["contexts"] if ctx["id"] == "default")
+        self.assertTrue(finished["complete"])
+        self.assertEqual(finished["lease"]["session_key"], "cursor:aaa")
+
+    def cli_at(self, home, *args, payload=None):
+        env = {**os.environ, "STEPPER_HOME": str(home)}
+        proc = subprocess.run(
+            [sys.executable, str(STEPPER), *args],
+            input=None if payload is None else json.dumps(payload),
+            text=True,
+            capture_output=True,
+            env=env,
+            check=False,
+        )
+        data = json.loads(proc.stdout) if proc.stdout.strip() else None
+        return proc.returncode, data, proc.stdout
+
+    def seed_checkout(self, checkout: Path, context="default", item="AC-9: stored in the checkout"):
+        subprocess.run(["git", "init"], cwd=checkout, check=True, capture_output=True)
+        subprocess.run(
+            ["git", "-C", str(checkout), "remote", "add", "origin", "https://github.com/example/widget.git"],
+            check=True,
+            capture_output=True,
+        )
+        code, _data, out = self.cli_at(
+            checkout,
+            "hook",
+            "--platform",
+            "cursor",
+            "--tag",
+            "stepper",
+            payload={
+                "hook_event_name": "beforeSubmitPrompt",
+                "conversation_id": "aaa",
+                "prompt": "stepper, track these",
+                "generation_id": "g0",
+                "workspace_roots": [str(checkout)],
+            },
+        )
+        self.assertEqual(code, 0, out)
+        code, data, out = self.cli_at(
+            checkout,
+            "capture",
+            "--root",
+            str(checkout),
+            "--session",
+            "cursor:aaa",
+            "--context",
+            context,
+            "--item",
+            item,
+        )
+        self.assertEqual(code, 0, out)
+        code, _data, out = self.cli_at(
+            checkout,
+            "pause",
+            "--root",
+            str(checkout),
+            "--session",
+            "cursor:aaa",
+            "--context",
+            context,
+        )
+        self.assertEqual(code, 0, out)
+        return data
+
+    def test_import_moves_an_open_checkout_store(self):
+        self.seed_checkout(self.root)
+        stored = json.loads((self.root / ".stepper" / "contexts" / "default.json").read_text())
+        del stored["repo"]
+        (self.root / ".stepper" / "contexts" / "default.json").write_text(json.dumps(stored))
+        (self.root / ".stepper" / "suggestions.json").write_text(
+            json.dumps({"version": 1, "items": {"abc": {"status": "offered", "count": 1, "entries": []}}})
+        )
+        code, status = self.cli("status")
+        self.assertEqual(code, 0, status)
+        row = status["contexts"][0]
+        self.assertEqual(row["id"], "default")
+        self.assertEqual(row["lease"]["session_key"], "cursor:aaa")
+        self.assertTrue(row["paused"])
+        self.assertEqual(row["repo"], "https://github.com/example/widget.git")
+        self.assertFalse((self.root / ".stepper" / "contexts" / "default.json").exists())
+        self.assertTrue((self.store / "sessions" / "cursor_aaa.json").exists())
+        self.assertFalse((self.root / ".stepper" / "sessions" / "cursor_aaa.json").exists())
+        moved = json.loads((self.store / "suggestions.json").read_text())
+        self.assertEqual(moved["items"]["abc"]["status"], "offered")
+        self.assertFalse((self.root / ".stepper" / "suggestions.json").exists())
+        sneaky = self.root / ".stepper" / "contexts" / "sneaky.json"
+        sneaky.write_text(json.dumps(stored))
+        code, again = self.cli("status")
+        self.assertEqual([ctx["id"] for ctx in again["contexts"]], ["default"])
+        self.assertTrue(sneaky.exists())
+
+    def test_import_leaves_conflicts_closed_files_and_corrupt_files(self):
+        self.capture()
+        self.seed_checkout(self.root, item="AC-9: stored in the checkout")
+        local = self.root / ".stepper"
+        closed = json.loads((local / "contexts" / "default.json").read_text())
+        closed["id"] = "done"
+        closed["closed"] = True
+        closed["lease"] = None
+        closed["paused"] = False
+        (local / "contexts" / "done.json").write_text(json.dumps(closed))
+        archive = local / "archive"
+        archive.mkdir()
+        (archive / "kept.json").write_text("stay")
+        (local / "contexts" / "bad.json").write_text("{")
+        before = (local / "contexts" / "default.json").read_text()
+        code, status = self.cli("status")
+        self.assertEqual(code, 0, status)
+        self.assertEqual([ctx["id"] for ctx in status["contexts"]], ["default"])
+        home_default = json.loads((self.store / "contexts" / "default.json").read_text())
+        self.assertEqual(home_default["items"][0]["description"], "reset email is sent")
+        self.assertEqual((local / "contexts" / "default.json").read_text(), before)
+        self.assertEqual((local / "contexts" / "bad.json").read_text(), "{")
+        self.assertTrue((local / "contexts" / "done.json").exists())
+        self.assertFalse((self.store / "contexts" / "done.json").exists())
+        self.assertEqual((archive / "kept.json").read_text(), "stay")
+        reasons = {item["reason"] for item in status["checkout_leftovers"]}
+        self.assertEqual(reasons, {"name taken", "session exists", "corrupt"})
+        for item in status["checkout_leftovers"]:
+            os.chmod(item["path"], 0)
+        try:
+            code, again = self.cli("status")
+            self.assertEqual(code, 0, again)
+            self.assertEqual(again["checkout_leftovers"], status["checkout_leftovers"])
+        finally:
+            for item in status["checkout_leftovers"]:
+                os.chmod(item["path"], 0o644)
+
+    def test_suggestion_merge_keeps_the_stronger_record(self):
+        (self.root / ".stepper" / "contexts").mkdir(parents=True)
+        (self.store / "contexts").mkdir(parents=True)
+        home = {
+            "version": 1,
+            "items": {
+                "same": {"status": "offered", "count": 1, "entries": [], "session_key": "cursor:aaa"},
+                "home-wins": {"status": "accepted", "count": 2, "entries": [], "session_key": "cursor:aaa"},
+                "checkout-wins": {"status": "accepted", "count": 3, "entries": [], "session_key": "cursor:aaa"},
+            },
+        }
+        local = {
+            "version": 1,
+            "items": {
+                "same": {"status": "offered", "count": 9, "entries": [], "session_key": "cursor:bbb"},
+                "home-wins": {"status": "offered", "count": 8, "entries": [], "session_key": "cursor:bbb"},
+                "checkout-wins": {"status": "declined", "count": 4, "entries": [], "session_key": "cursor:bbb"},
+                "only-there": {"status": "offered", "count": 5, "entries": [], "session_key": "cursor:bbb"},
+            },
+        }
+        (self.store / "suggestions.json").write_text(json.dumps(home))
+        (self.root / ".stepper" / "suggestions.json").write_text(json.dumps(local))
+        code, _status = self.cli("status")
+        self.assertEqual(code, 0)
+        merged = json.loads((self.store / "suggestions.json").read_text())["items"]
+        self.assertEqual(merged["same"]["count"], 1)
+        self.assertEqual(merged["home-wins"]["count"], 2)
+        self.assertEqual(merged["checkout-wins"]["status"], "declined")
+        self.assertEqual(merged["only-there"]["count"], 5)
+        self.assertFalse((self.root / ".stepper" / "suggestions.json").exists())
+
+    def test_import_covers_every_workspace_root(self):
+        other = Path(tempfile.mkdtemp())
+        self.seed_checkout(self.root, context="from-root")
+        self.seed_checkout(other, context="from-other")
+        code, _data, out = self.hook(
+            "cursor",
+            {
+                "hook_event_name": "sessionStart",
+                "conversation_id": "zzz",
+                "generation_id": "g1",
+                "workspace_roots": [str(self.root), str(other)],
+            },
+            workspace=False,
+        )
+        self.assertEqual(code, 0, out)
+        code, status = self.cli("status")
+        self.assertEqual({ctx["id"] for ctx in status["contexts"]}, {"from-root", "from-other"})
+
+    def test_second_command_waits_until_the_import_finishes(self):
+        self.seed_checkout(self.root)
+        self.store.mkdir(parents=True, exist_ok=True)
+        ready = self.home / "ready"
+        release = self.home / "release"
+        holder = subprocess.Popen(
+            [
+                sys.executable,
+                "-c",
+                "import fcntl, os, time\n"
+                "from pathlib import Path\n"
+                f"fd = os.open({str(self.store / '.lock')!r}, os.O_CREAT | os.O_RDWR, 0o644)\n"
+                "fcntl.flock(fd, fcntl.LOCK_EX)\n"
+                f"Path({str(ready)!r}).write_text('1')\n"
+                f"while not Path({str(release)!r}).exists():\n"
+                "    time.sleep(0.05)\n"
+                "fcntl.flock(fd, fcntl.LOCK_UN)\n"
+                "os.close(fd)\n",
+            ]
+        )
+        try:
+            for _ in range(50):
+                if ready.exists():
+                    break
+                time.sleep(0.05)
+            self.assertTrue(ready.exists())
+            status = subprocess.Popen(
+                [sys.executable, str(STEPPER), "status", "--root", str(self.root)],
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                env=self.env,
+            )
+            time.sleep(0.4)
+            self.assertIsNone(status.poll())
+            self.assertTrue((self.root / ".stepper" / "contexts" / "default.json").exists())
+            release.write_text("1")
+            out, err = status.communicate(timeout=5)
+            self.assertEqual(status.returncode, 0, err)
+            data = json.loads(out)
+            self.assertEqual(data["contexts"][0]["id"], "default")
+            self.assertFalse((self.root / ".stepper" / "contexts" / "default.json").exists())
+        finally:
+            release.write_text("1")
+            holder.wait(timeout=5)
 
     def cli_home(self, *args):
         proc = subprocess.run(
