@@ -240,6 +240,66 @@ class StepperTests(unittest.TestCase):
         )
         self.assertEqual(proc.returncode, 0, proc.stderr)
 
+    def repo_with_subdir(self):
+        subprocess.run(["git", "init", "-q", str(self.root)], check=True)
+        sub = self.root / "pkg" / "inner"
+        sub.mkdir(parents=True)
+        return sub
+
+    def test_hook_and_cli_agree_on_the_git_top_level(self):
+        sub = self.repo_with_subdir()
+        body = {"hook_event_name": "UserPromptSubmit", "session_id": "t1", "prompt": "stepper, track these",
+                "workspace_roots": [str(sub)]}
+        proc = subprocess.run([sys.executable, str(STEPPER), "hook", "--platform", "claude", "--tag", "stepper"],
+                              input=json.dumps(body), text=True, capture_output=True, env=self.env, check=False)
+        self.assertEqual(proc.returncode, 0)
+        reported = json.loads(proc.stdout)["hookSpecificOutput"]["additionalContext"]
+        self.assertTrue(reported.rstrip(".").endswith("--root %s on every stepper command" % self.root.resolve()), reported)
+        proc = subprocess.run([sys.executable, str(STEPPER), "status", "--session", "claude:t1"],
+                              cwd=sub, text=True, capture_output=True, env=self.env, check=False)
+        self.assertEqual(proc.returncode, 0, proc.stdout)
+        self.assertEqual(json.loads(proc.stdout)["session"]["session_key"], "claude:t1")
+
+    def test_hook_with_several_workspace_roots_uses_the_first(self):
+        other = Path(tempfile.mkdtemp())
+        body = {"hook_event_name": "UserPromptSubmit", "session_id": "t2", "prompt": "stepper, track these",
+                "workspace_roots": [str(self.root), str(other)]}
+        proc = subprocess.run([sys.executable, str(STEPPER), "hook", "--platform", "claude", "--tag", "stepper"],
+                              input=json.dumps(body), text=True, capture_output=True, env=self.env, check=False)
+        self.assertIn("--root %s on every" % self.root.resolve(), proc.stdout)
+        self.assertNotIn(str(other.resolve()), proc.stdout)
+
+    def test_hook_payload_missing_its_fields_is_silent_and_writes_nothing(self):
+        for body in ({}, {"hook_event_name": "UserPromptSubmit"},
+                     {"hook_event_name": "UserPromptSubmit", "prompt": "stepper, track these"}):
+            with self.subTest(body=body):
+                proc = subprocess.run([sys.executable, str(STEPPER), "hook", "--platform", "claude", "--tag", "stepper"],
+                                      input=json.dumps(body), text=True, capture_output=True, env=self.env,
+                                      cwd=self.root, check=False)
+                self.assertEqual((proc.returncode, proc.stdout.strip()), (0, ""))
+                self.assertFalse(self.store.exists())
+
+    def test_hook_pointed_at_the_skill_directory_is_refused_like_the_cli(self):
+        skill = STEPPER.resolve().parent
+        body = {"hook_event_name": "UserPromptSubmit", "session_id": "t3", "prompt": "stepper, track these",
+                "workspace_roots": [str(skill)]}
+        proc = subprocess.run([sys.executable, str(STEPPER), "hook", "--platform", "claude", "--tag", "stepper"],
+                              input=json.dumps(body), text=True, capture_output=True, env=self.env, check=False)
+        self.assertEqual((proc.returncode, proc.stdout.strip()), (0, ""))
+        self.assertFalse(self.store.exists())
+        code, data = self.cli("status", "--root", str(skill))
+        self.assertEqual(code, 1)
+
+    def test_the_session_key_is_parsed_in_one_place(self):
+        spec = __import__("importlib.util").util.spec_from_file_location("stepper_keys", STEPPER)
+        mod = __import__("importlib.util").util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        self.assertEqual(mod.split_session_key("claude:abc:def"), ("claude", "abc:def"))
+        self.assertEqual(mod.join_session_key("cursor", "x"), "cursor:x")
+        self.assertEqual(mod.session_key_from({"session_id": "s"}, "claude"), "claude:s")
+        self.assertEqual(mod.session_key_from({"conversation_id": "c"}, "cursor"), "cursor:c")
+        self.assertIsNone(mod.session_key_from({}, "claude"))
+
     def test_second_session_cannot_mutate_or_receive_reminders(self):
         self.capture()
         self.register("cursor:bbb", prompt="stepper, what's left")

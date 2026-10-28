@@ -144,21 +144,29 @@ def home() -> Path:
     return Path(override).expanduser() if override else Path.home()
 
 
-def resolve_root(arg: str | None) -> Path:
-    if arg:
-        root = Path(arg).expanduser().resolve()
-    else:
-        try:
-            out = subprocess.check_output(
-                ["git", "rev-parse", "--show-toplevel"],
-                text=True,
-                stderr=subprocess.DEVNULL,
-            ).strip()
-            root = Path(out)
-        except (subprocess.CalledProcessError, FileNotFoundError):
-            root = Path.cwd().resolve()
+def git_toplevel(path: Path) -> Path | None:
+    try:
+        out = subprocess.check_output(
+            ["git", "-C", str(path), "rev-parse", "--show-toplevel"],
+            text=True,
+            stderr=subprocess.DEVNULL,
+        ).strip()
+    except (subprocess.CalledProcessError, FileNotFoundError, OSError):
+        return None
+    return Path(out).resolve() if out else None
+
+
+def project_root(start: Path) -> Path:
+    """The one root policy: the git top-level of start, else start. The skill directory is refused."""
+    start = start.expanduser().resolve()
+    root = git_toplevel(start) or start
     refuse_skill_checkout(root)
+    refuse_skill_checkout(start)
     return root
+
+
+def resolve_root(arg: str | None) -> Path:
+    return project_root(Path(arg) if arg else Path.cwd())
 
 
 def refuse_skill_checkout(root: Path) -> None:
@@ -281,7 +289,7 @@ def load_json(root: Path, path: Path) -> dict:
 
 
 def session_path(root: Path, key: str) -> Path:
-    platform, _, sid = key.partition(":")
+    platform, sid = split_session_key(key)
     safe = re.sub(r"[^A-Za-z0-9._-]", "_", sid)
     return store(root) / "sessions" / f"{platform}_{safe}.json"
 
@@ -1440,19 +1448,28 @@ def event_allowed(event: str, platform: str) -> bool:
 def hook_root(payload: dict) -> Path:
     roots = payload.get("workspace_roots") or []
     if roots:
-        return Path(str(roots[0])).expanduser().resolve()
+        return project_root(Path(str(roots[0])))
     cwd = payload.get("cwd")
     if isinstance(cwd, str) and cwd.strip():
-        return Path(cwd).expanduser().resolve()
-    return Path.cwd()
+        return project_root(Path(cwd))
+    return project_root(Path.cwd())
+
+
+def join_session_key(platform: str, ident: str) -> str:
+    return f"{platform}:{ident}"
+
+
+def split_session_key(key: str) -> tuple[str, str]:
+    platform, _, ident = key.partition(":")
+    return platform, ident
 
 
 def session_key_from(payload: dict, platform: str) -> str | None:
     if platform == "cursor":
         ident = payload.get("conversation_id") or payload.get("session_id")
-        return f"cursor:{ident}" if ident else None
-    ident = payload.get("session_id")
-    return f"claude:{ident}" if ident else None
+    else:
+        ident = payload.get("session_id")
+    return join_session_key(platform, str(ident)) if ident else None
 
 
 def generation_of(payload: dict) -> str | None:
@@ -2024,7 +2041,10 @@ def main(argv: list[str] | None = None) -> int:
                 return 0
             if not isinstance(payload, dict):
                 return 0
-            inv = Invocation.from_payload(payload, args.platform)
+            try:
+                inv = Invocation.from_payload(payload, args.platform)
+            except StepperError:
+                return 0
             guard = locked(inv.root, block=False) if store(inv.root).is_dir() else nullcontext()
             try:
                 with guard:
