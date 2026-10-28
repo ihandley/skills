@@ -652,7 +652,10 @@ def cmd_metadata_store(args):
     raw = read_json_input(args.input)
     path = metadata_path(args.tracker, args.scope)
     data = json.loads(path.read_text(encoding="utf-8")) if path.is_file() else {}
-    adapter.store_metadata(data, args.kind, raw, args.issue_type)
+    try:
+        adapter.store_metadata(data, args.kind, raw, args.issue_type)
+    except ValueError as exc:
+        raise Fail(EXIT_REFUSED, str(exc))
     data["fetched_at"] = time.time()
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
