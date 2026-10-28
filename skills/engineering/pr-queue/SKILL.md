@@ -11,17 +11,17 @@ Run `date +%s` first and keep the number as the start time.
 
 Call the Skill tool with `stepper` before any stepper command. The stepper CLI named in that skill is the one you run.
 
-The script is `scripts/pr-queue` in the directory of this file. It reads `~/.claude/aliases.yaml`, fetches the pull requests, and prints the lines. Read that file only for `jira_project` and `jira_tech_domains`. Do not call `gh`. Do not rebuild the lines.
+The script is `scripts/pr-queue` in the directory of this file. It reads `~/.claude/aliases.yaml`, fetches the pull requests, and prints the lines. Do not read that file. Do not call `gh`. Do not rebuild the lines.
 
 ## Stop
 
-Call `getAccessibleAtlassianResources` once and keep its cloud id. Call GitHub `get_me` once and keep its login. A missing MCP tool, a namespace that is not authenticated, or a failed call stops the run.
+Call GitHub `get_me` once and keep its login. A missing MCP tool, a namespace that is not authenticated, or a failed call stops the run.
 
 The viewer is the person aliased "me". That person's `ids.github` equals the login from `get_me`. Any other result: stop and print both logins. The script also checks this and exits when they differ.
 
 On a list invocation, copy `--session` and `--root` from the hook line that starts with `Stepper session:`. Read it from the prompt, or from the context attached to those MCP results. A line that is still absent then stops the run: say the stepper hook did not provide a session key.
 
-Done when the cloud id, the viewer, and (on a list invocation) a session key are in hand, or the run has stopped.
+Done when the viewer and (on a list invocation) a session key are in hand, or the run has stopped.
 
 ## Sitting
 
@@ -41,11 +41,9 @@ Done when the run has stopped, an existing sitting is in this session, or a fini
 
 ## In review
 
-A list invocation searches Jira with `searchJiraIssuesUsingJql`. Page with `nextPageToken` until `isLast` is true. Fields are `summary`, `assignee`, and `updated`. Keep the result order. The record in `~/.claude/aliases.yaml` supplies `<jira_project>` and `<jira_tech_domains>` for this query only.
+A list invocation runs the script with `--print-jql` and the `--viewer` login. It prints `cloud_id=`, `site=`, and `jql=` lines. A non-zero exit stops the run: say its stderr. Do not look the site up and do not build the query.
 
-```
-project = <jira_project> AND "Tech Domain[Dropdown]" in (<jira_tech_domains>) AND status = "In Review" AND sprint in openSprints() ORDER BY Rank ASC
-```
+Search Jira once with `searchJiraIssuesUsingJql`, passing the printed cloud id and the text after `jql=`. Page with `nextPageToken` until `isLast` is true. Fields are `summary`, `assignee`, and `updated`. Keep the result order.
 
 Done when every issue from that JQL is held in rank order. A failed call stops the run.
 

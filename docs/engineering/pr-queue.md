@@ -42,6 +42,9 @@ A table of those older pull requests you have not approved on the latest commit,
 **What does a second `/pr-queue` do?**
 An unfinished sitting in this chat stays as it is, and nothing is fetched. An unfinished sitting nobody holds is attached to this chat. A finished sitting this chat holds, or that nobody holds, is closed and captured again from a fresh fetch. A sitting another chat holds stops the run and names that chat. A blocked or deferred item keeps the sitting.
 
+**Where does the Jira query come from?**
+`pr-queue --print-jql` builds it from `jira_project` and `jira_tech_domains` on the team record, and prints the Atlassian cloud id and site URL stored there as `atlassian_cloud_id` and `atlassian_site`. The agent runs that command, searches Jira once with the printed id, and never reads the alias file or looks the site up. A missing key stops the run and names the key.
+
 **What if it stops before the queue?**
 The Atlassian connection or the GitHub connection is missing, or the stepper hook never named this chat. The session line arrives with the first tool result. Install the stepper hook when that line is absent after those calls.
 
@@ -59,3 +62,4 @@ The Atlassian connection or the GitHub connection is missing, or the stepper hoo
 - The list is printed from searches that return pull requests. A search that comes back empty stops the run and names the query.
 - The run prints its total time from the prompt to the list, and it stays under five minutes.
 - `python3 skills/engineering/pr-queue/tests/test_pr_queue.py` passes with no network.
+- The run makes one Jira search with the stored cloud id and no site lookup.

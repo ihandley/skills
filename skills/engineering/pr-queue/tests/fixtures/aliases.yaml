@@ -11,6 +11,9 @@ team:
   aliases: ["my team"]
   github_org: org
   jira_project: JET
+  jira_tech_domains: ["Backend - Admin", "Edge Cloud Platform (ECP)"]
+  atlassian_cloud_id: 00000000-0000-0000-0000-000000000000
+  atlassian_site: https://example.atlassian.net
   members: [me, bob]
   qa: []
   repos_active: [r1]
