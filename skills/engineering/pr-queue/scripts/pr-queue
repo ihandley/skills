@@ -36,7 +36,6 @@ OptionParser.new do |opts|
   opts.on("--session KEY") { |value| options[:session] = value }
   opts.on("--root PATH") { |value| options[:root] = value }
   opts.on("--stepper PATH") { |value| options[:stepper] = value }
-  opts.on("--site URL") { |value| options[:site] = value }
 end.parse!
 abort "pass --viewer" if options[:viewer].to_s.empty?
 
@@ -143,12 +142,10 @@ def item_text(ref, marks, title, author, age)
   "#{left} · #{title} · #{author} · #{age}d"
 end
 
-def state_mark(pr)
-  return "draft" if pr["isDraft"]
-  return "merged" if pr["state"] == "MERGED"
-  return "closed" if pr["state"] == "CLOSED"
+def walkable?(pr, viewer)
+  return false unless pr["state"] == "OPEN" && !pr["isDraft"]
 
-  nil
+  pr.dig("author", "login") == viewer || !pr["headApproved"]
 end
 
 data = YAML.load_file(options[:aliases])
@@ -265,8 +262,7 @@ end
 def marks_for(pr, viewer, lists)
   [
     list_mark(pr["repository"], lists),
-    ("asked" if pr["reviewRequestLogins"].include?(viewer)),
-    state_mark(pr)
+    ("asked" if pr["reviewRequestLogins"].include?(viewer))
   ].compact
 end
 
@@ -278,12 +274,12 @@ def author_name(pr, names)
 end
 
 def recent_pr?(pr, viewer, repo_set, logins, cutoff)
-  return false unless pr["state"] == "OPEN" && !pr["isDraft"]
+  return false unless walkable?(pr, viewer)
   return false if pr.dig("author", "__typename") == "Bot"
   return false unless repo_set.include?(pr["repository"]) || logins.include?(pr.dig("author", "login"))
   return false if Time.parse(pr["updatedAt"]).utc.to_date < Date.parse(cutoff)
 
-  pr.dig("author", "login") == viewer || !pr["headApproved"]
+  true
 end
 
 if options[:backlog]
@@ -308,35 +304,27 @@ else
   homed = {}
   lines = []
   items = []
-  site = options[:site].to_s.chomp("/")
   tidy = ->(text) { id = text.gsub(/[^A-Za-z0-9-]/, ""); id.match?(/\A[A-Za-z]/) ? id : "pr-#{id}" }
   pr_item = lambda do |issue_key, pr, text|
     repo = pr["repository"]
     id = issue_key ? "#{issue_key}-#{repo.gsub(/[^A-Za-z0-9]/, "")}-#{pr["number"]}" : tidy.call("#{repo.gsub(/[^A-Za-z0-9]/, "")}-#{pr["number"]}")
-    state = state_mark(pr)
-    criteria = if state
-                 "No qpre: #{state}. Done when the user says this item is done."
-               else
-                 "Start runs qpre on https://github.com/#{org}/#{repo}/pull/#{pr["number"]}. Done when the user says the review is done. Quitting qpre leaves the item active."
-               end
+    url = "https://github.com/#{org}/#{repo}/pull/#{pr["number"]}"
+    criteria = "Start runs qpre on #{url}. After qpre exits, read the outcome line qpre wrote for this pull request and speak posted, clean, or unfinished. Done when the user strikes the item. Quitting qpre leaves the item active."
     items << [id, text, criteria]
   end
+  without_pr = 0
   issues.each do |issue|
     key = issue["key"]
     matched = []
     %w[branchKeys commitKeys bodyKeys].each do |field|
-      hits = pulled.select { |pr| pr[field].include?(key) && !homed[pr["id"]] }
+      hits = pulled.select { |pr| pr[field].include?(key) && !homed[pr["id"]] && walkable?(pr, options[:viewer]) }
       next if hits.empty?
 
       matched = hits
       break
     end
     if matched.empty?
-      assignee = issue["assignee"].to_s
-      assignee = "unassigned" if assignee.empty?
-      text = item_text(key, [], issue["summary"], assignee, age_days(issue["updated"]))
-      lines << text
-      items << [key, text, "No qpre: ticket-only. Done when the user says this item is done.#{site.empty? ? "" : " #{site}/browse/#{key}"}"]
+      without_pr += 1
       next
     end
 
@@ -371,6 +359,7 @@ else
 
   bots = pulled.count { |pr| pr.dig("author", "__typename") == "Bot" && !homed[pr["id"]] }
   quiet = "#{batch[:quiet]} quiet"
+  quiet += " · #{without_pr} without a pull request" if without_pr.positive?
   quiet += " · #{bots} bots" if bots.positive?
   puts quiet
   puts lines

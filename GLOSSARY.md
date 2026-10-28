@@ -61,7 +61,7 @@ One pass over a pull request.
 _Avoid_: Review
 
 **Outcome**:
-How a walk ended. A review was posted, the walk finished with nothing to post, or the walk is unfinished.
+How a walk ended. A review was posted, the walk finished with nothing to post, or the walk is unfinished. qpre writes it as one line, and the loop reads only that line.
 _Avoid_: Done, status
 
 **Strike**:
