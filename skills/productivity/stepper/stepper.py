@@ -1438,12 +1438,27 @@ def session_line(key: str, root: Path) -> str:
     )
 
 
-def offer_line(candidate: dict) -> str:
+def propose_name(root: Path, candidate: dict) -> str:
+    seed = "list"
+    for entry in candidate.get("entries") or []:
+        item_id = entry.get("id") or ""
+        if item_id != "pr-queue" and CONTEXT_ID.fullmatch(item_id):
+            seed = item_id
+            break
+    name = seed
+    n = 1
+    while name == "pr-queue" or context_path(root, name).exists():
+        n += 1
+        name = f"{seed}-{n}"
+    return name
+
+
+def offer_line(candidate: dict, name: str) -> str:
     ids = [entry["id"] for entry in candidate["entries"] if entry["id"]]
     names = f" ({', '.join(ids)})" if ids else ""
     return (
         f"Stepper candidate {candidate['hash']}: {candidate['count']} items{names}. "
-        "Ask the user once whether to track them. Do not capture until they accept."
+        f"Ask the user once whether to track them as {name}. Do not capture until they accept."
     )
 
 
@@ -1509,14 +1524,11 @@ def generation_of(payload: dict) -> str | None:
     return str(value) if value else None
 
 
-def consider_candidate(root: Path, sess: dict, candidate: dict | None, ctx: dict | None, generation: str | None) -> None:
+def consider_candidate(root: Path, sess: dict, candidate: dict | None, _ctx: dict | None, generation: str | None) -> None:
     if not candidate:
         return
     status = suggestion_status(root, candidate["hash"])
     if status in ("offered", "accepted", "declined"):
-        return
-    if ctx is not None:
-        sess["parked"] = candidate
         return
     sess["candidate"] = candidate
     sess["candidate_generation"] = generation
@@ -1620,13 +1632,13 @@ def handle_hook(root: Path, platform: str, payload: dict) -> dict | None:
             and generation is not None
             and sess.get("candidate_generation") == generation
         )
-        if same_turn and not holds and suggestion_status(root, candidate["hash"]) not in (
+        if same_turn and suggestion_status(root, candidate["hash"]) not in (
             "offered",
             "accepted",
             "declined",
         ):
             mark_offered(root, key, candidate)
-            parts.append(offer_line(candidate))
+            parts.append(offer_line(candidate, propose_name(root, candidate)))
             sess["candidate"] = None
         if parts:
             save_session(root, sess)
@@ -1656,9 +1668,6 @@ def handle_hook(root: Path, platform: str, payload: dict) -> dict | None:
             sess["last_assistant_text"] = assistant
             consider_candidate(root, sess, parse_candidates(assistant), ctx, generation)
         held = held_by(root, key)
-        if held and all(item["paused"] for item in held):
-            save_session(root, sess)
-            return None
         parts = []
         shown = [item for item in held if not item["paused"] and has_outstanding(item)]
         if (
@@ -1669,17 +1678,16 @@ def handle_hook(root: Path, platform: str, payload: dict) -> dict | None:
         ):
             parts.append(active_reminder(shown))
             sess["reminded_generation"] = token
-        if not holds:
-            candidate = sess.get("candidate") or sess.get("parked")
-            if candidate and suggestion_status(root, candidate["hash"]) not in (
-                "offered",
-                "accepted",
-                "declined",
-            ):
-                mark_offered(root, key, candidate)
-                parts.append(offer_line(candidate))
-                sess["candidate"] = None
-                sess["parked"] = None
+        candidate = sess.get("candidate") or sess.get("parked")
+        if candidate and suggestion_status(root, candidate["hash"]) not in (
+            "offered",
+            "accepted",
+            "declined",
+        ):
+            mark_offered(root, key, candidate)
+            parts.append(offer_line(candidate, propose_name(root, candidate)))
+            sess["candidate"] = None
+            sess["parked"] = None
         if not parts:
             save_session(root, sess)
             return None

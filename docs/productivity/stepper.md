@@ -27,6 +27,9 @@ It means the agent stored a non-empty note. You still have to trust, or check, t
 **Can two chats share one list?**
 No. The chat that starts the list holds it. Another chat can take it only when you ask to continue that work there.
 
+**Can it offer another list while one is already open?**
+Yes. The offer names a free list and never uses `pr-queue`. Saying yes tracks that list beside the ones you already hold. A paused list does not hide the offer. Saying no keeps that candidate from being offered again.
+
 ## It's working if
 
 - After you accept a list, the agent starts at the first item and stays there.
@@ -34,3 +37,4 @@ No. The chat that starts the list holds it. Another chat can take it only when y
 - Starting something new gets a status first: done, left, blocked, and where you are.
 - Asking for status shows each item on its own row.
 - Saying the list is wrong archives it or replaces it, and the next status matches that.
+- A second list is offered by name while the first is still open, including when the first is paused.

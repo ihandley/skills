@@ -1608,6 +1608,134 @@ class StepperTests(unittest.TestCase):
         self.assertEqual(replaced["brief"]["done"], [])
         self.assertEqual(replaced["brief"]["blocked"], [])
 
+    def test_offer_while_a_context_is_held(self):
+        self.capture()
+        self.cli("pause", "--session", "cursor:aaa")
+        self.hook(
+            "cursor",
+            {
+                "hook_event_name": "afterAgentResponse",
+                "conversation_id": "aaa",
+                "generation_id": "g-offer",
+                "text": AC_REPORT,
+            },
+        )
+        code, offer, _out = self.hook(
+            "cursor",
+            {
+                "hook_event_name": "stop",
+                "conversation_id": "aaa",
+                "generation_id": "g-offer",
+                "status": "completed",
+                "loop_count": 0,
+            },
+        )
+        self.assertEqual(code, 0)
+        message = offer["followup_message"]
+        self.assertIn("Ask the user once", message)
+        self.assertIn("as AC-3", message)
+        self.assertNotIn("as pr-queue", message)
+        code, captured = self.cli(
+            "capture",
+            "--session",
+            "cursor:aaa",
+            "--context",
+            "AC-3",
+            "--item",
+            "AC-3: reset email is sent",
+            "--item",
+            "AC-4: rate limit returns 429",
+        )
+        self.assertEqual(code, 0, captured)
+        code, status = self.cli("status", "--session", "cursor:aaa")
+        self.assertEqual({row["id"] for row in status["held"]}, {"default", "AC-3"})
+        digest = message.split()[2].rstrip(":")
+        self.register("cursor:bbb")
+        self.cli("decline", "--session", "cursor:bbb", digest)
+        other = Path(tempfile.mkdtemp())
+        code, _data, out = self.hook(
+            "cursor",
+            {
+                "hook_event_name": "afterAgentResponse",
+                "conversation_id": "ccc",
+                "generation_id": "g-again",
+                "text": AC_REPORT,
+                "workspace_roots": [str(other)],
+            },
+            workspace=False,
+        )
+        self.assertEqual(out, "")
+        code, _data, out = self.hook(
+            "cursor",
+            {
+                "hook_event_name": "stop",
+                "conversation_id": "ccc",
+                "generation_id": "g-again",
+                "status": "completed",
+                "loop_count": 0,
+                "workspace_roots": [str(other)],
+            },
+            workspace=False,
+        )
+        self.assertEqual(out, "")
+
+    def test_proposed_name_skips_an_open_context_and_the_sitting(self):
+        self.register()
+        self.cli(
+            "capture",
+            "--session",
+            "cursor:aaa",
+            "--context",
+            "AC-3",
+            "--item",
+            "AC-3: already open",
+        )
+        sitting = (
+            "Acceptance criteria\n\n"
+            "- [ ] pr-queue: the sitting name stays reserved\n"
+        )
+        self.hook(
+            "cursor",
+            {
+                "hook_event_name": "afterAgentResponse",
+                "conversation_id": "aaa",
+                "generation_id": "g-name",
+                "text": sitting,
+            },
+        )
+        _code, offer, _out = self.hook(
+            "cursor",
+            {
+                "hook_event_name": "stop",
+                "conversation_id": "aaa",
+                "generation_id": "g-name",
+                "status": "completed",
+                "loop_count": 0,
+            },
+        )
+        self.assertIn("as list", offer["followup_message"])
+        self.assertNotIn("as pr-queue", offer["followup_message"])
+        self.hook(
+            "cursor",
+            {
+                "hook_event_name": "afterAgentResponse",
+                "conversation_id": "bbb",
+                "generation_id": "g-next",
+                "text": AC_REPORT,
+            },
+        )
+        _code, next_offer, _out = self.hook(
+            "cursor",
+            {
+                "hook_event_name": "stop",
+                "conversation_id": "bbb",
+                "generation_id": "g-next",
+                "status": "completed",
+                "loop_count": 0,
+            },
+        )
+        self.assertIn("as AC-3-2", next_offer["followup_message"])
+
     def cli_home(self, *args):
         proc = subprocess.run(
             [sys.executable, str(STEPPER), *args],

@@ -60,7 +60,7 @@ Done when the user has been told to hold and why, or `skip` has moved the active
 
 ## When the list is not in this loop
 
-- No list is held, and there is a concrete list of work: [OFFER.md](references/OFFER.md).
+- There is a concrete list of work: [OFFER.md](references/OFFER.md). A list this session already holds does not suppress the offer.
 - A list is held and the user has not accepted an order: [ORDER.md](references/ORDER.md).
 - The user says to drop the list or replace it: [REPLACE.md](references/REPLACE.md).
 
