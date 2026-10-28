@@ -21,6 +21,9 @@ One stepper list, not a table. In Review tickets stay in Jira rank, at any age. 
 **What is on a line?**
 `repo#number`, the title, the author's name, and days since the last update. A mark appears only when it applies: a repo list other than `repos_active` (`eol`, `lib`, and the other names shortened the same way), `asked` when you are a requested reviewer, and `draft`, `merged`, or `closed`.
 
+**Who captures the list?**
+The script. It builds the lines, writes them into the stepper under the `pr-queue` context, and orders them free in one run. The agent only passes the Jira issues in and prints what comes back. A hand-written capture cost minutes in the first timed run, so the agent no longer writes one.
+
 **What does start do?**
 It runs `qpre` with the active item's pull request URL. A draft, merged, closed, or ticket-only item has no command to run. Saying the review is done strikes the item. Leaving `qpre` halfway leaves the item active.
 
