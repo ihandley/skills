@@ -1,6 +1,6 @@
 ## What it does
 
-Stepper keeps one ordered list of work in front of you and stays on the active item until that item is done. When you move to start something else, it restates what is done, what is left, what is blocked, and where the current item sits.
+Stepper keeps an ordered list of work in front of you and stays on the active item until that item is done. A chat may hold several of those lists. When you move to start something else, it restates what is done, what is left, what is blocked, and where the current item sits.
 
 The list is temporary working memory for one stretch of delivery. The agent holds the order, including who you are waiting on. You decide when to wait, when to skip, and when the list itself is wrong.
 
