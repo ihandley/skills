@@ -14,7 +14,7 @@ Type `/understand`. The agent will not reach for it on its own.
 
 With the hook installed, "I don't understand", "explain", and the same kind of phrase get one question: stay on this until it makes sense, or answer in place? Yes latches the session. `/understand` latches it without the question. An answer in place still labels each layer when a reply would mix them.
 
-Use it to understand a codebase or any other subject one portion at a time. A direct question is answered inside the current layer, then the subject continues. For writing code while someone checks your reasoning, use `pair`. During `pair`, this offer stays quiet.
+Use it to understand a codebase or any other subject one portion at a time. A direct question is answered inside the current layer, then the subject continues. For writing code while someone checks your reasoning, start at `pair`. During `pair`, this offer stays quiet.
 
 ## Common questions
 
