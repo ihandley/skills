@@ -282,7 +282,7 @@ unseen -> offered -> accepted
 
 `offered` is recorded when Stepper first injects an offer instruction, so the same hash does not produce another injection or another turn. A decline is permanent for that hash. Acceptance stores the hash on the new context. Hooks never call `capture`. The agent asks, then calls `capture` only after the user accepts.
 
-A session that already holds a lease does not get an offer. The candidate is stored and waits until that context is closed. Paused leases are also quiet. Lists the parser does not recognize are captured only when the user asks. Stepper does not spend a model call to classify them.
+A session that already holds a lease still gets an offer for a new list. The offer names a free context, never `pr-queue`. Accepting captures that context alongside the ones already held. A paused context does not suppress the offer, and a paused context is not reminded. Lists the parser does not recognize are captured only when the user asks. Stepper does not spend a model call to classify them.
 
 ### When a suggestion costs an extra turn
 
@@ -367,7 +367,7 @@ Without the matching platform install, explicit CLI use still works. Proactive o
 1. `SessionStart` for `startup`, `resume`, and `compact`: if this session holds a lease with outstanding work, inject one reminder and the session key.
 2. `UserPromptSubmit`: register the session when the prompt addresses Stepper or the session holds a lease. Record the prompt class. Inject the session key only in those cases.
 3. `PostToolUse`: deliver at most one suggestion reminder or one post-compaction reminder for this session.
-4. `Stop`: apply the extra-turn rules above. Exit with no output when paused, unrelated, already continued (`stop_hook_active`), or already offered.
+4. `Stop`: apply the extra-turn rules above. Exit with no output when the prompt is unrelated, the turn already continued (`stop_hook_active`), or the hash was already offered. A paused context is not reminded, and it does not suppress an offer.
 5. `PreCompact`: set this session's compaction marker. Do not block compaction.
 6. `SessionEnd`: release the lease if this session holds it.
 

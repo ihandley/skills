@@ -6,8 +6,8 @@
 
 **Status:** ready-for-agent
 
-- [ ] Status with no session lists every open context in the home store, and for each one the session that holds it or that it has no lease
-- [ ] Words that name the sitting, a pull request, or an accepted list name select that context for a state change
-- [ ] When a message asks for a state change and names no context, the agent asks once which context and waits
-- [ ] The agent does not choose a context from which one changed most recently, or from which checkout the session is in
-- [ ] A brief spoken after a change covers the context that changed
+- [x] Status with no session lists every open context in the home store, and for each one the session that holds it or that it has no lease
+- [x] Words that name the sitting, a pull request, or an accepted list name select that context for a state change
+- [x] When a message asks for a state change and names no context, the agent asks once which context and waits
+- [x] The agent does not choose a context from which one changed most recently, or from which checkout the session is in
+- [x] A brief spoken after a change covers the context that changed

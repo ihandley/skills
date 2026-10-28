@@ -4,7 +4,7 @@ description: List this week's review queue, the open sprint's In Review tickets 
 disable-model-invocation: true
 ---
 
-Build the queue by running the script beside this file, then stop. A `backlog` invocation does Stop and Script with `--backlog`. Any other invocation does Stop, In review, and Script. `all` adds `--all`. Later turns use what this invocation stored.
+Build the queue by running the script beside this file, then stop. A `backlog` invocation does Stop and Script with `--backlog`. Any other invocation does Stop, Sitting, and then either stops or does In review and Script. `all` adds `--all`. Later turns use what this invocation stored.
 
 Run `date +%s` first and keep the number as the start time.
 
@@ -18,9 +18,25 @@ Call `getAccessibleAtlassianResources` once and keep its cloud id and site URL. 
 
 The viewer is the person aliased "me". That person's `ids.github` equals the login from `get_me`. Any other result: stop and print both logins. The script also checks this and exits when they differ.
 
-On a list invocation, copy `--session` and `--root` from the hook line that starts with `Stepper session:`. Read it from the prompt, or from the context attached to those MCP results. A line that is still absent then stops the run: say the stepper hook did not provide a session key. `status` for that session already shows a list: say so and stop.
+On a list invocation, copy `--session` and `--root` from the hook line that starts with `Stepper session:`. Read it from the prompt, or from the context attached to those MCP results. A line that is still absent then stops the run: say the stepper hook did not provide a session key.
 
-Done when the cloud id, the viewer, and (on a list invocation) a free session are in hand, or the run has stopped.
+Done when the cloud id, the viewer, and (on a list invocation) a session key are in hand, or the run has stopped.
+
+## Sitting
+
+The context name is `pr-queue`. A capture outside this skill uses some other name.
+
+On a list invocation, run `status` with no `--session` and find the context `pr-queue`.
+
+- Another session holds it: stop and name that session. Do not fetch.
+- This session holds it and `complete` is false: say the sitting is already there. Do not fetch.
+- Nobody holds it and `complete` is false: `attach` it to this session. Do not fetch.
+- This session holds it, or nobody holds it, and `complete` is true: `attach` first when nobody holds it, then `close` it, and continue to a fresh fetch.
+- No `pr-queue` context: continue. Capture uses `--context pr-queue`.
+
+`complete` is true only when every item is verified or cancelled and at least one item is verified. A blocked or deferred item leaves the sitting in place. A finished context with any other name stays leased until the user closes it. Attaching or rolling `pr-queue` leaves this session's other contexts leased.
+
+Done when the run has stopped, an existing sitting is in this session, or a finished sitting was closed and a fresh fetch is next.
 
 ## In review
 
@@ -34,7 +50,7 @@ Done when every issue from that JQL is held in rank order. A failed call stops t
 
 ## Script
 
-Run `ruby` on `scripts/pr-queue` with `--viewer` set to the login from `get_me`. Pipe the Jira response to its stdin, unchanged. Pass `--started` with the start time. A backlog run passes `--backlog` and no issues. An `all` run passes `--all`.
+Run `ruby` on `scripts/pr-queue` with `--viewer` set to the login from `get_me`. Pipe the Jira response to its stdin, unchanged. Pass `--started` with the start time. A backlog run passes `--backlog` and no issues, and is not written into the ledger. An `all` run passes `--all`.
 
 Print its stdout. A non-zero exit stops the run. Say its stderr. A search that returns no pull requests is a non-zero exit that names the query. Print the `pr-queue total` line from stderr as the run time. It covers the clock from the prompt to the printed list, not only GitHub.
 
@@ -44,7 +60,7 @@ Done when stdout is printed.
 
 The printed lines are the list. An empty home is the quiet line and no capture.
 
-Capture in home order. The context name is `pr-queue`. The id is the issue key, or `<key>-<repo>-<number>` when the issue has a pull request. A Recent id is `<repo>-<number>` after characters outside `A-Za-z0-9` are removed from the repo. An id that does not start with a letter gets a `pr-` prefix. Each `--item` is `id | text | criteria`. The text is the printed line.
+Capture in home order under `--context pr-queue`. The id is the issue key, or `<key>-<repo>-<number>` when the issue has a pull request. A Recent id is `<repo>-<number>` after characters outside `A-Za-z0-9` are removed from the repo. An id that does not start with a letter gets a `pr-` prefix. Each `--item` is `id | text | criteria`. The text is the printed line.
 
 Criteria for an open, non-draft pull request: `Start runs qpre on https://github.com/<github_org>/<repo>/pull/<number>. Done when the user says the review is done. Quitting qpre leaves the item active.`
 

@@ -27,13 +27,16 @@ It runs `qpre` with the active item's pull request URL. A draft, merged, closed,
 **What does backlog show?**
 A table of those older pull requests you have not approved on the latest commit, newest update first. A row number runs `qpre`.
 
+**What does a second `/pr-queue` do?**
+An unfinished sitting in this chat stays as it is, and nothing is fetched. An unfinished sitting nobody holds is attached to this chat. A finished sitting this chat holds, or that nobody holds, is closed and captured again from a fresh fetch. A sitting another chat holds stops the run and names that chat. A blocked or deferred item keeps the sitting.
+
 **What if it stops before the queue?**
 The Atlassian connection or the GitHub connection is missing, or the stepper hook never named this chat. The session line arrives with the first tool result. Install the stepper hook when that line is absent after those calls.
 
 ## It's working if
 
 - The list matches the open sprint's `In Review` tickets in rank order, then pull requests updated in the last 7 days.
-- A second `/pr-queue` in the same chat says the list is already there.
+- A second `/pr-queue` leaves an unfinished sitting in place, and replaces a finished one.
 - "Start" runs `qpre` with the full pull request URL, and the item stays until you say the review is done.
 - The quiet count arrives without those older pull requests being downloaded.
 - The list is printed from searches that return pull requests. A search that comes back empty stops the run and names the query.
