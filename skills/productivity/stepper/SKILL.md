@@ -24,7 +24,7 @@ One ordered list. One active item. The CLI in this directory is the source of tr
 
 ## Session
 
-Run `python3 <this-skill>/stepper.py` from any directory. Pass `--session` and `--root` on every command that changes state. Copy both from a hook message that starts with `Stepper session:`. That line names the project root the hook registered. The session key looks like `cursor:<conversation_id>` or `claude:<session_id>`. Do not construct a key from a transcript path, filename, or any other UUID. Do not ask the user to approve a key you constructed. If that hook message is absent, say that the hook did not provide a session key, and stop. If the CLI says the root contains `stepper.py`, pass the project root from the hook line.
+Run `python3 <this-skill>/stepper.py` from any directory. Pass `--session` and `--root` on every command that changes state. Copy both from a hook message that starts with `Stepper session:`. That line names the project root the hook registered. The session key looks like `cursor:<conversation_id>` or `claude:<session_id>`. Do not construct a key from a transcript path, filename, or any other UUID. Do not ask the user to approve a key you constructed. If that hook message is absent, say that the hook did not provide a session key, and stop. If the CLI says the root is the stepper skill directory, pass the project root from the hook line.
 
 Flags for a command are `python3 <this-skill>/stepper.py <command> -h`.
 
@@ -37,6 +37,12 @@ Read `brief` from `status`. Speak all four parts: `done`, `left`, `blocked`, and
 Do this when an item becomes active, and again before any new start.
 
 Done when all four parts were spoken and match `status`.
+
+## Status
+
+When the user asks for status, the reply is the `table` from `status`. An empty `table` means no list is held.
+
+Done when the reply is that table, or the statement that no list is held.
 
 ## Stick
 

@@ -157,13 +157,11 @@ def resolve_root(arg: str | None) -> Path:
 
 
 def refuse_skill_checkout(root: Path) -> None:
-    script = Path(__file__).resolve()
-    try:
-        script.relative_to(root)
-    except ValueError:
+    skill_dir = Path(__file__).resolve().parent
+    if root != skill_dir:
         return
     raise StepperError(
-        f"refusing {root} because it contains stepper.py. "
+        f"refusing {root} because it is the stepper skill directory. "
         "Pass --root with the project root from the Stepper session line."
     )
 
@@ -628,7 +626,7 @@ def split_label(text: str) -> tuple[str | None, str]:
 
 
 def parse_item_arg(text: str, seq: int) -> tuple[dict, int]:
-    parts = [part.strip() for part in text.split("|")]
+    parts = [part.strip() for part in text.split("|", 2)]
     if len(parts) == 3:
         item_id, description, criteria = parts
     elif len(parts) == 2:
@@ -736,6 +734,55 @@ def _children(ctx: dict, parent_id: str | None) -> list[dict]:
         (item for item in ctx["items"] if item.get("parent_id") == parent_id),
         key=lambda item: item["order"],
     )
+
+
+def _status_cell(value: str) -> str:
+    return " ".join(value.split()).replace("|", "\\|")
+
+
+def _status_note(item: dict) -> str:
+    if item["status"] == "blocked":
+        return (item.get("blocked_reason") or "").strip()
+    if item["status"] == "verified":
+        return (item.get("evidence") or "").strip()
+    return ""
+
+
+def _status_rows(ctx: dict, parent_id: str | None = None) -> list[dict]:
+    rows = []
+    for item in _children(ctx, parent_id):
+        rows.append(item)
+        rows.extend(_status_rows(ctx, item["id"]))
+    return rows
+
+
+def status_table(ctx: dict | None) -> str:
+    if ctx is None or not ctx["items"]:
+        return ""
+    rows = _status_rows(ctx)
+    nested = any(item.get("parent_id") for item in rows)
+    noted = any(_status_note(item) for item in rows)
+    headers = ["Item", "Status", "Description"]
+    if nested:
+        headers.insert(1, "Parent")
+    if noted:
+        headers.append("Note")
+    lines = [
+        "| " + " | ".join(headers) + " |",
+        "| " + " | ".join("---" for _ in headers) + " |",
+    ]
+    for item in rows:
+        cells = [item["id"], item["status"], item["description"]]
+        if nested:
+            cells.insert(1, item.get("parent_id") or "")
+        if noted:
+            cells.append(_status_note(item))
+        lines.append("| " + " | ".join(_status_cell(cell) for cell in cells) + " |")
+    body = "\n".join(lines)
+    position = brief_of(ctx)["position"]
+    if position == "none":
+        return body
+    return f"{position}\n\n{body}"
 
 
 def _parent(ctx: dict, item: dict) -> dict | None:
@@ -1379,6 +1426,7 @@ def cmd_status(root: Path, session_key: str | None, tree: bool = False) -> dict:
         "reminder": None if ctx is None else reminder(ctx),
         "progress": None if ctx is None else _progress(ctx),
         "brief": brief_of(ctx),
+        "table": status_table(ctx),
         **({"tree": [_tree_node(ctx, item) for item in _children(ctx, None)]} if tree and ctx is not None else {}),
         "corrupt_files": corrupt,
     }

@@ -96,6 +96,7 @@ You interact with Stepper by talking to your coding agent. The agent invokes the
 | --- | --- |
 | “Track these acceptance criteria with Stepper.” | Create a tracked context |
 | “What's left?” | Brief: done, left, blocked, and where the active item sits |
+| “/stepper status” | Each item on its own row |
 | “Focus on AC-4.” | Make AC-4 the active item when its dependencies are met |
 | “Mark AC-3 complete; the integration test passes.” | Record verification evidence |
 | “We're blocked on AC-5 until the API is available.” | Hold on AC-5 and recommend waiting |
