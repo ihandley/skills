@@ -546,6 +546,59 @@ class StepperTests(unittest.TestCase):
             [item["description"] for item in also["context"]["items"]],
         )
 
+    def test_status_lists_every_open_context_and_its_lease(self):
+        self.capture()
+        code, _data = self.cli(
+            "capture",
+            "--session",
+            "cursor:aaa",
+            "--context",
+            "other",
+            "--item",
+            "M-5: waiting on Blaze",
+        )
+        self.assertEqual(code, 0)
+        self.cli("detach", "--session", "cursor:aaa", "--context", "other")
+        code, inventory = self.cli("status")
+        by_id = {ctx["id"]: ctx for ctx in inventory["contexts"]}
+        self.assertEqual(set(by_id), {"default", "other"})
+        self.assertEqual(by_id["default"]["lease"]["session_key"], "cursor:aaa")
+        self.assertIsNone(by_id["other"]["lease"])
+        self.cli("close", "--session", "cursor:aaa")
+        code, inventory = self.cli("status")
+        self.assertEqual([ctx["id"] for ctx in inventory["contexts"]], ["other"])
+        self.assertIsNone(inventory["contexts"][0]["lease"])
+
+    def test_brief_after_a_change_covers_that_context(self):
+        self.capture()
+        self.cli(
+            "capture",
+            "--session",
+            "cursor:aaa",
+            "--context",
+            "other",
+            "--item",
+            "M-5: waiting on Blaze",
+        )
+        code, changed = self.cli(
+            "verify",
+            "--session",
+            "cursor:aaa",
+            "--context",
+            "other",
+            "M-5",
+            "--evidence",
+            "Blaze replied",
+        )
+        self.assertEqual(code, 0, changed)
+        self.assertEqual(changed["context"]["id"], "other")
+        self.assertEqual(changed["brief"]["done"], ["M-5"])
+        self.assertEqual(changed["brief"]["left"], [])
+        code, held = self.cli("status", "--session", "cursor:aaa")
+        default = next(row for row in held["held"] if row["id"] == "default")
+        self.assertIn("AC-3", default["brief"]["left"])
+        self.assertNotIn("M-5", default["brief"]["done"])
+
     def test_open_context_error_names_the_holder(self):
         self.capture()
         self.register("cursor:bbb")

@@ -38,11 +38,19 @@ Do this when an item becomes active, and again before any new start.
 
 Done when all four parts were spoken and match `status`.
 
+## Which context
+
+A state change names one context. The user's words select it when they name the sitting `pr-queue`, a pull request on that sitting, or a list name they already accepted. When a message asks for a state change and names none of those, ask once which context and wait. Do not choose the context that changed most recently. Do not choose from the checkout.
+
+A brief spoken after a change is the `brief` on that command's result. It covers the context that changed.
+
 ## Status
 
-When the user asks for status, the reply is the `table` from `status`. An empty `table` means no list is held.
+When the user asks for status and the session holds one context, the reply is that context's `table`. When it holds several, name each context in `held` and speak its brief. When no session is named, run `status` with no `--session` and list every open context, and for each one the session that holds it or that nobody holds it.
 
-Done when the reply is that table, or the statement that no list is held.
+An empty `table` means that session holds no list.
+
+Done when the reply is that table, those briefs, that inventory, or the statement that no list is held.
 
 ## Stick
 

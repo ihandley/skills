@@ -1406,6 +1406,7 @@ def cmd_status(root: Path, session_key: str | None, tree: bool = False) -> dict:
                     **({"tree": [_tree_node(ctx, item) for item in _children(ctx, None)]} if tree else {}),
                 }
                 for ctx in contexts
+                if not ctx["closed"]
             ],
             "corrupt_files": corrupt,
         }
