@@ -39,6 +39,7 @@ OptionParser.new do |opts|
   opts.on("--github-fixture PATH") { |value| options[:fixture] = value }
   opts.on("--today DATE") { |value| options[:today] = Date.parse(value) }
   opts.on("--print-queries") { options[:print_queries] = true }
+  opts.on("--print-jql") { options[:print_jql] = true }
 end.parse!
 abort "pass --viewer" if options[:viewer].to_s.empty?
 
@@ -184,6 +185,20 @@ org = team["github_org"].to_s
 project = team["jira_project"].to_s
 abort "missing github_org" if org.empty?
 abort "missing jira_project" if project.empty?
+
+if options[:print_jql]
+  %w[atlassian_cloud_id atlassian_site jira_tech_domains].each do |key|
+    next unless Array(team[key]).empty?
+
+    warn "missing #{key} on the team record in #{options[:aliases]}; add a line `#{key}: ...` under it"
+    exit 1
+  end
+  domains = Array(team["jira_tech_domains"]).map { |name| %("#{name}") }.join(", ")
+  puts "cloud_id=#{team["atlassian_cloud_id"]}"
+  puts "site=#{team["atlassian_site"]}"
+  puts %(jql=project = #{project} AND "Tech Domain[Dropdown]" in (#{domains}) AND status = "In Review" AND sprint in openSprints() ORDER BY Rank ASC)
+  exit
+end
 
 authors = Array(team["members"]) + Array(team["qa"])
 logins = authors.map do |name|
