@@ -4,7 +4,15 @@
     python3 scripts/promotion.py check [--root PATH]
 
 Prints one line per broken rule and exits 1. Exits 0 and prints nothing else
-when every rule holds. Standard library only.
+when every rule holds.
+
+    python3 scripts/promotion.py generate [--root PATH]
+
+Rewrites the mechanical lists from the skills on disk: the plugin manifest's
+skills array, the top-level README's skill lists, and each bucket README's
+skill lists. An existing entry keeps its hand-written text. A new skill gets its
+frontmatter description as a starting line. Docs pages and frontmatter are never
+touched. Standard library only.
 """
 
 from __future__ import annotations
@@ -179,12 +187,120 @@ def check(root: Path) -> list[str]:
     return problems
 
 
+GROUP_HEADER = re.compile(r"^(?:#{2,3} |\*\*)(User-invoked|Model-invoked)(?:\*\*)?\s*$")
+HEADING = re.compile(r"^(#+) ")
+DESCRIPTION = re.compile(r"^description:\s*(.+?)\s*$", re.M)
+EMPTY = "None yet."
+
+
+def frontmatter_description(skill_dir: Path) -> str:
+    text = (skill_dir / "SKILL.md").read_text(encoding="utf-8")
+    head = text.split("---")[1] if text.startswith("---") else ""
+    m = DESCRIPTION.search(head)
+    value = m.group(1) if m else ""
+    if len(value) >= 2 and value[0] == value[-1] and value[0] in "\"'":
+        value = value[1:-1].replace('\\"', '"')
+    return value
+
+
+def entry_description(line: str) -> str:
+    return line.split("**: ", 1)[1] if "**: " in line else ""
+
+
+def rewrite_lists(text: str, heading: str | None, prefix: str, wanted: dict[str, list[str]],
+                  describe) -> str:
+    """Rebuild the user-invoked and model-invoked lists inside one region of a README."""
+    lines = text.split("\n")
+    start, end = 0, len(lines)
+    if heading is not None:
+        start = next(i for i, l in enumerate(lines) if l.strip() == heading) + 1
+        level = len(heading) - len(heading.lstrip("#"))
+        for i in range(start, len(lines)):
+            m = HEADING.match(lines[i])
+            if m and len(m.group(1)) <= level:
+                end = i
+                break
+    headers = [(i, GROUP_HEADER.match(lines[i]).group(1)) for i in range(start, end)
+               if GROUP_HEADER.match(lines[i])]
+    old = {}
+    for pos, (i, _) in enumerate(headers):
+        stop = headers[pos + 1][0] if pos + 1 < len(headers) else end
+        for line in lines[i + 1:stop]:
+            m = ENTRY.match(line)
+            if m:
+                old[m.group(1)] = line
+    out = lines[:start]
+    cursor = start
+    for pos, (i, group) in enumerate(headers):
+        stop = headers[pos + 1][0] if pos + 1 < len(headers) else end
+        names = wanted["user" if group == "User-invoked" else "model"]
+        order = [n for n in old if n in names] + sorted(n for n in names if n not in old)
+        body = ["- **[%s](%s%s/SKILL.md)**: %s" % (n, prefix, n, entry_description(old[n]) if n in old else describe(n))
+                for n in order] or [EMPTY]
+        section = lines[i + 1:stop]
+        first = next((k for k, l in enumerate(section) if ENTRY.match(l) or l.strip() == EMPTY), None)
+        if first is None:
+            first = len(section)
+            while first > 0 and section[first - 1].strip() == "":
+                first -= 1
+            keep_before, keep_after = section[:first], section[first:]
+            rebuilt = keep_before + ([""] if keep_before and keep_before[-1].strip() else []) + body + keep_after
+        else:
+            last = max(k for k, l in enumerate(section) if ENTRY.match(l) or l.strip() == EMPTY)
+            rebuilt = section[:first] + body + section[last + 1:]
+        out += lines[cursor:i + 1] + rebuilt
+        cursor = stop
+    out += lines[cursor:]
+    return "\n".join(out)
+
+
+def generate(root: Path) -> list[str]:
+    """Rewrite every generated list. Return the files that changed."""
+    changed = []
+    groups = promoted(root)
+    modes = {b: {"user": [], "model": []} for b in BUCKETS}
+    for bucket, names in groups.items():
+        for name in names:
+            modes[bucket][mode_of(root / "skills" / bucket / name)].append(name)
+
+    def write(path: Path, new: str):
+        if path.read_text(encoding="utf-8") != new:
+            path.write_text(new, encoding="utf-8")
+            changed.append(str(path.relative_to(root)))
+
+    manifest_path = root / ".claude-plugin" / "plugin.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    want = ["./skills/%s/%s" % (b, n) for b in BUCKETS for n in groups[b]]
+    kept = [p for p in manifest.get("skills", []) if p in want]
+    manifest["skills"] = kept + [p for p in want if p not in kept]
+    write(manifest_path, json.dumps(manifest, indent=2, ensure_ascii=False) + "\n")
+
+    top_path = root / "README.md"
+    top = top_path.read_text(encoding="utf-8")
+    for bucket in BUCKETS:
+        top = rewrite_lists(top, "### " + bucket.capitalize(), "./skills/%s/" % bucket, modes[bucket],
+                            lambda n, b=bucket: frontmatter_description(root / "skills" / b / n))
+    write(top_path, top)
+
+    for bucket in BUCKETS:
+        path = root / "skills" / bucket / "README.md"
+        write(path, rewrite_lists(path.read_text(encoding="utf-8"), None, "./", modes[bucket],
+                                  lambda n, b=bucket: frontmatter_description(root / "skills" / b / n)))
+    return changed
+
+
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(prog="promotion.py")
     sub = parser.add_subparsers(dest="cmd", required=True)
     c = sub.add_parser("check")
     c.add_argument("--root", default=str(Path(__file__).resolve().parent.parent))
+    g = sub.add_parser("generate")
+    g.add_argument("--root", default=str(Path(__file__).resolve().parent.parent))
     args = parser.parse_args(argv)
+    if args.cmd == "generate":
+        for rel in generate(Path(args.root)):
+            print("rewrote %s" % rel)
+        return 0
     problems = check(Path(args.root))
     for line in problems:
         print(line)
