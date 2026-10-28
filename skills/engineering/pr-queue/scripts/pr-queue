@@ -1,0 +1,350 @@
+#!/usr/bin/env ruby
+# frozen_string_literal: true
+
+require "date"
+require "json"
+require "open3"
+require "optparse"
+require "time"
+require "yaml"
+
+GQL = <<~GQL.tr("\n", " ")
+  query($q: String!, $cursor: String) {
+    search(query: $q, type: ISSUE, first: 50, after: $cursor) {
+      pageInfo { hasNextPage endCursor }
+      nodes {
+        ... on PullRequest {
+          number title isDraft state updatedAt headRefName headRefOid body
+          repository { name }
+          author { __typename login }
+          commits(last: 20) { nodes { commit { message } } }
+          reviews(last: 50) { nodes { state author { login } commit { oid } } }
+          reviewRequests(first: 20) { nodes { requestedReviewer { ... on User { login } } } }
+        }
+      }
+    }
+  }
+GQL
+
+options = { aliases: File.expand_path("~/.claude/aliases.yaml") }
+OptionParser.new do |opts|
+  opts.on("--viewer LOGIN") { |value| options[:viewer] = value }
+  opts.on("--all") { options[:all] = true }
+  opts.on("--backlog") { options[:backlog] = true }
+  opts.on("--aliases PATH") { |value| options[:aliases] = value }
+  opts.on("--started EPOCH", Integer) { |value| options[:started] = value }
+end.parse!
+abort "pass --viewer" if options[:viewer].to_s.empty?
+
+started = Process.clock_gettime(Process::CLOCK_MONOTONIC)
+
+def fail(query, detail)
+  warn query
+  warn detail
+  exit 2
+end
+
+def graphql(query, cursor: nil)
+  args = ["gh", "api", "graphql", "-f", "query=#{GQL}", "-f", "q=#{query}"]
+  args.push("-f", "cursor=#{cursor}") if cursor
+  out, err, status = Open3.capture3(*args)
+  fail(query, err) unless status.success?
+
+  body = JSON.parse(out)
+  if body["errors"]
+    fail(query, body["errors"].map { |error| error["message"] }.join("\n"))
+  end
+  body
+rescue JSON::ParserError => error
+  fail(query, error.message)
+end
+
+def search(query, required: false)
+  nodes = []
+  cursor = nil
+  loop do
+    page = graphql(query, cursor: cursor).dig("data", "search") || {}
+    nodes.concat(Array(page["nodes"]))
+    info = page["pageInfo"] || {}
+    break unless info["hasNextPage"] && !info["endCursor"].to_s.empty?
+
+    cursor = info["endCursor"]
+  end
+  fail(query, "search returned no pull requests") if required && nodes.empty?
+  nodes
+end
+
+def quiet_count(query)
+  out, err, status = Open3.capture3(
+    "gh", "api", "--method", "GET", "search/issues",
+    "-f", "q=#{query}", "-f", "per_page=1", "--jq", ".total_count"
+  )
+  fail(query, err) unless status.success?
+
+  Integer(out.strip)
+rescue ArgumentError
+  fail(query, out)
+end
+
+def keys_in(text, project)
+  text.to_s.scan(/#{Regexp.escape(project)}-\d+/).uniq
+end
+
+def project_pr(node, viewer, project)
+  return nil unless node.is_a?(Hash) && node["number"]
+
+  reviews = Array(node.dig("reviews", "nodes"))
+  head = node["headRefOid"]
+  messages = Array(node.dig("commits", "nodes")).map { |commit| commit.dig("commit", "message") }
+  {
+    "number" => node["number"],
+    "title" => node["title"].to_s.gsub(/\s+/, " ").strip,
+    "isDraft" => node["isDraft"] == true,
+    "state" => node["state"],
+    "updatedAt" => node["updatedAt"],
+    "repository" => node.dig("repository", "name"),
+    "author" => node["author"] || {},
+    "branchKeys" => keys_in(node["headRefName"], project),
+    "commitKeys" => keys_in(messages.join("\n"), project),
+    "bodyKeys" => keys_in(node["body"], project),
+    "headApproved" => reviews.any? do |review|
+      review["state"] == "APPROVED" &&
+        review.dig("author", "login") == viewer &&
+        review.dig("commit", "oid") == head
+    end,
+    "approvals" => reviews.count { |review| review["state"] == "APPROVED" },
+    "reviewRequestLogins" => Array(node.dig("reviewRequests", "nodes")).map { |request| request.dig("requestedReviewer", "login") }.compact
+  }
+end
+
+def dedupe(nodes)
+  seen = {}
+  nodes.each_with_object([]) do |node, kept|
+    id = "#{node["repository"]}##{node["number"]}"
+    next if seen[id]
+
+    seen[id] = true
+    kept << node.merge("id" => id)
+  end
+end
+
+def age_days(iso)
+  return 0 if iso.to_s.empty?
+
+  (Date.today - Time.parse(iso).getlocal.to_date).to_i
+end
+
+def item_text(ref, marks, title, author, age)
+  left = marks.empty? ? ref : "#{ref} #{marks.join(" ")}"
+  "#{left} · #{title} · #{author} · #{age}d"
+end
+
+def state_mark(pr)
+  return "draft" if pr["isDraft"]
+  return "merged" if pr["state"] == "MERGED"
+  return "closed" if pr["state"] == "CLOSED"
+
+  nil
+end
+
+data = YAML.load_file(options[:aliases])
+people = data.select { |_key, value| value.is_a?(Hash) && value["type"] == "person" }
+team = data.values.find { |value| value.is_a?(Hash) && value["type"] == "team" && Array(value["aliases"]).include?("my team") }
+abort "missing team aliased my team" unless team
+
+me = people.values.find { |person| Array(person["aliases"]).include?("me") }
+abort "missing person aliased me" unless me
+expected = me.dig("ids", "github").to_s
+if options[:viewer] != expected
+  warn "#{options[:viewer]} != #{expected}"
+  exit 1
+end
+
+org = team["github_org"].to_s
+project = team["jira_project"].to_s
+abort "missing github_org" if org.empty?
+abort "missing jira_project" if project.empty?
+
+authors = Array(team["members"]) + Array(team["qa"])
+logins = authors.map do |name|
+  login = people.dig(name, "ids", "github").to_s
+  abort "missing ids.github for #{name}" if login.empty?
+
+  login
+end
+
+lists = team.keys.select { |key| key.start_with?("repos_") }.map { |key| [key, Array(team[key])] }
+repo_set = if options[:all]
+             lists.flat_map { |_name, repos| repos }.uniq
+           else
+             Array(team["repos_active"])
+           end
+abort "missing repos_active" if repo_set.empty?
+
+names = {}
+people.each_value do |person|
+  login = person.dig("ids", "github").to_s
+  next if login.empty?
+
+  spaced = Array(person["aliases"]).select { |alias_name| alias_name.include?(" ") }
+  names[login] = spaced.max_by(&:length) unless spaced.empty?
+end
+
+issues = []
+unless options[:backlog] || $stdin.tty?
+  raw = $stdin.read
+  unless raw.strip.empty?
+    parsed = JSON.parse(raw)
+    parsed = parsed["data"] if parsed.is_a?(Hash) && parsed["issues"].nil? && parsed["data"].is_a?(Hash)
+    rows = parsed.is_a?(Hash) ? Array(parsed["issues"]) : Array(parsed)
+    issues = rows.map do |issue|
+      fields = issue["fields"] || {}
+      assignee = fields["assignee"] || issue["assignee"]
+      {
+        "key" => issue["key"],
+        "summary" => (fields["summary"] || issue["summary"]).to_s.gsub(/\s+/, " ").strip,
+        "assignee" => assignee.is_a?(Hash) ? assignee["displayName"] : assignee,
+        "updated" => fields["updated"] || issue["updated"]
+      }
+    end
+  end
+end
+
+cutoff = (Date.today - 7).strftime("%Y-%m-%d")
+repo_qualifiers = repo_set.map { |repo| "repo:#{org}/#{repo}" }.join(" ")
+author_qualifiers = logins.map { |login| "author:#{login}" }.join(" ")
+recent_prefix = "is:pr is:open draft:false updated:>=#{cutoff}"
+old_prefix = "is:pr is:open updated:<#{cutoff}"
+prefix = options[:backlog] ? old_prefix : recent_prefix
+repo_query = "#{prefix} #{repo_qualifiers}"
+author_query = "#{prefix} #{author_qualifiers}"
+quiet_query = "is:pr is:open org:#{org} updated:<#{cutoff}"
+
+jobs = {
+  repos: -> { search(repo_query, required: true).map { |node| project_pr(node, options[:viewer], project) }.compact },
+  authors: -> { search(author_query, required: true).map { |node| project_pr(node, options[:viewer], project) }.compact }
+}
+jobs[:quiet] = -> { quiet_count(quiet_query) } unless options[:backlog]
+batch = {}
+jobs.map { |name, work| Thread.new { [name, work.call] } }.each { |thread| name, value = thread.value; batch[name] = value }
+
+key_nodes = []
+unless options[:backlog] || issues.empty?
+  key_groups = issues.map { |issue| issue["key"] }.each_slice(6).map do |group|
+    "is:pr org:#{org} #{group.join(" OR ")}"
+  end
+  key_nodes = key_groups.map { |query| Thread.new { search(query) } }
+                        .flat_map(&:value)
+                        .map { |node| project_pr(node, options[:viewer], project) }.compact
+end
+
+recent = dedupe(batch[:repos] + batch[:authors])
+pulled = dedupe(recent + key_nodes)
+
+def list_mark(repo, lists)
+  lists.each do |name, members|
+    next unless members.include?(repo)
+    return nil if name == "repos_active"
+
+    return name.delete_prefix("repos_")
+  end
+  nil
+end
+
+def marks_for(pr, viewer, lists)
+  [
+    list_mark(pr["repository"], lists),
+    ("asked" if pr["reviewRequestLogins"].include?(viewer)),
+    state_mark(pr)
+  ].compact
+end
+
+def author_name(pr, names)
+  login = pr.dig("author", "login").to_s
+  return "unknown" if login.empty?
+
+  names[login] || login
+end
+
+def recent_pr?(pr, viewer, repo_set, logins, cutoff)
+  return false unless pr["state"] == "OPEN" && !pr["isDraft"]
+  return false if pr.dig("author", "__typename") == "Bot"
+  return false unless repo_set.include?(pr["repository"]) || logins.include?(pr.dig("author", "login"))
+  return false if Time.parse(pr["updatedAt"]).utc.to_date < Date.parse(cutoff)
+
+  pr.dig("author", "login") == viewer || !pr["headApproved"]
+end
+
+if options[:backlog]
+  rows = recent.select { |pr| recent_pr?(pr, options[:viewer], repo_set, logins, "1970-01-01") && !pr["headApproved"] }
+               .sort_by { |pr| Time.parse(pr["updatedAt"]) }
+               .reverse
+  bots = recent.count { |pr| pr.dig("author", "__typename") == "Bot" }
+  heading = "Backlog · #{rows.size}"
+  heading += " · none approved" if rows.all? { |pr| pr["approvals"].zero? }
+  puts heading
+  puts "| # | PR | title | author | age | approvals |"
+  puts "| --- | --- | --- | --- | --- | --- |"
+  rows.each_with_index do |pr, index|
+    ref = "#{pr["repository"]}##{pr["number"]}"
+    marks = marks_for(pr, options[:viewer], lists)
+    cell = marks.empty? ? ref : "#{ref} #{marks.join(" ")}"
+    title = pr["title"].gsub("|", "/")
+    puts "| #{index + 1} | #{cell} | #{title} | #{author_name(pr, names)} | #{age_days(pr["updatedAt"])}d | #{pr["approvals"]} |"
+  end
+  puts "#{bots} bots" if bots.positive?
+else
+  homed = {}
+  lines = []
+  issues.each do |issue|
+    key = issue["key"]
+    matched = []
+    %w[branchKeys commitKeys bodyKeys].each do |field|
+      hits = pulled.select { |pr| pr[field].include?(key) && !homed[pr["id"]] }
+      next if hits.empty?
+
+      matched = hits
+      break
+    end
+    if matched.empty?
+      assignee = issue["assignee"].to_s
+      assignee = "unassigned" if assignee.empty?
+      lines << item_text(key, [], issue["summary"], assignee, age_days(issue["updated"]))
+      next
+    end
+
+    matched.sort_by { |pr| Time.parse(pr["updatedAt"]) }.reverse.each do |pr|
+      homed[pr["id"]] = true
+      lines << item_text(
+        "#{pr["repository"]}##{pr["number"]}",
+        marks_for(pr, options[:viewer], lists),
+        pr["title"],
+        author_name(pr, names),
+        age_days(pr["updatedAt"])
+      )
+    end
+  end
+
+  recent.select { |pr| !homed[pr["id"]] && recent_pr?(pr, options[:viewer], repo_set, logins, cutoff) }
+        .sort_by { |pr| Time.parse(pr["updatedAt"]) }
+        .reverse
+        .each do |pr|
+    lines << item_text(
+      "#{pr["repository"]}##{pr["number"]}",
+      marks_for(pr, options[:viewer], lists),
+      pr["title"],
+      author_name(pr, names),
+      age_days(pr["updatedAt"])
+    )
+  end
+
+  bots = pulled.count { |pr| pr.dig("author", "__typename") == "Bot" && !homed[pr["id"]] }
+  quiet = "#{batch[:quiet]} quiet"
+  quiet += " · #{bots} bots" if bots.positive?
+  puts quiet
+  puts lines
+end
+
+elapsed = Process.clock_gettime(Process::CLOCK_MONOTONIC) - started
+warn format("pr-queue %.1fs", elapsed)
+warn format("pr-queue total %ds from prompt", Time.now.to_i - options[:started]) if options[:started]
