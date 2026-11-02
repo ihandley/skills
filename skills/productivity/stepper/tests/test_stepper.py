@@ -265,7 +265,11 @@ class StepperTests(unittest.TestCase):
                               input=json.dumps(body), text=True, capture_output=True, env=self.env, check=False)
         self.assertEqual(proc.returncode, 0)
         reported = json.loads(proc.stdout)["hookSpecificOutput"]["additionalContext"]
-        self.assertTrue(reported.rstrip(".").endswith("--root %s on every stepper command" % self.root.resolve()), reported)
+        self.assertIn(
+            "--root %s on every command that changes state. For status, run status with no --session."
+            % self.root.resolve(),
+            reported,
+        )
         proc = subprocess.run([sys.executable, str(STEPPER), "status", "--session", "claude:t1"],
                               cwd=sub, text=True, capture_output=True, env=self.env, check=False)
         self.assertEqual(proc.returncode, 0, proc.stdout)
@@ -836,7 +840,8 @@ class StepperTests(unittest.TestCase):
         self.assertEqual(
             text,
             f"Stepper session: {key}. Project root: {root}. "
-            f"Pass --session {key} --root {root} on every stepper command.",
+            f"Pass --session {key} --root {root} on every command that changes state. "
+            f"For status, run status with no --session.",
         )
         self.assertEqual(len(list(sessions.glob("*.json"))), 1)
         self.assertEqual(list((self.store / "contexts").glob("*.json")), [])
@@ -939,7 +944,8 @@ class StepperTests(unittest.TestCase):
         self.assertEqual(
             announced["additional_context"],
             f"Stepper session: cursor:aaa. Project root: {root}. "
-            f"Pass --session cursor:aaa --root {root} on every stepper command.",
+            f"Pass --session cursor:aaa --root {root} on every command that changes state. "
+            f"For status, run status with no --session.",
         )
         code, submitted, _out = self.hook(
             "claude",

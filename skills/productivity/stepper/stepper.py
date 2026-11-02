@@ -1539,7 +1539,8 @@ def cmd_status(root: Path, session_key: str | None, tree: bool = False) -> dict:
 def session_line(key: str, root: Path) -> str:
     return (
         f"Stepper session: {key}. Project root: {root}. "
-        f"Pass --session {key} --root {root} on every stepper command."
+        f"Pass --session {key} --root {root} on every command that changes state. "
+        f"For status, run status with no --session."
     )
 
 
