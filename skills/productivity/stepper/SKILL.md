@@ -46,11 +46,11 @@ A brief spoken after a change is the `brief` on that command's result. It covers
 
 ## Status
 
-When the user asks for status and the session holds one context, the reply is that context's `table`. When it holds several, name each context in `held` and speak its brief. When no session is named, run `status` with no `--session` and list every open context, and for each one the session that holds it or that nobody holds it.
+When the user asks for status, run `status` with no `--session`. List every open context in `contexts`. For each one, name the session in `lease.session_key`, or that nobody holds it when `lease` is null. When `contexts` is empty, say the home store has no open list.
 
-An empty `table` means that session holds no list.
+When this session holds one of those contexts, also run `status --session <key>` and speak that context's `table`. When it holds several, name each context in `held` and speak its brief.
 
-Done when the reply is that table, those briefs, that inventory, or the statement that no list is held.
+Done when the reply names every context in `contexts` and who holds it, speaks the `table` when this session holds one context, and speaks each brief when this session holds several.
 
 ## Stick
 
