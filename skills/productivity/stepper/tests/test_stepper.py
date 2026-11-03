@@ -326,6 +326,43 @@ class StepperTests(unittest.TestCase):
         code, inventory = self.cli("status")
         self.assertEqual(inventory["contexts"][0]["lease"]["session_key"], "cursor:aaa")
 
+    def test_state_change_default_output_is_the_full_store(self):
+        self.capture()
+        code, data = self.cli("verify", "--session", "cursor:aaa", "AC-3", "--evidence", "sent")
+        self.assertEqual(code, 0)
+        for key in ("context", "reminder", "progress", "brief"):
+            self.assertIn(key, data)
+
+    def test_state_change_with_brief_prints_only_the_four_parts(self):
+        self.capture()
+        code, data = self.cli(
+            "verify", "--session", "cursor:aaa", "AC-3", "--evidence", "sent", "--brief"
+        )
+        self.assertEqual(code, 0)
+        self.assertEqual(set(data), {"ok", "brief"})
+        self.assertEqual(set(data["brief"]), {"done", "left", "blocked", "position"})
+        self.assertIn("AC-3", data["brief"]["done"])
+        code, full = self.cli("status", "--session", "cursor:aaa")
+        self.assertEqual(full["brief"], data["brief"])
+
+    def test_brief_flag_works_on_other_state_changes(self):
+        self.capture()
+        code, data = self.cli("block", "--session", "cursor:aaa", "AC-3", "--reason", "wait", "--brief")
+        self.assertEqual(code, 0)
+        self.assertEqual(set(data), {"ok", "brief"})
+        self.assertIn("AC-3", data["brief"]["blocked"])
+
+    def test_attach_takes_context_argument_like_other_commands(self):
+        self.capture()
+        self.register("cursor:bbb")
+        code, taken = self.cli(
+            "attach", "--session", "cursor:bbb", "--context", "default", "--take", "--brief"
+        )
+        self.assertEqual(code, 0)
+        self.assertEqual(set(taken), {"ok", "brief"})
+        code, full = self.cli("status", "--session", "cursor:bbb")
+        self.assertEqual(full["context"]["lease"]["session_key"], "cursor:bbb")
+
     def test_attach_requires_take_for_a_live_lease(self):
         self.capture()
         self.register("cursor:bbb")

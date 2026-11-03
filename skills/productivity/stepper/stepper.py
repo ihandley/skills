@@ -1921,13 +1921,18 @@ def run_command(args: argparse.Namespace) -> dict:
         elif args.cmd == "replace":
             body = cmd_replace(root, args.session, context_id, args.item or [])
         elif args.cmd == "attach":
-            body = cmd_attach(root, args.session, args.context_id, args.take)
+            attach_id = args.context_flag or args.context_id
+            if not attach_id:
+                raise StepperError("attach needs a context: pass --context <id>")
+            body = cmd_attach(root, args.session, attach_id, args.take)
         elif args.cmd == "detach":
             body = cmd_detach(root, args.session, context_id)
         elif args.cmd == "decline":
             body = cmd_decline(root, args.session, args.hash)
         else:
             raise StepperError(f"unknown command {args.cmd}")
+        if getattr(args, "brief", False) and body.get("ok") and "brief" in body:
+            body = {"ok": True, "brief": body["brief"]}
         return attach_leftovers(root, body)
 
 
@@ -1943,6 +1948,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     def context(command: argparse.ArgumentParser) -> None:
         command.add_argument("--context", required=True)
+        command.add_argument("--brief", action="store_true")
 
     capture = sub.add_parser("capture")
     root(capture)
@@ -2012,7 +2018,9 @@ def build_parser() -> argparse.ArgumentParser:
     attach = sub.add_parser("attach")
     root(attach)
     session(attach)
-    attach.add_argument("context_id")
+    attach.add_argument("context_id", nargs="?")
+    attach.add_argument("--context", dest="context_flag")
+    attach.add_argument("--brief", action="store_true")
     attach.add_argument("--take", action="store_true")
 
     decline = sub.add_parser("decline")
