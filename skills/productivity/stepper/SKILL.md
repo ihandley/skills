@@ -72,6 +72,6 @@ Done when the user has been told to hold and why, or `skip` has moved the active
 - A list is held and the user has not accepted an order: [ORDER.md](references/ORDER.md).
 - The user says to drop the list or replace it: [REPLACE.md](references/REPLACE.md).
 
-An unrelated question or a pause leaves the list in place. Answer it, then brief. While `.claude/turn-owner.json` names this session's owner as understand or pair, that skill owns the turn. Leave the list leased and untouched.
+An unrelated question or a pause leaves the list in place. Answer it, then brief. While `.claude/turn-owner.json` names this session's owner as understand or pair, that skill owns the turn. Leave the list leased and untouched. A turn that already briefed or changed the list gets no stop-hook reminder; the brief is spoken once.
 
 Lease, archive, and corrupt-file failures: [proposal.md](proposal.md).

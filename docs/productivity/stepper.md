@@ -24,6 +24,9 @@ Stepper recommends waiting, and says why. You can skip to the next item when tha
 **Can I throw the list away?**
 Yes, when you say so. Dropping archives it without marking the leftovers done. Replacing swaps the outstanding items in one step. Another chat's list stays put.
 
+**Will I hear the brief twice?**
+No. A turn that already briefed or changed the list gets no stop-hook reminder. A turn that leaves the active item without a brief still gets one.
+
 **Does "verified" mean the tests passed?**
 It means the agent stored a non-empty note. You still have to trust, or check, that the note is true.
 

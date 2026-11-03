@@ -78,6 +78,7 @@ SESSION_KEYS = {
     "reminded_generation",
     "followup_generation",
 }
+OPTIONAL_SESSION_KEYS = {"briefed_generation"}
 CURSOR_EVENTS = {
     "sessionStart",
     "sessionEnd",
@@ -462,11 +463,13 @@ def fresh_session(key: str, platform: str) -> dict:
         "parked": None,
         "reminded_generation": None,
         "followup_generation": None,
+        "briefed_generation": None,
     }
 
 
 def validate_session(data: dict) -> None:
-    if set(data) != SESSION_KEYS or data.get("version") != VERSION:
+    keys = set(data) - OPTIONAL_SESSION_KEYS
+    if keys != SESSION_KEYS or data.get("version") != VERSION:
         raise ValueError("session schema")
     if not isinstance(data["session_key"], str) or ":" not in data["session_key"]:
         raise ValueError("session key")
@@ -1779,6 +1782,7 @@ def handle_hook(inv: Invocation, payload: dict) -> dict | None:
         token = generation or "none"
         if sess.get("followup_generation") == token:
             return None
+        briefed = generation is not None and sess.get("briefed_generation") == generation
         if assistant:
             sess["last_assistant_text"] = assistant
             consider_candidate(root, sess, parse_candidates(assistant), ctx, generation)
@@ -1789,6 +1793,7 @@ def handle_hook(inv: Invocation, payload: dict) -> dict | None:
             shown
             and sess.get("prompt_class") == "tracked"
             and sess.get("reminded_generation") != token
+            and not briefed
             and not teaching_owner(root, key)
         ):
             parts.append(active_reminder(shown))
@@ -1933,7 +1938,20 @@ def run_command(args: argparse.Namespace) -> dict:
             raise StepperError(f"unknown command {args.cmd}")
         if getattr(args, "brief", False) and body.get("ok") and "brief" in body:
             body = {"ok": True, "brief": body["brief"]}
+        note_briefed(root, getattr(args, "session", None))
         return attach_leftovers(root, body)
+
+
+def note_briefed(root: Path, session_key: str | None) -> None:
+    """A command run for a session this turn briefed or changed its sitting.
+
+    The stop hook reads the mark and sends no second brief for the turn.
+    """
+    sess = load_session(root, session_key) if session_key else None
+    if sess is None or sess.get("generation_id") is None:
+        return
+    sess["briefed_generation"] = sess["generation_id"]
+    save_session(root, sess)
 
 
 def build_parser() -> argparse.ArgumentParser:
