@@ -36,6 +36,9 @@ The loop reads the one outcome line `qpre` wrote and says `posted`, `clean`, or 
 **What does a strike do?**
 It verifies the item with the outcome and your decision, then briefs the next item. `qpre` waits until you say start.
 
+**How do I check the active item out locally?**
+`sitting checkout --session KEY --root PATH --stepper PATH` (`scripts/sitting`, beside `pr-queue`) finds the clone of the active item's repository under `clone_roots` on the team record, leaves it on the pull request head, and prints `clone:` and `base:`. Diff against that base ref, not a local branch of the same name. A clone with uncommitted changes stops the command and is left alone. A missing `clone_roots` stops the run and names the key.
+
 **What does backlog show?**
 A table of those older pull requests you have not approved on the latest commit, newest update first. A row number runs `qpre` and captures nothing.
 
@@ -61,5 +64,5 @@ The Atlassian connection or the GitHub connection is missing, or the stepper hoo
 - The quiet count arrives without those older pull requests being downloaded.
 - The list is printed from searches that return pull requests. A search that comes back empty stops the run and names the query.
 - The run prints its total time from the prompt to the list, and it stays under five minutes.
-- `python3 skills/engineering/pr-queue/tests/test_pr_queue.py` passes with no network.
+- `python3 skills/engineering/pr-queue/tests/test_pr_queue.py` and `test_sitting_checkout.py` pass with no network.
 - The run makes one Jira search with the stored cloud id and no site lookup.
