@@ -49,6 +49,7 @@ After the ticket is filed, the agent reads it back and the CLI compares the fiel
 
 - The agent shows you a rendered draft and waits for a yes before anything is filed.
 - When a parent ladder applies, that draft shows the parent's key, issue type, summary, and status name.
+- A search that has to sit under a parent type still shows at most 10 matches, with a note when more matches exist.
 - A GitHub-mapped directory files as it does today.
 - A draft missing a required field comes back with a specific error, and the agent fixes it instead of filing anyway.
 - Labels reach the tracker in lowercase kebab-case.

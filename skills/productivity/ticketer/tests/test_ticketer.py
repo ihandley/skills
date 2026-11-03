@@ -914,6 +914,85 @@ Widget = ["LPP"]
         self.assertEqual(len(capped["shown"]), 10)
         self.assertTrue(capped["more"])
 
+    def test_parent_type_lookup_has_no_text_and_is_not_capped_at_10(self):
+        code, data, _ = self.run_cli(
+            "find-parent", "--query", "reset", "--type", "Epic",
+            "--parent-type", "Bucket", "--parent-type", "Widget",
+        )
+        self.assertEqual(code, 0, data)
+        payload = data["descriptor"]["payload"]
+        self.assertEqual(
+            payload["jql"],
+            'project = LPP AND issuetype in ("Bucket", "Widget") AND statusCategory != Done ORDER BY updated DESC',
+        )
+        self.assertNotIn("text ~", payload["jql"])
+        self.assertNotIn("reset", payload["jql"])
+        self.assertNotIn("parentType", payload["jql"])
+        self.assertNotEqual(payload.get("maxResults"), 10)
+        self.assertNotIn("maxResults", payload)
+        self.assertNotEqual(data.get("cap"), 10)
+
+    def test_parent_type_lookup_can_require_allow_listed_parents(self):
+        code, data, _ = self.run_cli(
+            "find-parent", "--query", "reset", "--type", "Epic",
+            "--parent-type", "Bucket", "--parent-key", "EN-1", "--parent-key", "EN-2",
+        )
+        self.assertEqual(code, 0, data)
+        payload = data["descriptor"]["payload"]
+        self.assertEqual(
+            payload["jql"],
+            'project = LPP AND issuetype = "Bucket" AND statusCategory != Done AND parent in (EN-1, EN-2) ORDER BY updated DESC',
+        )
+        self.assertNotIn("text ~", payload["jql"])
+        self.assertNotIn("maxResults", payload)
+
+    def test_piped_parent_type_keys_constrain_the_child_query(self):
+        code, data, _ = self.run_cli(
+            "find-parent", "--query", "reset", "--type", "Epic", "--match", "Edge",
+            "--parent-type", "Bucket", "--result", "-",
+            stdin={"issues": [{"key": "PR-%d" % n} for n in range(1, 13)], "isLast": True},
+        )
+        self.assertEqual(code, 0, data)
+        payload = data["descriptor"]["payload"]
+        self.assertEqual(
+            payload["jql"],
+            'project = JET AND issuetype = "Epic" AND cf[10691] = "Edge" AND statusCategory != Done '
+            'AND text ~ "reset" AND parent in (PR-1, PR-2, PR-3, PR-4, PR-5, PR-6, PR-7, PR-8, PR-9, PR-10, PR-11, PR-12) '
+            'ORDER BY updated DESC',
+        )
+        self.assertEqual(payload["maxResults"], 10)
+        self.assertEqual(data["cap"], 10)
+        self.assertNotIn("shown", data)
+        self.assertNotIn("more", data)
+
+    def test_a_partial_parent_type_page_is_not_turned_into_a_child_search(self):
+        code, data, _ = self.run_cli(
+            "find-parent", "--query", "reset", "--type", "Epic", "--parent-type", "Bucket",
+            "--result", "-",
+            stdin={"issues": [{"key": "PR-1"}], "isLast": False, "nextPageToken": "more"},
+        )
+        self.assertEqual(code, 2, data)
+        self.assertNotIn("descriptor", data)
+        self.assertNotIn("text ~", json.dumps(data))
+        self.assertNotIn("parent in", json.dumps(data))
+
+    def test_empty_parent_type_lookup_does_not_search_children_unconstrained(self):
+        code, data, _ = self.run_cli(
+            "find-parent", "--query", "reset", "--type", "Epic", "--parent-type", "Bucket",
+            "--result", "-",
+            stdin={"issues": [], "isLast": True},
+        )
+        self.assertEqual(code, 0, data)
+        self.assertEqual(data.get("shown"), [])
+        self.assertFalse(data.get("more"))
+        blob = json.dumps(data)
+        self.assertNotIn("text ~", blob)
+        self.assertNotIn("reset", blob)
+        self.assertNotIn("parentType", blob)
+        descriptor = data.get("descriptor")
+        if descriptor:
+            self.assertIn("parent in", descriptor["payload"]["jql"])
+
     def test_malformed_parent_key_is_refused_before_a_query(self):
         code, data, _ = self.run_cli(
             "find-parent", "--query", "reset", "--type", "Epic", "--parent-key", "nope",

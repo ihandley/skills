@@ -63,6 +63,11 @@ def find_parent(query, config, types=None, match=None, parent_keys=None):
     return None
 
 
+def find_parent_types(config, types, parent_keys=None):
+    """GitHub issues have no parent search."""
+    return None
+
+
 def store_metadata(data, kind, raw, issue_type):
     if kind != "labels":
         raise ValueError("github has no metadata kind %r" % kind)

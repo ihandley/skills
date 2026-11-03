@@ -352,6 +352,46 @@ def _match_clause(config, match):
     raise ValueError("parent_match_field %r cannot be used in a search" % field)
 
 
+def find_parent_types(config, types, parent_keys=None):
+    """Search parent issue types for every non-Done key. No text and no display cap.
+
+    Jira Cloud rejects a parentType clause, so this query names the issue types
+    themselves. parent_keys further limit that lookup. Callers page it, then
+    search the child with parent in (the keys this lookup returned).
+    """
+    defaults = config.get("defaults") or {}
+    types = list(types or [])
+    parent_keys = list(parent_keys or [])
+    if not types:
+        raise ValueError("a parent type is required")
+    for name in types:
+        if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9 _-]*", name):
+            raise ValueError("issue type %r cannot be searched" % name)
+    for key in parent_keys:
+        if not KEY_RE.match(key):
+            raise ValueError("parent %r is not an issue key like PROJ-123" % key)
+    groups = []
+    index = {}
+    for name in types:
+        projects = _projects_for(name, config)
+        for project in projects:
+            if not PROJECT_RE.match(project):
+                raise ValueError("project %r cannot be searched" % project)
+        if projects not in index:
+            index[projects] = len(groups)
+            groups.append((projects, []))
+        groups[index[projects]][1].append(name)
+    parts = ["%s AND %s" % (_project_clause(projects), _type_clause(names)) for projects, names in groups]
+    head = parts[0] if len(parts) == 1 else "(" + " OR ".join("(%s)" % part for part in parts) + ")"
+    jql = "%s AND statusCategory != Done" % head
+    if parent_keys:
+        jql += " AND parent in (%s)" % ", ".join(parent_keys)
+    jql += " ORDER BY updated DESC"
+    return {"operation": "jira.search_issues",
+            "payload": {"cloudId": defaults.get("cloud_id", "<cloud_id>"),
+                        "jql": jql, "fields": ["summary", "status", "issuetype", "parent"]}}
+
+
 def find_parent(query, config, types=None, match=None, parent_keys=None):
     """Emit one Jira search. Parent keys are a `parent in (...)` clause.
 

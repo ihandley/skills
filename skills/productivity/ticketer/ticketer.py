@@ -872,6 +872,34 @@ def cmd_verify(args):
     return {"ok": ok, "ref": ref, "mismatches": mismatches, "unverifiable": unverifiable}, 0 if ok else EXIT_REFUSED
 
 
+def issue_keys(raw):
+    """Issue keys from a tracker search page, in the order given."""
+    if not isinstance(raw, dict):
+        return []
+    issues = raw.get("issues") if isinstance(raw.get("issues"), list) else raw.get("values")
+    if not isinstance(issues, list):
+        return []
+    keys, seen = [], set()
+    for issue in issues:
+        if not isinstance(issue, dict):
+            continue
+        key = issue.get("key")
+        if not isinstance(key, str) or not key or key in seen:
+            continue
+        seen.add(key)
+        keys.append(key)
+    return keys
+
+
+def parent_lookup_has_further_hits(raw):
+    """True when the tracker says this parent-type page is not the last."""
+    if not isinstance(raw, dict):
+        return False
+    if raw.get("nextPageToken"):
+        return True
+    return raw.get("isLast") is False
+
+
 def search_report(raw, cap):
     """Shown hits, and whether the cap hid further ones."""
     if not isinstance(raw, dict):
@@ -899,16 +927,38 @@ def cmd_find_parent(args):
     config = load_config(info["config_path"], info["overrides"])
     adapter = get_adapter(config["tracker"])
     try:
-        descriptor = adapter.find_parent(
-            args.query, config, types=args.type or [], match=args.match,
-            parent_keys=args.parent_key or [],
-        )
+        if args.parent_type and args.result:
+            raw = read_json_input(args.result)
+            if parent_lookup_has_further_hits(raw):
+                raise Fail(
+                    EXIT_REFUSED,
+                    "parent-type lookup has further hits; page until the tracker reports none, then pipe every issue",
+                )
+            keys = issue_keys(raw)
+            if not keys:
+                return {"ok": True, "shown": [], "more": False}, 0
+            descriptor = adapter.find_parent(
+                args.query, config, types=args.type or [], match=args.match,
+                parent_keys=keys,
+            )
+        elif args.parent_type:
+            descriptor = adapter.find_parent_types(
+                config, args.parent_type, parent_keys=args.parent_key or [],
+            )
+        else:
+            descriptor = adapter.find_parent(
+                args.query, config, types=args.type or [], match=args.match,
+                parent_keys=args.parent_key or [],
+            )
     except ValueError as exc:
         raise Fail(EXIT_REFUSED, str(exc))
     if descriptor is None:
         raise Fail(EXIT_REFUSED, "%s does not support parent search" % adapter.NAME)
-    result = {"ok": True, "descriptor": descriptor, "cap": descriptor.get("payload", {}).get("maxResults", 10)}
-    if args.result:
+    payload = descriptor.get("payload") or {}
+    result = {"ok": True, "descriptor": descriptor}
+    if "maxResults" in payload:
+        result["cap"] = payload["maxResults"]
+    if args.result and not args.parent_type:
         shown, more = search_report(read_json_input(args.result), result["cap"])
         result["shown"] = shown
         result["more"] = more
@@ -976,6 +1026,7 @@ def parser():
     p.add_argument("--type", action="append", help="issue type to search; repeat for several")
     p.add_argument("--match", help="value for parent_match_field when the searched type is parent_match_type")
     p.add_argument("--parent-key", action="append", help="hit parent must be one of these keys")
+    p.add_argument("--parent-type", action="append", help="hit parent must be one of these issue types; repeat for several")
     p.add_argument("--result", help="search JSON; report whether the cap hid further hits")
     p.set_defaults(fn=cmd_find_parent)
     return top
