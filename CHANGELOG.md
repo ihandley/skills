@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.6.1](https://github.com/ihandley/skills/compare/ihandley-skills-v0.6.0...ihandley-skills-v0.6.1) (2026-11-03)
+
+
+### Bug Fixes
+
+* **stepper:** a reminder does not grow a second brief ([#119](https://github.com/ihandley/skills/issues/119)) ([a25055b](https://github.com/ihandley/skills/commit/a25055bb989b637b8c92c6ed6d7fe4e4d98ff6c4))
+
 ## [0.6.0](https://github.com/ihandley/skills/compare/ihandley-skills-v0.5.0...ihandley-skills-v0.6.0) (2026-11-03)
 
 
