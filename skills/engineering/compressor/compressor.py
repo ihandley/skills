@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Check a candidate against one document or one skill, and apply it when every check passes.
+"""Check a candidate against one document, and apply it when every check passes.
 
 The script is the only writer. It does not commit.
 """
@@ -68,24 +68,24 @@ class Matter:
 def main(argv: list[str] | None = None) -> int:
     argv = list(sys.argv[1:] if argv is None else argv)
     if len(argv) != 2:
-        emit(blank(["wrong_arity"]))
+        emit(empty_report(["wrong_arity"]))
         return 1
     command, arg = argv
     if command not in ("check", "apply"):
-        emit(blank(["bad_command"]))
+        emit(empty_report(["bad_command"]))
         return 1
     candidate, failure = load_candidate()
     if failure:
-        emit(blank([failure]))
+        emit(empty_report([failure]))
         return 1
 
     located = locate(arg, Path.cwd())
     if isinstance(located, str):
-        emit(blank([located]))
+        emit(empty_report([located]))
         return 1
     report, replacements = evaluate(located, candidate)
     if command == "apply" and report["ok"]:
-        commit_replacements(replacements)
+        replace_staged_files(replacements)
     emit(report)
     return 0 if report["ok"] else 1
 
@@ -209,20 +209,8 @@ def looks_like_rel(token: str) -> bool:
 
 def outside_fences(text: str) -> list[str]:
     lines = text.splitlines()
-    kept = []
-    index = 0
-    while index < len(lines):
-        opener = fence_marker(lines[index])
-        if opener is None:
-            kept.append(lines[index])
-            index += 1
-            continue
-        index += 1
-        while index < len(lines) and not fence_closes(lines[index], opener):
-            index += 1
-        if index < len(lines):
-            index += 1
-    return kept
+    hidden = fence_line_indexes(walk_fences(lines))
+    return [line for index, line in enumerate(lines) if index not in hidden]
 
 
 def clean_dest(raw: str) -> str:
@@ -288,7 +276,7 @@ def contained(root: Path, ref: str) -> Path | None:
 
 def evaluate(loc: Located, candidate: dict) -> tuple[dict, list[tuple[Path, str]]]:
     if loc.kind == "document" and Path(loc.members[0]).suffix.lower() not in TEXT_SUFFIXES:
-        return blank(["unsupported_type"]), []
+        return empty_report(["unsupported_type"]), []
     failures: list[str] = []
     for key in candidate:
         if escapes(key):
@@ -302,17 +290,24 @@ def evaluate(loc: Located, candidate: dict) -> tuple[dict, list[tuple[Path, str]
     words_after = 0
     entry_before = None
     entry_after = None
+    originals: dict[str, str] = {}
+    proposeds: dict[str, str] = {}
     for rel in loc.members:
-        path = loc.root / rel
         try:
-            original = path.read_bytes().decode("utf-8")
+            originals[rel] = (loc.root / rel).read_bytes().decode("utf-8")
         except UnicodeDecodeError:
             failures.append("not_utf8")
+        else:
+            proposeds[rel] = candidate.get(rel, originals[rel])
+    for rel in loc.members:
+        if rel not in originals:
             continue
-        proposed = candidate.get(rel, original)
-        drop = loc.kind == "skill" and rel == "SKILL.md"
-        before = gated_words(original, drop)
-        after = gated_words(proposed, drop)
+        path = loc.root / rel
+        original = originals[rel]
+        proposed = proposeds[rel]
+        exclude_description_from_word_count = loc.kind == "skill" and rel == "SKILL.md"
+        before = gated_words(original, exclude_description_from_word_count)
+        after = gated_words(proposed, exclude_description_from_word_count)
         words_before += before
         words_after += after
         changed = proposed != original
@@ -323,12 +318,12 @@ def evaluate(loc: Located, candidate: dict) -> tuple[dict, list[tuple[Path, str]
         if rel.lower().endswith(".md"):
             if unclosed_fence(original) or unclosed_fence(proposed):
                 failures.append("parse")
-            failures.extend(frontmatter_failures(original, proposed, drop))
+            failures.extend(frontmatter_failures(original, proposed, exclude_description_from_word_count))
             if broken_links(loc.root, rel, proposed, set(loc.members)) - broken_links(
                 loc.root, rel, original, set(loc.members)
             ):
                 failures.append("link")
-            if broken_anchors(proposed) - broken_anchors(original):
+            if broken_anchors(proposed, loc.root, rel, proposeds) - broken_anchors(original, loc.root, rel, originals):
                 failures.append("heading_anchor")
         files.append({
             "path": rel,
@@ -339,7 +334,7 @@ def evaluate(loc: Located, candidate: dict) -> tuple[dict, list[tuple[Path, str]
         if changed:
             diffs[rel] = unified(rel, original, proposed)
             replacements.append((path, proposed))
-        if drop:
+        if exclude_description_from_word_count:
             entry_before = description_len(original)
             entry_after = description_len(proposed)
     for rel in loc.skipped:
@@ -353,7 +348,7 @@ def evaluate(loc: Located, candidate: dict) -> tuple[dict, list[tuple[Path, str]
         failures.append("description_cap")
     if "not_utf8" not in failures and words_after >= words_before:
         failures.append("word_total")
-    report = blank(ordered(failures))
+    report = empty_report(ordered(failures))
     report["words_before"] = words_before
     report["words_after"] = words_after
     report["files"] = files
@@ -368,21 +363,69 @@ def evaluate(loc: Located, candidate: dict) -> tuple[dict, list[tuple[Path, str]
     return report, replacements
 
 
-def broken_anchors(text: str) -> set[str]:
+def broken_anchors(text: str, root: Path | None = None, source_rel: str | None = None, texts: dict[str, str] | None = None) -> set[str]:
     slugs = heading_slugs(text)
     broken = set()
     for anchor in same_document_anchors(text):
         if anchor not in slugs:
             broken.add(anchor)
+    if root is None or source_rel is None:
+        return broken
+    for file_part, fragment in cross_file_fragments(text):
+        target = markdown_target(root, source_rel, file_part, texts or {})
+        if target is None:
+            continue
+        if fragment not in heading_slugs(target):
+            broken.add(file_part + "#" + fragment)
     return broken
+
+
+def cross_file_fragments(text: str) -> list[tuple[str, str]]:
+    found = []
+    for line in outside_fences(text):
+        for match in LINK_RE.finditer(line):
+            dest = clean_dest(match.group(1))
+            if not is_relative(dest) or "#" not in dest:
+                continue
+            file_part, fragment = dest.split("#", 1)
+            file_part = path_only(file_part)
+            fragment = fragment.split("?", 1)[0]
+            if file_part and fragment:
+                found.append((file_part, fragment))
+    return found
+
+
+def markdown_target(root: Path, source_rel: str, ref: str, texts: dict[str, str]) -> str | None:
+    path = Path(ref)
+    if path.is_absolute():
+        return None
+    base = (root / source_rel).parent
+    candidate = base.joinpath(*path.parts) if path.parts else base
+    try:
+        relative = candidate.resolve().relative_to(root.resolve()).as_posix()
+    except (OSError, ValueError):
+        relative = None
+    if relative and relative.lower().endswith(".md") and relative in texts:
+        return texts[relative]
+    if candidate.suffix.lower() != ".md" or not candidate.is_file():
+        return None
+    try:
+        return candidate.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError):
+        return None
 
 
 def heading_slugs(text: str) -> set[str]:
     slugs = set()
+    seen: dict[str, int] = {}
     for line in outside_fences(text):
         matched = HEADING_RE.match(line.strip())
-        if matched:
-            slugs.add(github_slug(matched.group(1)))
+        if not matched:
+            continue
+        base = github_slug(matched.group(1))
+        count = seen.get(base, 0)
+        seen[base] = count + 1
+        slugs.add(base if count == 0 else "%s-%d" % (base, count))
     return slugs
 
 
@@ -491,8 +534,8 @@ def median(values: list[int]):
     return int(mean) if mean == int(mean) else mean
 
 
-def gated_words(text: str, drop_description: bool = False) -> int:
-    if drop_description:
+def gated_words(text: str, exclude_description_from_word_count: bool = False) -> int:
+    if exclude_description_from_word_count:
         matter = parse_frontmatter(text)
         if matter.ok and "description" in matter.spans:
             start, end = matter.spans["description"]
@@ -549,11 +592,18 @@ def parse_frontmatter(text: str) -> Matter:
             matter.ok = False
             return matter
         if index + 1 < close and lines[index + 1][:1] in " \t" and lines[index + 1].strip():
-            continued, next_index = read_plain_lines(lines, index + 1, close, decoded)
-            if continued is None:
-                matter.ok = False
-                return matter
-            decoded = continued
+            if indicator == "" and line_kind(lines[index + 1]) == "collection":
+                node, next_index = parse_collection(lines, index + 1, close, 0)
+                if node is None:
+                    matter.ok = False
+                    return matter
+                decoded = json.dumps(node, ensure_ascii=False, separators=(",", ":"))
+            else:
+                continued, next_index = read_plain_lines(lines, index + 1, close, decoded)
+                if continued is None:
+                    matter.ok = False
+                    return matter
+                decoded = continued
             end = offsets[next_index] if next_index < len(offsets) else offsets[close]
         else:
             next_index = index + 1
@@ -630,6 +680,178 @@ def fold_lines(lines: list[str]) -> str:
     return "".join(parts)
 
 
+def indent_width(line: str) -> int | None:
+    raw = line.rstrip("\r\n")
+    if raw.strip() == "":
+        return -1
+    prefix = len(raw) - len(raw.lstrip(" \t"))
+    if "\t" in raw[:prefix]:
+        return None
+    return prefix
+
+
+def line_kind(line: str) -> str:
+    width = indent_width(line)
+    if width is None:
+        return "bad"
+    if width < 0:
+        return "blank"
+    content = line.rstrip("\r\n")[width:]
+    if content == "-" or content.startswith("- "):
+        return "collection"
+    if KEY_RE.match(content):
+        return "collection"
+    return "plain"
+
+
+def parse_collection(lines: list[str], start: int, close: int, parent_indent: int):
+    index = start
+    while index < close and not lines[index].strip():
+        index += 1
+    if index >= close:
+        return None, start
+    indent = indent_width(lines[index])
+    if indent is None or indent <= parent_indent:
+        return None, start
+    content = lines[index].rstrip("\r\n")[indent:]
+    if content == "-" or content.startswith("- "):
+        return parse_list(lines, index, close, indent)
+    if KEY_RE.match(content):
+        return parse_map(lines, index, close, indent)
+    return None, start
+
+
+def parse_map(lines: list[str], start: int, close: int, indent: int):
+    index = start
+    mapping: dict[str, object] = {}
+    while index < close:
+        if not lines[index].strip():
+            index += 1
+            continue
+        current = indent_width(lines[index])
+        if current is None:
+            return None, index
+        if current < indent:
+            break
+        if current != indent:
+            return None, index
+        content = lines[index].rstrip("\r\n")[current:]
+        matched = KEY_RE.match(content)
+        if not matched or matched.group(1) in mapping:
+            return None, index
+        key, rest = matched.group(1), matched.group(2)
+        value_text = rest[1:] if rest.startswith(" ") else rest
+        value, next_index = stored_value(lines, index, close, indent, value_text.strip())
+        if value is None:
+            return None, index
+        mapping[key] = value
+        index = next_index
+    return mapping, index
+
+
+def parse_list(lines: list[str], start: int, close: int, indent: int):
+    index = start
+    items = []
+    while index < close:
+        if not lines[index].strip():
+            index += 1
+            continue
+        current = indent_width(lines[index])
+        if current is None:
+            return None, index
+        if current < indent:
+            break
+        if current != indent:
+            return None, index
+        content = lines[index].rstrip("\r\n")[current:]
+        if content == "-":
+            payload = ""
+        elif content.startswith("- "):
+            payload = content[2:]
+        else:
+            return None, index
+        value, next_index = parse_list_item(lines, index, close, indent, payload)
+        if value is None:
+            return None, index
+        items.append(value)
+        index = next_index
+    return items, index
+
+
+def parse_list_item(lines: list[str], index: int, close: int, indent: int, payload: str):
+    if KEY_RE.match(payload or ""):
+        return parse_dashed_mapping(lines, index, close, indent, payload)
+    indicator = payload.strip()
+    following = index + 1
+    if indicator == "" and following < close and (indent_width(lines[following]) or -1) > indent:
+        return parse_collection(lines, following, close, indent)
+    decoded = decode_scalar(indicator) if indicator else ""
+    if indicator and decoded is None:
+        return None, index
+    if following < close and (indent_width(lines[following]) or -1) > indent:
+        continued, next_index = read_plain_lines(lines, following, close, decoded)
+        if continued is None:
+            return None, index
+        return continued, next_index
+    return decoded, index + 1
+
+
+def parse_dashed_mapping(lines: list[str], index: int, close: int, dash_indent: int, payload: str):
+    matched = KEY_RE.match(payload)
+    if not matched:
+        return None, index
+    key_indent = dash_indent + 2
+    key, rest = matched.group(1), matched.group(2)
+    value_text = rest[1:] if rest.startswith(" ") else rest
+    value, next_index = stored_value(lines, index, close, key_indent, value_text.strip())
+    if value is None:
+        return None, index
+    mapping: dict[str, object] = {key: value}
+    rest_map, next_index = parse_map(lines, next_index, close, key_indent)
+    if rest_map is None:
+        return None, index
+    for sibling, sibling_value in rest_map.items():
+        if sibling in mapping:
+            return None, index
+        mapping[sibling] = sibling_value
+    return mapping, next_index
+
+
+def stored_value(lines: list[str], key_line: int, close: int, key_indent: int, indicator: str):
+    block = BLOCK_RE.fullmatch(indicator)
+    if block and block.group(3):
+        return None, key_line
+    if block:
+        content, next_index = read_block(lines, key_line + 1, close)
+        return render_block(content, block.group(1), block.group(2) or ""), next_index
+    decoded = decode_scalar(indicator) if indicator else ""
+    if indicator and decoded is None:
+        return None, key_line
+    if indicator == "":
+        nxt = key_line + 1
+        while nxt < close and not lines[nxt].strip():
+            nxt += 1
+        if nxt < close:
+            width = indent_width(lines[nxt])
+            if width is None:
+                return None, key_line
+            if width > key_indent:
+                kind = line_kind(lines[nxt])
+                if kind == "collection":
+                    return parse_collection(lines, nxt, close, key_indent)
+                if kind == "plain":
+                    return read_plain_lines(lines, nxt, close, "")
+                return None, key_line
+        return "", key_line + 1
+    nxt = key_line + 1
+    if nxt < close and lines[nxt].strip() and (indent_width(lines[nxt]) or -1) > key_indent:
+        continued, next_index = read_plain_lines(lines, nxt, close, decoded)
+        if continued is None:
+            return None, key_line
+        return continued, next_index
+    return decoded, key_line + 1
+
+
 def read_plain_lines(lines: list[str], start: int, close: int, first: str) -> tuple[str | None, int]:
     parts = [first] if first else []
     index = start
@@ -676,8 +898,8 @@ def decode_double(inner: str) -> str | None:
     return "".join(out)
 
 
-def commit_replacements(replacements: list[tuple[Path, str]]) -> None:
-    """Stage every new file, then move them into place. A failed move puts pre-images back."""
+def replace_staged_files(replacements: list[tuple[Path, str]]) -> None:
+    """Stage every new file, then os.replace it onto the destination. A failed replace puts pre-images back."""
     staged: list[tuple[Path, Path]] = []
     backups: list[tuple[Path, bytes]] = []
     try:
@@ -702,20 +924,8 @@ def commit_replacements(replacements: list[tuple[Path, str]]) -> None:
 
 def strip_fences(text: str) -> str:
     lines = text.splitlines(keepends=True)
-    out = []
-    index = 0
-    while index < len(lines):
-        opener = fence_marker(lines[index])
-        if opener is None:
-            out.append(lines[index])
-            index += 1
-            continue
-        index += 1
-        while index < len(lines) and not fence_closes(lines[index], opener):
-            index += 1
-        if index < len(lines):
-            index += 1
-    return "".join(out)
+    hidden = fence_line_indexes(walk_fences(lines))
+    return "".join(line for index, line in enumerate(lines) if index not in hidden)
 
 
 def fence_marker(line: str) -> tuple[str, int] | None:
@@ -734,20 +944,7 @@ def fence_marker(line: str) -> tuple[str, int] | None:
 
 
 def unclosed_fence(text: str) -> bool:
-    lines = text.splitlines()
-    index = 0
-    while index < len(lines):
-        opener = fence_marker(lines[index])
-        if opener is None:
-            index += 1
-            continue
-        index += 1
-        while index < len(lines) and not fence_closes(lines[index], opener):
-            index += 1
-        if index >= len(lines):
-            return True
-        index += 1
-    return False
+    return any(not closed for _start, _end, closed in walk_fences(text.splitlines()))
 
 
 def fence_closes(line: str, opener: tuple[str, int]) -> bool:
@@ -763,7 +960,11 @@ def protected_sequences(text: str) -> tuple:
 
 def fenced_blocks(text: str) -> list[str]:
     lines = text.splitlines(keepends=True)
-    blocks = []
+    return ["".join(lines[start:end]) for start, end, _closed in walk_fences(lines)]
+
+
+def walk_fences(lines: list[str]) -> list[tuple[int, int, bool]]:
+    spans = []
     index = 0
     while index < len(lines):
         opener = fence_marker(lines[index])
@@ -774,10 +975,18 @@ def fenced_blocks(text: str) -> list[str]:
         index += 1
         while index < len(lines) and not fence_closes(lines[index], opener):
             index += 1
-        if index < len(lines):
+        closed = index < len(lines)
+        if closed:
             index += 1
-        blocks.append("".join(lines[start:index]))
-    return blocks
+        spans.append((start, index, closed))
+    return spans
+
+
+def fence_line_indexes(spans: list[tuple[int, int, bool]]) -> set[int]:
+    indexes: set[int] = set()
+    for start, end, _closed in spans:
+        indexes.update(range(start, end))
+    return indexes
 
 
 def inline_codes(text: str) -> list[str]:
@@ -835,7 +1044,7 @@ def ordered(names: list[str]) -> list[str]:
     return sorted(set(names), key=lambda item: rank.get(item, len(FAILURE_ORDER)))
 
 
-def blank(failures: list[str]) -> dict:
+def empty_report(failures: list[str]) -> dict:
     return {
         "ok": not failures,
         "failures": failures,

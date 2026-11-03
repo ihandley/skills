@@ -49,6 +49,13 @@ class Base(unittest.TestCase):
         data = json.loads(proc.stdout) if proc.stdout.strip() else None
         return proc.returncode, data, proc.stderr
 
+    def write_skill_set(self, skill=None, notes=None):
+        root = self.repo / "skills" / "engineering" / "demo"
+        root.mkdir(parents=True)
+        (root / "SKILL.md").write_text(SKILL if skill is None else skill)
+        (root / "notes.md").write_text(NOTES if notes is None else notes)
+        return root
+
 
 SKILL = """---
 name: demo
@@ -150,6 +157,74 @@ class DocumentTests(Base):
         self.assertEqual(data["failures"], ["frontmatter_value"])
         self.assertEqual(path.read_text(), original)
 
+    def test_unchanged_nested_frontmatter_mapping_passes(self):
+        path = self.repo / "note.md"
+        original = "---\ntitle: Note\nmetadata:\n  author: Ada\n---\n\nKeep this fact.\n\nThe history of this note is long and motivational.\n"
+        path.write_text(original)
+        candidate = "---\ntitle: Note\nmetadata:\n  author: Ada\n---\n\nKeep this fact.\n"
+        code, data, err = self.run_cli("check", "note.md", candidate={"note.md": candidate})
+        self.assertEqual(err, "", err)
+        self.assertEqual(code, 0, data)
+        self.assertEqual(data["failures"], [])
+        self.assertEqual(data["words_before"], 19)
+        self.assertEqual(data["words_after"], 10)
+        self.assertEqual(path.read_text(), original)
+
+    def test_changed_nested_frontmatter_value_is_rejected(self):
+        path = self.repo / "note.md"
+        original = "---\ntitle: Note\nmetadata:\n  author: Ada\n---\n\nKeep this fact.\n\nThe history of this note is long and motivational.\n"
+        path.write_text(original)
+        candidate = "---\ntitle: Note\nmetadata:\n  author: Grace\n---\n\nKeep this fact.\n"
+        code, data, err = self.run_cli("check", "note.md", candidate={"note.md": candidate})
+        self.assertEqual(err, "", err)
+        self.assertNotEqual(code, 0)
+        self.assertEqual(data["failures"], ["frontmatter_value"])
+        self.assertEqual(path.read_text(), original)
+
+    def test_unchanged_nested_frontmatter_list_passes(self):
+        path = self.repo / "note.md"
+        original = "---\ntitle: Note\ntools:\n  - Bash\n  - Read\n---\n\nKeep this fact.\n\nThe history of this note is long and motivational.\n"
+        path.write_text(original)
+        candidate = "---\ntitle: Note\ntools:\n  - Bash\n  - Read\n---\n\nKeep this fact.\n"
+        code, data, err = self.run_cli("check", "note.md", candidate={"note.md": candidate})
+        self.assertEqual(err, "", err)
+        self.assertEqual(code, 0, data)
+        self.assertEqual(data["failures"], [])
+        self.assertEqual(path.read_text(), original)
+
+    def test_changed_nested_frontmatter_list_is_rejected(self):
+        path = self.repo / "note.md"
+        original = "---\ntitle: Note\ntools:\n  - Bash\n  - Read\n---\n\nKeep this fact.\n\nThe history of this note is long and motivational.\n"
+        path.write_text(original)
+        candidate = "---\ntitle: Note\ntools:\n  - Bash\n  - Write\n---\n\nKeep this fact.\n"
+        code, data, err = self.run_cli("check", "note.md", candidate={"note.md": candidate})
+        self.assertEqual(err, "", err)
+        self.assertNotEqual(code, 0)
+        self.assertEqual(data["failures"], ["frontmatter_value"])
+        self.assertEqual(path.read_text(), original)
+
+    def test_unclosed_frontmatter_fails_parse(self):
+        path = self.repo / "note.md"
+        original = "---\ntitle: Note\n---\n\nKeep this fact.\n\nThe history of this note is long and motivational.\n"
+        path.write_text(original)
+        candidate = "---\ntitle: Note\n\nKeep this fact.\n"
+        code, data, err = self.run_cli("check", "note.md", candidate={"note.md": candidate})
+        self.assertEqual(err, "", err)
+        self.assertNotEqual(code, 0)
+        self.assertEqual(data["failures"], ["parse"])
+        self.assertEqual(path.read_text(), original)
+
+    def test_unparseable_frontmatter_line_fails_parse(self):
+        path = self.repo / "note.md"
+        original = "---\ntitle: Note\n---\n\nKeep this fact.\n\nThe history of this note is long and motivational.\n"
+        path.write_text(original)
+        candidate = "---\nmetadata:\n  author: Ada\n  ::: nope\n---\n\nKeep this fact.\n"
+        code, data, err = self.run_cli("check", "note.md", candidate={"note.md": candidate})
+        self.assertEqual(err, "", err)
+        self.assertNotEqual(code, 0)
+        self.assertEqual(data["failures"], ["parse"])
+        self.assertEqual(path.read_text(), original)
+
     def test_non_text_target_is_rejected_and_not_written(self):
         path = self.repo / "note.json"
         original = '{"title": "Note"}\n'
@@ -208,17 +283,64 @@ class DocumentTests(Base):
         self.assertEqual(data["failures"], ["heading_anchor"])
         self.assertEqual(path.read_text(), original)
 
+    def test_relative_link_fragment_must_match_a_heading_in_the_target(self):
+        path = self.repo / "note.md"
+        original = "# Title\n\nSee [the note](other.md#present).\n\nThe history of this note is long and motivational.\n"
+        path.write_text(original)
+        (self.repo / "other.md").write_text("# Present\n\nOne fact.\n")
+        candidate = "# Title\n\nSee [the note](other.md#does-not-exist).\n"
+        code, data, err = self.run_cli("check", "note.md", candidate={"note.md": candidate})
+        self.assertEqual(err, "", err)
+        self.assertNotEqual(code, 0)
+        self.assertEqual(data["failures"], ["heading_anchor"])
+        self.assertEqual(path.read_text(), original)
+        self.assertEqual((self.repo / "other.md").read_text(), "# Present\n\nOne fact.\n")
+
+    def test_in_set_heading_anchor_uses_the_candidate_text(self):
+        skill = (
+            "---\nname: demo\ndescription: Demo skill.\n---\n\n# Demo\n\n"
+            "Read [the notes](notes.md#kept-fact).\n\n"
+            "The history of this skill is long motivational padding.\n\nKeep the signal.\n"
+        )
+        short = skill.replace("The history of this skill is long motivational padding.\n\n", "")
+        notes = "# Kept Fact\n\nThe history of this note is long and motivational.\n"
+        root = self.write_skill_set(skill, notes)
+        code, data, err = self.run_cli(
+            "check", "skills/engineering/demo",
+            candidate={"SKILL.md": short, "notes.md": "The note states one fact.\n"},
+        )
+        self.assertEqual(err, "", err)
+        self.assertNotEqual(code, 0)
+        self.assertEqual(data["failures"], ["heading_anchor"])
+        self.assertEqual((root / "SKILL.md").read_text(), skill)
+        self.assertEqual((root / "notes.md").read_text(), notes)
+
+    def test_duplicate_heading_slugs_gain_a_numeric_suffix(self):
+        path = self.repo / "note.md"
+        original = (
+            "# Duplicate\n\n# Duplicate\n\n# Duplicate\n\n"
+            "See [the first](#duplicate).\n\n"
+            "The history of this note is long and motivational.\n"
+        )
+        path.write_text(original)
+        candidate = (
+            "# Duplicate\n\n# Duplicate\n\n# Duplicate\n\n"
+            "See [the first](#duplicate), [the second](#duplicate-1), and [the third](#duplicate-2).\n"
+        )
+        code, data, err = self.run_cli("check", "note.md", candidate={"note.md": candidate})
+        self.assertEqual(err, "", err)
+        self.assertEqual(code, 0, data)
+        self.assertEqual(data["failures"], [])
+        self.assertEqual(path.read_text(), original)
+
     def test_unresolved_reference_is_listed_and_left_out(self):
-        root = self.repo / "skills" / "engineering" / "demo"
-        root.mkdir(parents=True)
         text = (
             "---\nname: demo\ndescription: Demo skill.\n---\n\n# Demo\n\n"
             "Read [the notes](notes.md). The shape lives in `templates/<issue-type>.md`.\n\n"
             "The history of this skill is long motivational padding.\n\nKeep the signal.\n"
         )
         short = text.replace("The history of this skill is long motivational padding.\n\n", "")
-        (root / "SKILL.md").write_text(text)
-        (root / "notes.md").write_text("One fact.\n")
+        root = self.write_skill_set(text, "One fact.\n")
         code, data, err = self.run_cli("check", "skills/engineering/demo", candidate={"SKILL.md": short})
         self.assertEqual(err, "", err)
         self.assertEqual(code, 0, data)
@@ -255,17 +377,14 @@ class DocumentTests(Base):
 
 class SkillTests(Base):
     def test_check_passes_a_shorter_skill_and_leaves_an_unmentioned_support_file(self):
-        root = self.repo / "skills" / "engineering" / "demo"
-        root.mkdir(parents=True)
-        (root / "SKILL.md").write_text(SKILL)
-        (root / "notes.md").write_text(NOTES)
+        root = self.write_skill_set()
         code, data, err = self.run_cli(
             "check", "skills/engineering/demo", candidate={"SKILL.md": SKILL_SHORT},
         )
         self.assertEqual(err, "", err)
         self.assertEqual(code, 0, data)
         self.assertEqual(data["failures"], [])
-        # Description value "Compress a demo skill." is outside the gate: 34 tokens - 4 = 30, then the 9-word history sentence is gone.
+        # Description value "Compress a demo skill." is outside the word count: 34 tokens - 4 = 30, then the 9-word history sentence is gone.
         self.assertEqual(data["words_before"], 35)
         self.assertEqual(data["words_after"], 26)
         self.assertEqual(data["files"], [
@@ -280,10 +399,7 @@ class SkillTests(Base):
         self.assertEqual((root / "notes.md").read_text(), NOTES)
 
     def test_apply_rejects_a_support_file_whose_gated_words_grew(self):
-        root = self.repo / "skills" / "engineering" / "demo"
-        root.mkdir(parents=True)
-        (root / "SKILL.md").write_text(SKILL)
-        (root / "notes.md").write_text(NOTES)
+        root = self.write_skill_set()
         code, data, err = self.run_cli(
             "apply", "skills/engineering/demo",
             candidate={"SKILL.md": SKILL_SHORT, "notes.md": NOTES_GROWN},
@@ -297,10 +413,7 @@ class SkillTests(Base):
         self.assertEqual((root / "notes.md").read_text(), NOTES)
 
     def test_apply_writes_every_replaced_file_or_none(self):
-        root = self.repo / "skills" / "engineering" / "demo"
-        root.mkdir(parents=True)
-        (root / "SKILL.md").write_text(SKILL)
-        (root / "notes.md").write_text(NOTES)
+        root = self.write_skill_set()
         notes_short = "One fact.\n"
         code, data, err = self.run_cli(
             "apply", "skills/engineering/demo",
@@ -313,10 +426,7 @@ class SkillTests(Base):
         self.assertEqual((root / "notes.md").read_text(), notes_short)
 
     def test_description_only_edit_fails_the_word_gate(self):
-        root = self.repo / "skills" / "engineering" / "demo"
-        root.mkdir(parents=True)
-        (root / "SKILL.md").write_text(SKILL)
-        (root / "notes.md").write_text(NOTES)
+        root = self.write_skill_set()
         described = SKILL.replace("description: Compress a demo skill.", "description: Compress a skill.")
         code, data, err = self.run_cli("check", "skills/engineering/demo", candidate={"SKILL.md": described})
         self.assertEqual(err, "", err)
@@ -347,10 +457,7 @@ class SkillTests(Base):
         self.assertEqual((root / "SKILL.md").read_text(), text)
 
     def test_unlinked_readme_stays_out_of_the_set(self):
-        root = self.repo / "skills" / "engineering" / "demo"
-        root.mkdir(parents=True)
-        (root / "SKILL.md").write_text(SKILL)
-        (root / "notes.md").write_text(NOTES)
+        root = self.write_skill_set()
         readme = "# Human\n\nThis page is for people.\n"
         (root / "README.md").write_text(readme)
         code, data, err = self.run_cli(
@@ -377,10 +484,7 @@ class SkillTests(Base):
         self.assertEqual((folder / "two.md").read_text(), "Another fact.\n")
 
     def test_skill_name_resolves_by_walking_up_to_skills(self):
-        root = self.repo / "skills" / "engineering" / "demo"
-        root.mkdir(parents=True)
-        (root / "SKILL.md").write_text(SKILL)
-        (root / "notes.md").write_text(NOTES)
+        root = self.write_skill_set()
         nested = self.repo / "elsewhere"
         nested.mkdir()
         code, data, err = self.run_cli(
@@ -408,10 +512,7 @@ class SkillTests(Base):
         self.assertEqual(data["failures"], ["skill_not_found"])
 
     def test_skill_entry_file_path_resolves_to_the_skill(self):
-        root = self.repo / "skills" / "engineering" / "demo"
-        root.mkdir(parents=True)
-        (root / "SKILL.md").write_text(SKILL)
-        (root / "notes.md").write_text(NOTES)
+        root = self.write_skill_set()
         code, data, err = self.run_cli(
             "check", "skills/engineering/demo/SKILL.md", candidate={"SKILL.md": SKILL_SHORT},
         )
@@ -499,7 +600,7 @@ class PlainTextTests(Base):
         self.assertEqual(data["failures"], ["not_utf8"])
         self.assertEqual(path.read_bytes(), original)
 
-    def test_nested_frontmatter_fails_parse(self):
+    def test_replacing_a_key_with_a_nested_mapping_is_a_key_change(self):
         path = self.repo / "note.md"
         original = "---\ntitle: Note\n---\n\nKeep this fact.\n\nThe history of this note is long and motivational.\n"
         path.write_text(original)
@@ -507,7 +608,7 @@ class PlainTextTests(Base):
         code, data, err = self.run_cli("check", "note.md", candidate={"note.md": candidate})
         self.assertEqual(err, "", err)
         self.assertNotEqual(code, 0)
-        self.assertEqual(data["failures"], ["parse"])
+        self.assertEqual(data["failures"], ["frontmatter_keys"])
         self.assertEqual(path.read_text(), original)
 
     def test_unclosed_fence_fails_parse(self):

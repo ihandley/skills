@@ -12,13 +12,13 @@ The script is the only writer. A candidate stays off disk until it is accepted. 
 
 ## Refuse the wrong artifact
 
-An existing Markdown or plain-text file, or a skill, is the document. An outward draft (Slack, email, Jira, Confluence, or pull-request text) goes to terse. Source code goes to deslop.
+The target is a document. An outward draft (Slack, email, Jira, Confluence, or pull-request text) goes to terse. Source code goes to deslop.
 
-Done when the target is one document or one skill, or you have named the other skill and stopped.
+Done when the target is one document, or you have named the other skill and stopped.
 
 ## Read the pre-image
 
-Read the document. For a skill, read `SKILL.md` and the Markdown and plain-text files it links, including the files under a linked directory.
+Read the document. A skill is a document whose set is the entry file plus the Markdown and plain-text files it links, including the files under a linked directory.
 
 Padding is history, motive, restatement, or transition whose removal leaves the signal in place. Signal is a fact, decision, condition, obligation, or instruction the next reader would get wrong without. A trigger phrase in a skill description is signal too.
 
@@ -40,7 +40,7 @@ On a `SKILL.md`:
 
 The candidate is one JSON object. Each key is a relative path and each value is the full proposed text. Skill paths are relative to the skill directory. A document path is the file's name, relative to that file's directory. Omit a file to leave it unchanged.
 
-Done when every path you rewrote is in that object.
+Done when every path you changed is in that object.
 
 ## Check
 
