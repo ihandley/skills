@@ -1,7 +1,7 @@
 # Slack
 
-- Hedge observations, diagnoses, and recommendations. A completed result the source already states stays direct, such as "Deployment failed" or "Approved." Hedge the author's read, such as "this failed" or "X is the problem."
-- Put the update in the first sentence.
+- Hedge observations and diagnoses. A completed result the source already states stays direct, such as "Deployment failed" or "Approved." Hedge the author's read, such as "this failed" or "X is the problem." The request stays the finished action in [../SKILL.md](../SKILL.md) §3.
+- Opening order is [../SKILL.md](../SKILL.md) §3.
 - One idea per message. If one paste contains multiple ideas, separate them with a blank line.
 - Use short paragraphs for context that belongs to one idea.
 - Use fragments and contractions.

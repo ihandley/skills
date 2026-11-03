@@ -25,7 +25,7 @@ Soften only when the source insults a person, states their motive as fact, or th
 
 ## §4 Hedge
 
-In Slack, Jira comments, and pull request comments, hedge an observation, a diagnosis, and a recommendation. Vary the wording. A Confluence page, a Jira issue body, and a PR description state the verified fact directly.
+In Slack, Jira comments, and pull request comments, hedge an observation and a diagnosis. Vary the wording. The request stays the finished action in [SKILL.md](SKILL.md) §3. A Confluence page, a Jira issue body, and a PR description state the verified fact directly.
 
 A completed result the source already states stays direct, such as "Deployment failed" or "Approved." Hedge the author's read, such as "this failed" or "X is the problem."
 
@@ -33,9 +33,9 @@ A completed result the source already states stays direct, such as "Deployment f
 | --- | --- |
 | This failed | It looks like this failed |
 | X is the problem | Could X be causing this? |
-| Do X | Should we do X? |
+| Do X | Could you X? |
 
-This section does not replace vivid wording (§3). Place the question last (`SKILL.md` §3).
+This section does not replace vivid wording (§3). The request is last ([SKILL.md](SKILL.md) §3).
 
 ## §5 Audience
 

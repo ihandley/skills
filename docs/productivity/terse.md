@@ -1,6 +1,6 @@
 ## What it does
 
-`terse` rewrites or drafts workplace text for Slack, email, Jira, Confluence, and pull requests so it is as short as it can be without losing meaning. It leads with the point, cuts rationale the reader does not need, and scrubs the tells that make text read as machine-written.
+`terse` rewrites or drafts workplace text for Slack, email, Jira, Confluence, and pull requests so it is as short as it can be without losing meaning. It opens in the order a reader can follow, asks them to do one finished action, and scrubs the tells that make text read as machine-written.
 
 The constraint is that it keeps your facts, certainty, and the force of any request. It never uses an em dash or en dash, and it checks that with a bundled script before it returns text. Each medium has its own rules under `modes/`, and a voice file controls tone.
 
@@ -24,9 +24,13 @@ Copy `voice.md` from the skill to `~/.claude/terse-voice.md`. The skill loads th
 **What does it need installed?**
 Python 3, for the dash check.
 
+**Why is the ask a direct request?**
+A referral or an open question gives the reader a way to do nothing. The request names one finished action and addresses the reader as you. A diagnosis can stay hedged in its own sentence.
+
 ## It's working if
 
-- The opening contains the point or decision. A required visual may precede that prose.
+- The opening is understandable on a first read. One sentence of situation comes before a result that would otherwise name something the reader does not have yet.
+- The request asks the reader to do one finished action. Two or more ids sit in a block after that request.
 - No em dash or en dash appears, and `scripts/check-dashes` exits 0.
 - Facts, uncertainty, and requests match the source.
 - No praise remains.
