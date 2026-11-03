@@ -1936,7 +1936,7 @@ def run_command(args: argparse.Namespace) -> dict:
             body = cmd_decline(root, args.session, args.hash)
         else:
             raise StepperError(f"unknown command {args.cmd}")
-        if getattr(args, "brief", False) and body.get("ok") and "brief" in body:
+        if not getattr(args, "full", False) and hasattr(args, "full") and body.get("ok") and "brief" in body:
             body = {"ok": True, "brief": body["brief"]}
         note_briefed(root, getattr(args, "session", None))
         return attach_leftovers(root, body)
@@ -1966,7 +1966,8 @@ def build_parser() -> argparse.ArgumentParser:
 
     def context(command: argparse.ArgumentParser) -> None:
         command.add_argument("--context", required=True)
-        command.add_argument("--brief", action="store_true")
+        command.add_argument("--brief", action="store_true")  # no-op alias: brief is the default
+        command.add_argument("--full", action="store_true")
 
     capture = sub.add_parser("capture")
     root(capture)
@@ -2038,7 +2039,8 @@ def build_parser() -> argparse.ArgumentParser:
     session(attach)
     attach.add_argument("context_id", nargs="?")
     attach.add_argument("--context", dest="context_flag")
-    attach.add_argument("--brief", action="store_true")
+    attach.add_argument("--brief", action="store_true")  # no-op alias: brief is the default
+    attach.add_argument("--full", action="store_true")
     attach.add_argument("--take", action="store_true")
 
     decline = sub.add_parser("decline")
