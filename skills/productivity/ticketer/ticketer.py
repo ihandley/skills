@@ -35,6 +35,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from adapters import ADAPTERS, get_adapter  # noqa: E402
+from lookup import lookup_ci  # noqa: E402
 
 SKILL_DIR = Path(__file__).resolve().parent
 PLACEHOLDER = "REPLACE_ME"
@@ -53,6 +54,7 @@ CONFIG_KEYS = {
     "tracker",
     "required",
     "required_by_type",
+    "required_for",
     "forbid_empty",
     "normalize_labels",
     "ai_disclosure",
@@ -63,6 +65,11 @@ CONFIG_KEYS = {
     "draft_max_age_hours",
     "defaults",
     "extra",
+    "parent_ladder",
+    "parent_allow",
+    "parent_project",
+    "parent_match_field",
+    "parent_match_type",
 }
 CREATE, UPDATE = "create", "update"
 
@@ -264,6 +271,43 @@ def match_mapping(entries, cwd):
     return best
 
 
+def _string_list_table(value):
+    """A table of names to non-empty lists of non-empty strings. An empty table is valid."""
+    if not isinstance(value, dict):
+        return False
+    for item in value.values():
+        if not (isinstance(item, list) and item and all(isinstance(n, str) and n.strip() for n in item)):
+            return False
+    return True
+
+
+def check_parent_config(data, problems):
+    """Accept a parent ladder, or reject an empty one. Other parent tables are optional."""
+    if "parent_ladder" in data:
+        ladder = data["parent_ladder"]
+        if not isinstance(ladder, dict) or not ladder or not _string_list_table(ladder):
+            problems.append(err(
+                "bad_type",
+                "parent_ladder must be a non-empty table of issue type to a non-empty list of issue types",
+                "parent_ladder",
+            ))
+    for key in ("parent_allow", "parent_project", "required_for"):
+        if key not in data:
+            continue
+        if not _string_list_table(data[key]):
+            problems.append(err(
+                "bad_type",
+                "%s must be a table of issue type to a non-empty list of strings" % key,
+                key,
+            ))
+    for key in ("parent_match_field", "parent_match_type"):
+        if key in data and not (isinstance(data[key], str) and data[key].strip()):
+            problems.append(err("bad_type", "%s must be a non-empty string" % key, key))
+    if ("parent_match_field" in data) != ("parent_match_type" in data):
+        missing = "parent_match_type" if "parent_match_field" in data else "parent_match_field"
+        problems.append(err("bad_type", "%s is required when the other parent match key is set" % missing, missing))
+
+
 def deep_merge_config(data, overrides):
     for key, value in overrides.items():
         if key in ("defaults", "extra") and isinstance(value, dict):
@@ -294,6 +338,7 @@ def load_config(path, overrides=None):
     if not (isinstance(by_type, dict) and all(
             isinstance(v, list) and all(isinstance(n, str) for n in v) for v in by_type.values())):
         problems.append(err("bad_type", "required_by_type must be a table of issue type to a list of strings", "required_by_type"))
+    check_parent_config(data, problems)
     for key in ("normalize_labels", "enforce_templates", "require_metadata"):
         if key in data and not isinstance(data[key], bool):
             problems.append(err("bad_type", "%s must be true or false" % key, key))
@@ -313,6 +358,12 @@ def load_config(path, overrides=None):
                 problems.append(err("bad_default", "[defaults] key %r is not valid for %s" % (key, tracker), key))
         if data.get("extra") and not adapter.SUPPORTS_EXTRA:
             problems.append(err("bad_extra", "[extra] is not supported for %s" % tracker, "extra"))
+        rejected = sorted(k for k in getattr(adapter, "REJECTED_CONFIG_KEYS", ()) if k in data)
+        if rejected:
+            problems.append(err(
+                "unsupported_config",
+                "%s config cannot contain %s" % (tracker, ", ".join(rejected)),
+            ))
         for table in ("defaults", "extra"):
             for key, value in data.get(table, {}).items():
                 if value == PLACEHOLDER:
@@ -321,6 +372,10 @@ def load_config(path, overrides=None):
         raise Fail(EXIT_CONFIG, "config %s is invalid" % path, problems)
     data.setdefault("required", ["summary"])
     data.setdefault("required_by_type", {})
+    data.setdefault("required_for", {})
+    data.setdefault("parent_ladder", {})
+    data.setdefault("parent_allow", {})
+    data.setdefault("parent_project", {})
     data.setdefault("forbid_empty", [])
     data.setdefault("enforce_templates", True)
     data.setdefault("require_metadata", False)
@@ -449,15 +504,63 @@ def build_draft(raw, adapter, config):
     return {k: v for k, v in draft.items() if v is not None}, notes
 
 
+def parent_ladder_problems(draft, config, adapter):
+    """A type on the parent ladder needs a parent that has been read. Types off the ladder are unchanged."""
+    ladder = config.get("parent_ladder") or {}
+    if not ladder or (draft["operation"] == UPDATE and "parent" not in draft):
+        return [], [], None
+    if draft["operation"] == UPDATE and "parent" in draft and not (draft.get("issue_type") or "").strip():
+        return [err("required_missing", "setting a parent needs the issue type", "issue_type")], [], None
+    allowed = lookup_ci(ladder, draft.get("issue_type") or "")
+    if allowed is None:
+        return [], [], None
+    parent = draft.get("parent")
+    if not parent:
+        label = draft.get("issue_type") or "ticket"
+        return [err("required_missing", "%s needs a parent" % label, "parent")], [], None
+    key_re = getattr(adapter, "KEY_RE", None)
+    if key_re and not key_re.match(parent):
+        return [], [], None
+    record = load_parent_record(adapter.NAME, parent, config)
+    if record is None:
+        need = adapter.parent_read(draft, parent) if hasattr(adapter, "parent_read") else None
+        return [err("parent_unread", "parent %s has not been read" % parent, "parent")], ([need] if need else []), None
+    if record.get("error"):
+        return [err("parent_unreadable", "parent %s could not be read: %s" % (parent, record["error"]), "parent")], [], None
+    allowed_types = {str(item).casefold() for item in allowed}
+    if str(record.get("issue_type", "")).casefold() not in allowed_types:
+        return [err(
+            "bad_parent",
+            "parent %s is a %s; %s allows %s" % (parent, record.get("issue_type"), draft.get("issue_type"), ", ".join(allowed)),
+            "parent",
+        )], [], record
+    allow = lookup_ci(config.get("parent_allow") or {}, record.get("issue_type"))
+    if allow is not None and parent not in allow and str(record.get("key")) not in allow:
+        return [err(
+            "parent_not_allowed",
+            "parent %s is not on the parent allow-list for %s" % (parent, record.get("issue_type")),
+            "parent",
+        )], [], record
+    return [], [], record
+
+
 def validate_draft(draft, config, adapter, metadata):
     problems, warnings, needs = [], [], []
     operation = draft["operation"]
     if operation == CREATE:
-        if "summary" not in config["required"]:
-            config = {**config, "required": ["summary"] + list(config["required"])}
-        issue_type = (draft.get("issue_type") or "").casefold()
+        issue_type_name = draft.get("issue_type") or ""
+        replacement = lookup_ci(config.get("required_for") or {}, issue_type_name)
+        if replacement is None:
+            required = list(config["required"])
+            if "summary" not in required:
+                required = ["summary"] + required
+        else:
+            required = list(replacement)
+            if not any(str(name).casefold() == "summary" for name in required):
+                required = ["summary"] + required
+        issue_type = issue_type_name.casefold()
         extra_required = [n for t, names in config["required_by_type"].items() if t.casefold() == issue_type for n in names]
-        for name in dict.fromkeys(list(config["required"]) + extra_required):
+        for name in dict.fromkeys(required + extra_required):
             value = draft.get("fields", {}).get(name) if name.startswith("customfield_") else draft.get(name)
             if is_empty(value):
                 problems.append(err("required_missing", "required field %r is missing or empty" % name, name))
@@ -480,16 +583,32 @@ def validate_draft(draft, config, adapter, metadata):
             problems.append(err("metadata_missing", "tracker metadata is missing or stale; fetch it and run 'metadata store' (see needs)", None))
         else:
             warnings.append("tracker metadata not checked (none cached)")
+    if operation == CREATE:
+        projects = lookup_ci(config.get("parent_project") or {}, draft.get("issue_type") or "")
+        if projects and draft.get("project_key") not in projects:
+            problems.append(err(
+                "bad_value",
+                "project_key %r is not configured for %s; configured: %s" % (
+                    draft.get("project_key"), draft.get("issue_type"), ", ".join(projects)),
+                "project_key",
+            ))
     problems += adapter.validate(draft, config, metadata)
-    return problems, warnings, needs
+    ladder_problems, ladder_needs, parent_read = parent_ladder_problems(draft, config, adapter)
+    problems += ladder_problems
+    needs = list(needs) + ladder_needs
+    return problems, warnings, needs, parent_read
 
 
-def render(draft, draft_id, adapter):
+def render(draft, draft_id, adapter, parent_read=None):
     lines = ["TICKET DRAFT %s  (%s on %s)" % (draft_id, draft["operation"], adapter.NAME)]
     for key in adapter.DISPLAY_ORDER:
         if key in draft:
             value = draft[key]
-            lines.append("%s: %s" % (key, ", ".join(value) if isinstance(value, list) else value))
+            if key == "parent" and parent_read and not parent_read.get("error"):
+                lines.append("parent: %s | %s | %s | %s" % (
+                    parent_read["key"], parent_read["issue_type"], parent_read["summary"], parent_read["status"]))
+            else:
+                lines.append("%s: %s" % (key, ", ".join(value) if isinstance(value, list) else value))
     for key, value in sorted(draft.get("fields", {}).items()):
         lines.append("%s: %s" % (key, json.dumps(value, ensure_ascii=False)))
     if draft.get("description"):
@@ -530,6 +649,15 @@ def load_metadata(tracker, scope, config):
     data = json.loads(path.read_text(encoding="utf-8"))
     age_hours = (time.time() - data.get("fetched_at", 0)) / 3600
     return data if age_hours <= config["metadata_max_age_hours"] else None
+
+
+def load_parent_record(tracker, key, config):
+    data = load_metadata(tracker, key, config)
+    if not data:
+        return None
+    if data.get("parent_error"):
+        return {"error": data["parent_error"]}
+    return data.get("parent_read")
 
 
 # ---------------------------------------------------------------- commands
@@ -649,6 +777,11 @@ def cmd_metadata_store(args):
         if args.kind not in adapter.METADATA_KINDS:
             raise ValueError("%s has no metadata kind %r; supported: %s" % (adapter.NAME, args.kind, ", ".join(adapter.METADATA_KINDS)))
         adapter.store_metadata(data, args.kind, raw, args.issue_type)
+        if args.kind == "parent" and data.get("parent_read"):
+            got = str(data["parent_read"].get("key", ""))
+            if got.casefold() != args.scope.casefold():
+                data["parent_error"] = "parent read returned %s, not %s" % (got, args.scope)
+                data.pop("parent_read", None)
     except ValueError as exc:
         raise Fail(EXIT_REFUSED, str(exc))
     data["fetched_at"] = time.time()
@@ -664,7 +797,7 @@ def cmd_draft(args):
     raw = read_json_input("-")
     draft, notes = build_draft(raw, adapter, config)
     metadata = load_metadata(adapter.NAME, adapter.scope(draft), config)
-    problems, warnings, needs = validate_draft(draft, config, adapter, metadata)
+    problems, warnings, needs, parent_read = validate_draft(draft, config, adapter, metadata)
     if problems:
         return {"ok": False, "error": "draft is invalid; fix the errors and run draft again",
                 "errors": problems, "needs": needs, "notes": notes}, EXIT_REFUSED
@@ -680,7 +813,7 @@ def cmd_draft(args):
                  "config_path": config["_path"], "resolve": {"cwd": info["cwd"], "team": getattr(args, "team", None), "config": getattr(args, "config", None)},
                  "config_sha": config["_sha"], "draft": draft})
     return {
-        "ok": True, "id": draft_id, "render": render(draft, draft_id, adapter),
+        "ok": True, "id": draft_id, "render": render(draft, draft_id, adapter, parent_read),
         "warnings": warnings, "notes": notes, "needs": needs,
         "ask": "Show 'render' to the user verbatim, then ask: Proceed? (yes / no / edit). "
                "Only on 'yes': ticketer.py submit --draft %s --confirm %s" % (draft_id, draft_id),
@@ -704,7 +837,7 @@ def cmd_submit(args):
     adapter = get_adapter(record["tracker"])
     draft = record["draft"]
     metadata = load_metadata(adapter.NAME, adapter.scope(draft), config)
-    problems, warnings, needs = validate_draft(draft, config, adapter, metadata)
+    problems, warnings, needs, _parent_read = validate_draft(draft, config, adapter, metadata)
     if problems:
         return {"ok": False, "error": "draft no longer validates", "errors": problems, "needs": needs}, EXIT_REFUSED
     body_path = None
@@ -739,14 +872,97 @@ def cmd_verify(args):
     return {"ok": ok, "ref": ref, "mismatches": mismatches, "unverifiable": unverifiable}, 0 if ok else EXIT_REFUSED
 
 
+def issue_keys(raw):
+    """Issue keys from a tracker search page, in the order given."""
+    if not isinstance(raw, dict):
+        return []
+    issues = raw.get("issues") if isinstance(raw.get("issues"), list) else raw.get("values")
+    if not isinstance(issues, list):
+        return []
+    keys, seen = [], set()
+    for issue in issues:
+        if not isinstance(issue, dict):
+            continue
+        key = issue.get("key")
+        if not isinstance(key, str) or not key or key in seen:
+            continue
+        seen.add(key)
+        keys.append(key)
+    return keys
+
+
+def parent_lookup_has_further_hits(raw):
+    """True when the tracker says this parent-type page is not the last."""
+    if not isinstance(raw, dict):
+        return False
+    if raw.get("nextPageToken"):
+        return True
+    return raw.get("isLast") is False
+
+
+def search_report(raw, cap):
+    """Shown hits, and whether the cap hid further ones."""
+    if not isinstance(raw, dict):
+        return [], False
+    issues = raw.get("issues") if isinstance(raw.get("issues"), list) else raw.get("values")
+    if not isinstance(issues, list):
+        issues = []
+    total = raw.get("total")
+    more = bool(raw.get("nextPageToken")) or raw.get("isLast") is False or (
+        isinstance(total, int) and not isinstance(total, bool) and total > cap) or len(issues) > cap
+    shown = []
+    for issue in issues[:cap]:
+        if not isinstance(issue, dict):
+            continue
+        fields = issue.get("fields") if isinstance(issue.get("fields"), dict) else {}
+        status = fields.get("status")
+        if isinstance(status, dict):
+            status = status.get("name")
+        shown.append({"key": issue.get("key"), "summary": fields.get("summary"), "status": status})
+    return shown, more
+
+
 def cmd_find_parent(args):
     info = require_config(args)
     config = load_config(info["config_path"], info["overrides"])
     adapter = get_adapter(config["tracker"])
-    descriptor = adapter.find_parent(args.query, config)
+    try:
+        if args.parent_type and args.result:
+            raw = read_json_input(args.result)
+            if parent_lookup_has_further_hits(raw):
+                raise Fail(
+                    EXIT_REFUSED,
+                    "parent-type lookup has further hits; page until the tracker reports none, then pipe every issue",
+                )
+            keys = issue_keys(raw)
+            if not keys:
+                return {"ok": True, "shown": [], "more": False}, 0
+            descriptor = adapter.find_parent(
+                args.query, config, types=args.type or [], match=args.match,
+                parent_keys=keys,
+            )
+        elif args.parent_type:
+            descriptor = adapter.find_parent_types(
+                config, args.parent_type, parent_keys=args.parent_key or [],
+            )
+        else:
+            descriptor = adapter.find_parent(
+                args.query, config, types=args.type or [], match=args.match,
+                parent_keys=args.parent_key or [],
+            )
+    except ValueError as exc:
+        raise Fail(EXIT_REFUSED, str(exc))
     if descriptor is None:
         raise Fail(EXIT_REFUSED, "%s does not support parent search" % adapter.NAME)
-    return {"ok": True, "descriptor": descriptor}, 0
+    payload = descriptor.get("payload") or {}
+    result = {"ok": True, "descriptor": descriptor}
+    if "maxResults" in payload:
+        result["cap"] = payload["maxResults"]
+    if args.result and not args.parent_type:
+        shown, more = search_report(read_json_input(args.result), result["cap"])
+        result["shown"] = shown
+        result["more"] = more
+    return result, 0
 
 
 def parser():
@@ -804,9 +1020,14 @@ def parser():
     p.add_argument("--result", default="-")
     p.set_defaults(fn=cmd_verify)
 
-    p = sub.add_parser("find-parent", help="emit a search for an existing parent epic")
+    p = sub.add_parser("find-parent", help="emit a search for an existing parent")
     common(p)
     p.add_argument("--query", required=True)
+    p.add_argument("--type", action="append", help="issue type to search; repeat for several")
+    p.add_argument("--match", help="value for parent_match_field when the searched type is parent_match_type")
+    p.add_argument("--parent-key", action="append", help="hit parent must be one of these keys")
+    p.add_argument("--parent-type", action="append", help="hit parent must be one of these issue types; repeat for several")
+    p.add_argument("--result", help="search JSON; report whether the cap hid further hits")
     p.set_defaults(fn=cmd_find_parent)
     return top
 

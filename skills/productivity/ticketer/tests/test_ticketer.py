@@ -34,6 +34,18 @@ repo = "acme/widgets"
 TASK_BODY = "## Context\nWhy this exists.\n\n## Acceptance criteria\n- [ ] Reset email is sent within one minute\n"
 
 
+def parent_issue(key="AB-1", issue_type="Epic", summary="Reset email", status="In Progress",
+                 category="In Progress", parent=None):
+    fields = {
+        "summary": summary,
+        "issuetype": {"name": issue_type},
+        "status": {"name": status, "statusCategory": {"name": category}},
+    }
+    if parent:
+        fields["parent"] = {"key": parent}
+    return {"key": key, "fields": fields}
+
+
 class Base(unittest.TestCase):
     def setUp(self):
         self.tmp = Path(tempfile.mkdtemp())
@@ -163,6 +175,20 @@ class MappingTests(Base):
         self.write_config(GITHUB_TOML, team="oss")
         _, data, _ = self.run_cli("locate")
         self.assertEqual(data["team"], "oss")
+
+    def test_override_replaces_a_parent_ladder_wholesale(self):
+        (self.home / "jira.toml").write_text(JIRA_TOML + '\n[parent_ladder]\nTask = ["Epic"]\n')
+        self.mappings('[[mapping]]\npath = "%s"\nprovider = "jira"\n'
+                      '[mapping.overrides.parent_ladder]\nTask = ["Feature"]\n' % self.proj)
+        self.run_cli("metadata", "store", "--tracker", "jira", "--scope", "AB-1", "--kind", "parent",
+                     stdin=parent_issue(issue_type="Epic"))
+        code, data, _ = self.draft(jira_payload(parent="AB-1"), "--cwd", str(self.proj))
+        self.assertEqual(code, 2)
+        self.assertTrue(any(e["code"] == "bad_parent" for e in data["errors"]))
+        self.run_cli("metadata", "store", "--tracker", "jira", "--scope", "AB-1", "--kind", "parent",
+                     stdin=parent_issue(issue_type="Feature"))
+        code, data, _ = self.draft(jira_payload(parent="AB-1"), "--cwd", str(self.proj))
+        self.assertEqual(code, 0, data)
 
     def test_overrides_reach_the_draft(self):
         self.mappings('[[mapping]]\npath = "%s"\nprovider = "github"\n'
@@ -598,6 +624,460 @@ class UnsupportedMetadataKindTests(Base):
                 self.assertFalse(data["ok"])
                 self.assertIn(kind, data["error"])
                 self.assertNotIn("Traceback", stderr)
+
+
+LADDER_TOML = JIRA_TOML + """
+[parent_ladder]
+Task = ["Epic"]
+"""
+
+
+class ParentLadderConfigTests(Base):
+    def test_empty_parent_ladder_is_rejected(self):
+        self.write_config(JIRA_TOML + "\n[parent_ladder]\n")
+        code, data, _ = self.draft(jira_payload())
+        self.assertEqual(code, 4)
+        self.assertTrue(any(e["field"] == "parent_ladder" for e in data["errors"]))
+
+    def test_parent_ladder_with_an_empty_list_is_rejected(self):
+        self.write_config(JIRA_TOML + '\n[parent_ladder]\nTask = []\n')
+        code, data, _ = self.draft(jira_payload())
+        self.assertEqual(code, 4)
+        self.assertTrue(any(e["field"] == "parent_ladder" for e in data["errors"]))
+
+    def test_nonempty_parent_ladder_is_accepted(self):
+        self.write_config(LADDER_TOML)
+        code, data, _ = self.draft(jira_payload(issue_type="Feature"))
+        self.assertNotEqual(code, 4, data)
+
+    def test_github_rejects_parent_ladder_keys_and_accepts_required_for(self):
+        forbidden = {
+            "parent_ladder": '[parent_ladder]\nTask = ["Epic"]\n',
+            "parent_allow": '[parent_allow]\nWidget = ["AB-1"]\n',
+            "parent_project": '[parent_project]\nTask = ["JET"]\n',
+            "parent_match_field": 'parent_match_field = "customfield_1"\n',
+            "parent_match_type": 'parent_match_type = "Epic"\n',
+        }
+        for key, body in forbidden.items():
+            with self.subTest(key=key):
+                self.write_config(GITHUB_TOML + "\n" + body, team="oss")
+                code, data, _ = self.draft({"summary": "Fix crash", "description": "Broken.", "labels": ["bug"]})
+                self.assertEqual(code, 4)
+                self.assertTrue(any(key in e["message"] for e in data["errors"]), data)
+        self.write_config(GITHUB_TOML + '\n[required_for]\nBug = ["summary", "description"]\n', team="oss")
+        code, data, _ = self.draft({"summary": "Fix crash", "description": "Broken.", "labels": ["bug"], "issue_type": "Task"})
+        self.assertNotEqual(code, 4, data)
+
+
+class ParentLadderDraftTests(Base):
+    def setUp(self):
+        super().setUp()
+        self.write_config(LADDER_TOML)
+
+    def store_parent(self, raw, key="AB-1"):
+        return self.run_cli(
+            "metadata", "store", "--tracker", "jira", "--scope", key, "--kind", "parent", stdin=raw,
+        )
+
+    def test_read_parent_of_a_legal_type_is_shown_on_the_confirm_line(self):
+        code, stored, _ = self.store_parent(parent_issue())
+        self.assertEqual(code, 0, stored)
+        code, data, _ = self.draft(jira_payload(issue_type="Task", parent="AB-1"))
+        self.assertEqual(code, 0, data)
+        self.assertIn("parent: AB-1 | Epic | Reset email | In Progress", data["render"])
+
+    def test_parent_of_an_illegal_type_is_refused(self):
+        self.store_parent(parent_issue(issue_type="Widget"))
+        code, data, _ = self.draft(jira_payload(issue_type="Task", parent="AB-1"))
+        self.assertEqual(code, 2)
+        self.assertTrue(any(e["code"] == "bad_parent" and e["field"] == "parent" for e in data["errors"]))
+
+    def test_parent_allow_list_accepts_only_a_listed_key(self):
+        self.write_config(JIRA_TOML + """
+[parent_ladder]
+Task = ["Widget"]
+[parent_allow]
+Widget = ["AB-1"]
+""")
+        self.store_parent(parent_issue(issue_type="Widget"))
+        code, data, _ = self.draft(jira_payload(issue_type="Task", parent="AB-1"))
+        self.assertEqual(code, 0, data)
+        self.store_parent(parent_issue(key="AB-2", issue_type="Widget"), key="AB-2")
+        code, data, _ = self.draft(jira_payload(issue_type="Task", parent="AB-2"))
+        self.assertEqual(code, 2)
+        self.assertTrue(any(e["code"] == "parent_not_allowed" and e["field"] == "parent" for e in data["errors"]))
+
+    def test_a_done_parent_of_a_legal_type_is_accepted(self):
+        self.store_parent(parent_issue(status="Launched", category="Done"))
+        code, data, _ = self.draft(jira_payload(issue_type="Task", parent="AB-1"))
+        self.assertEqual(code, 0, data)
+        self.assertIn("parent: AB-1 | Epic | Reset email | Launched", data["render"])
+
+    def test_grandparent_is_not_rechecked(self):
+        self.write_config(JIRA_TOML + """
+[parent_ladder]
+Task = ["Epic"]
+[parent_allow]
+Widget = ["EN-1"]
+""")
+        self.store_parent(parent_issue(parent="ZZ-9"))
+        code, data, _ = self.draft(jira_payload(issue_type="Task", parent="AB-1"))
+        self.assertEqual(code, 0, data)
+
+    def test_type_match_ignores_case(self):
+        self.write_config(JIRA_TOML + '\n[parent_ladder]\ntask = ["epic"]\n[parent_allow]\nepic = ["AB-1"]\n')
+        self.store_parent(parent_issue(issue_type="Epic"))
+        code, data, _ = self.draft(jira_payload(issue_type="Task", parent="AB-1"))
+        self.assertEqual(code, 0, data)
+
+    def test_named_parent_is_not_filtered_by_the_match_field(self):
+        self.write_config(
+            JIRA_TOML
+            + 'parent_match_field = "customfield_10691"\nparent_match_type = "Epic"\n'
+            + '[parent_ladder]\nTask = ["Epic"]\n'
+        )
+        issue = parent_issue()
+        issue["fields"]["customfield_10691"] = {"value": "Somewhere Else"}
+        self.store_parent(issue)
+        code, data, _ = self.draft(jira_payload(issue_type="Task", parent="AB-1"))
+        self.assertEqual(code, 0, data)
+
+    def test_unreadable_parent_is_refused_with_the_failure(self):
+        code, stored, _ = self.store_parent({
+            "errorMessages": ["Issue does not exist or you do not have permission to see it."],
+        })
+        self.assertEqual(code, 0, stored)
+        code, data, _ = self.draft(jira_payload(issue_type="Task", parent="AB-1"))
+        self.assertEqual(code, 2)
+        error = next(e for e in data["errors"] if e["code"] == "parent_unreadable")
+        self.assertIn("do not have permission", error["message"])
+        self.assertFalse(any(n.get("kind") == "parent" for n in data.get("needs") or []))
+
+    def test_ladder_type_without_a_parent_is_refused(self):
+        code, data, _ = self.draft(jira_payload(issue_type="Task"))
+        self.assertEqual(code, 2)
+        self.assertTrue(any(e["field"] == "parent" and e["code"] == "required_missing" for e in data["errors"]))
+
+    def test_type_off_the_ladder_keeps_today_behavior(self):
+        code, data, _ = self.draft(jira_payload(issue_type="Feature"))
+        self.assertEqual(code, 0, data)
+        self.assertFalse(any(e.get("field") == "parent" for e in data.get("errors") or []))
+
+    def test_unread_parent_is_refused_and_names_the_read(self):
+        code, data, _ = self.draft(jira_payload(issue_type="Task", parent="AB-1"))
+        self.assertEqual(code, 2)
+        self.assertTrue(any(e["code"] == "parent_unread" and e["field"] == "parent" for e in data["errors"]))
+        need = next(n for n in data["needs"] if n.get("kind") == "parent")
+        self.assertEqual(need["operation"], "jira.get_issue")
+        self.assertEqual(need["payload"]["issueIdOrKey"], "AB-1")
+        self.assertEqual(need["payload"]["cloudId"], "acme.atlassian.net")
+        self.assertIn("--kind parent", need["then"])
+        self.assertIn("--scope AB-1", need["then"])
+        self.assertNotIn("mcp__", json.dumps(need))
+
+    def test_malformed_parent_is_refused_before_a_lookup(self):
+        code, data, _ = self.draft(jira_payload(issue_type="Task", parent="not-a-key"))
+        self.assertEqual(code, 2)
+        self.assertTrue(any(e["code"] == "bad_format" and e["field"] == "parent" for e in data["errors"]))
+        self.assertFalse(any(n.get("kind") == "parent" for n in data.get("needs") or []))
+
+
+class ParentLadderUpdateTests(Base):
+    def setUp(self):
+        super().setUp()
+        self.write_config(LADDER_TOML)
+
+    def test_update_that_leaves_the_parent_alone_skips_the_ladder(self):
+        code, data, _ = self.draft({"operation": "update", "key": "PROJ-5", "labels": ["Needs Triage"]})
+        self.assertEqual(code, 0, data)
+        self.assertNotIn("parent:", data["render"])
+        self.assertFalse(any(n.get("kind") == "parent" for n in data.get("needs") or []))
+
+    def test_update_that_sets_a_parent_needs_the_issue_type(self):
+        code, data, _ = self.draft({"operation": "update", "key": "PROJ-5", "parent": "AB-1"})
+        self.assertEqual(code, 2)
+        self.assertTrue(any(e["field"] == "issue_type" for e in data["errors"]))
+
+    def test_update_that_sets_a_parent_uses_the_same_checks(self):
+        payload = {"operation": "update", "key": "PROJ-5", "issue_type": "Task", "parent": "AB-1"}
+        code, data, _ = self.draft(payload)
+        self.assertEqual(code, 2)
+        self.assertTrue(any(e["code"] == "parent_unread" for e in data["errors"]))
+        self.run_cli("metadata", "store", "--tracker", "jira", "--scope", "AB-1", "--kind", "parent",
+                     stdin=parent_issue(issue_type="Widget"))
+        code, data, _ = self.draft(payload)
+        self.assertTrue(any(e["code"] == "bad_parent" for e in data["errors"]))
+        self.run_cli("metadata", "store", "--tracker", "jira", "--scope", "AB-1", "--kind", "parent",
+                     stdin=parent_issue())
+        code, data, _ = self.draft(payload)
+        self.assertEqual(code, 0, data)
+        self.assertIn("parent: AB-1 | Epic | Reset email | In Progress", data["render"])
+
+
+class ParentSearchTests(Base):
+    def setUp(self):
+        super().setUp()
+        self.write_config("""
+tracker = "jira"
+required = ["summary"]
+parent_match_field = "customfield_10691"
+parent_match_type = "Epic"
+[defaults]
+cloud_id = "acme.atlassian.net"
+project_key = "PROJ"
+[parent_ladder]
+Task = ["Epic"]
+[parent_project]
+Epic = ["JET"]
+Task = ["JET"]
+Bucket = ["LPP"]
+Widget = ["LPP"]
+""")
+
+    def test_configured_project_matches_the_type_ignoring_case(self):
+        code, data, _ = self.run_cli("find-parent", "--query", "reset", "--type", "epic")
+        self.assertEqual(code, 0, data)
+        jql = data["descriptor"]["payload"]["jql"]
+        self.assertIn("project = JET", jql)
+        self.assertIn('issuetype = "epic"', jql)
+
+    def test_search_limits_project_type_and_done_and_escapes_quotes(self):
+        code, data, _ = self.run_cli("find-parent", "--query", 'say "hi"', "--type", "Epic")
+        self.assertEqual(code, 0, data)
+        payload = data["descriptor"]["payload"]
+        self.assertEqual(
+            payload["jql"],
+            'project = JET AND issuetype = "Epic" AND statusCategory != Done AND text ~ "say  hi" ORDER BY updated DESC',
+        )
+        self.assertEqual(payload["maxResults"], 10)
+        self.assertEqual(payload["fields"], ["summary", "status", "issuetype", "parent"])
+        self.assertEqual(payload["cloudId"], "acme.atlassian.net")
+        self.assertEqual(data["cap"], 10)
+        self.assertEqual(data["descriptor"]["operation"], "jira.search_issues")
+
+    def test_match_field_applies_only_to_the_match_type(self):
+        _, epic, _ = self.run_cli("find-parent", "--query", "reset", "--type", "Epic", "--match", 'Edge "Cloud"')
+        self.assertEqual(
+            epic["descriptor"]["payload"]["jql"],
+            'project = JET AND issuetype = "Epic" AND cf[10691] = "Edge  Cloud" AND statusCategory != Done AND text ~ "reset" ORDER BY updated DESC',
+        )
+        _, other, _ = self.run_cli("find-parent", "--query", "reset", "--type", "Bucket", "--match", "Edge")
+        self.assertNotIn("cf[10691]", other["descriptor"]["payload"]["jql"])
+        _, both, _ = self.run_cli(
+            "find-parent", "--query", "reset", "--type", "Epic", "--type", "Bucket", "--match", "Edge",
+        )
+        self.assertEqual(
+            both["descriptor"]["payload"]["jql"],
+            '((project = JET AND issuetype = "Epic" AND cf[10691] = "Edge") OR (project = LPP AND issuetype = "Bucket")) AND statusCategory != Done AND text ~ "reset" ORDER BY updated DESC',
+        )
+
+    def test_search_can_require_parent_keys(self):
+        _, keys, _ = self.run_cli(
+            "find-parent", "--query", "reset", "--type", "Epic", "--parent-key", "EN-1", "--parent-key", "EN-2",
+        )
+        self.assertEqual(
+            keys["descriptor"]["payload"]["jql"],
+            'project = JET AND issuetype = "Epic" AND statusCategory != Done AND text ~ "reset" AND parent in (EN-1, EN-2) ORDER BY updated DESC',
+        )
+
+    def test_types_that_share_a_project_share_a_clause(self):
+        _, data, _ = self.run_cli("find-parent", "--query", "reset", "--type", "Bucket", "--type", "Widget")
+        self.assertEqual(
+            data["descriptor"]["payload"]["jql"],
+            'project = LPP AND issuetype in ("Bucket", "Widget") AND statusCategory != Done AND text ~ "reset" ORDER BY updated DESC',
+        )
+
+    def test_search_reports_when_the_cap_hides_further_hits(self):
+        def issue(key):
+            return {"key": key, "fields": {"summary": "Reset", "status": {"name": "Open"}}}
+
+        code, data, _ = self.run_cli(
+            "find-parent", "--query", "reset", "--type", "Epic", "--result", "-",
+            stdin={"issues": [issue("AB-1"), issue("AB-2")], "isLast": False, "total": 12},
+        )
+        self.assertEqual(code, 0, data)
+        self.assertTrue(data["more"])
+        self.assertEqual(data["shown"], [
+            {"key": "AB-1", "summary": "Reset", "status": "Open"},
+            {"key": "AB-2", "summary": "Reset", "status": "Open"},
+        ])
+        _, done, _ = self.run_cli(
+            "find-parent", "--query", "reset", "--type", "Epic", "--result", "-",
+            stdin={"issues": [issue("AB-1")], "isLast": True, "total": 1},
+        )
+        self.assertFalse(done["more"])
+        many = [issue("AB-%d" % n) for n in range(1, 13)]
+        _, capped, _ = self.run_cli(
+            "find-parent", "--query", "reset", "--type", "Epic", "--result", "-",
+            stdin={"issues": many, "isLast": True, "total": 12},
+        )
+        self.assertEqual(len(capped["shown"]), 10)
+        self.assertTrue(capped["more"])
+
+    def test_parent_type_lookup_has_no_text_and_is_not_capped_at_10(self):
+        code, data, _ = self.run_cli(
+            "find-parent", "--query", "reset", "--type", "Epic",
+            "--parent-type", "Bucket", "--parent-type", "Widget",
+        )
+        self.assertEqual(code, 0, data)
+        payload = data["descriptor"]["payload"]
+        self.assertEqual(
+            payload["jql"],
+            'project = LPP AND issuetype in ("Bucket", "Widget") AND statusCategory != Done ORDER BY updated DESC',
+        )
+        self.assertNotIn("text ~", payload["jql"])
+        self.assertNotIn("reset", payload["jql"])
+        self.assertNotIn("parentType", payload["jql"])
+        self.assertNotEqual(payload.get("maxResults"), 10)
+        self.assertNotIn("maxResults", payload)
+        self.assertNotEqual(data.get("cap"), 10)
+
+    def test_parent_type_lookup_can_require_allow_listed_parents(self):
+        code, data, _ = self.run_cli(
+            "find-parent", "--query", "reset", "--type", "Epic",
+            "--parent-type", "Bucket", "--parent-key", "EN-1", "--parent-key", "EN-2",
+        )
+        self.assertEqual(code, 0, data)
+        payload = data["descriptor"]["payload"]
+        self.assertEqual(
+            payload["jql"],
+            'project = LPP AND issuetype = "Bucket" AND statusCategory != Done AND parent in (EN-1, EN-2) ORDER BY updated DESC',
+        )
+        self.assertNotIn("text ~", payload["jql"])
+        self.assertNotIn("maxResults", payload)
+
+    def test_piped_parent_type_keys_constrain_the_child_query(self):
+        code, data, _ = self.run_cli(
+            "find-parent", "--query", "reset", "--type", "Epic", "--match", "Edge",
+            "--parent-type", "Bucket", "--result", "-",
+            stdin={"issues": [{"key": "PR-%d" % n} for n in range(1, 13)], "isLast": True},
+        )
+        self.assertEqual(code, 0, data)
+        payload = data["descriptor"]["payload"]
+        self.assertEqual(
+            payload["jql"],
+            'project = JET AND issuetype = "Epic" AND cf[10691] = "Edge" AND statusCategory != Done '
+            'AND text ~ "reset" AND parent in (PR-1, PR-2, PR-3, PR-4, PR-5, PR-6, PR-7, PR-8, PR-9, PR-10, PR-11, PR-12) '
+            'ORDER BY updated DESC',
+        )
+        self.assertEqual(payload["maxResults"], 10)
+        self.assertEqual(data["cap"], 10)
+        self.assertNotIn("shown", data)
+        self.assertNotIn("more", data)
+
+    def test_a_partial_parent_type_page_is_not_turned_into_a_child_search(self):
+        code, data, _ = self.run_cli(
+            "find-parent", "--query", "reset", "--type", "Epic", "--parent-type", "Bucket",
+            "--result", "-",
+            stdin={"issues": [{"key": "PR-1"}], "isLast": False, "nextPageToken": "more"},
+        )
+        self.assertEqual(code, 2, data)
+        self.assertNotIn("descriptor", data)
+        self.assertNotIn("text ~", json.dumps(data))
+        self.assertNotIn("parent in", json.dumps(data))
+
+    def test_empty_parent_type_lookup_does_not_search_children_unconstrained(self):
+        code, data, _ = self.run_cli(
+            "find-parent", "--query", "reset", "--type", "Epic", "--parent-type", "Bucket",
+            "--result", "-",
+            stdin={"issues": [], "isLast": True},
+        )
+        self.assertEqual(code, 0, data)
+        self.assertEqual(data.get("shown"), [])
+        self.assertFalse(data.get("more"))
+        blob = json.dumps(data)
+        self.assertNotIn("text ~", blob)
+        self.assertNotIn("reset", blob)
+        self.assertNotIn("parentType", blob)
+        descriptor = data.get("descriptor")
+        if descriptor:
+            self.assertIn("parent in", descriptor["payload"]["jql"])
+
+    def test_malformed_parent_key_is_refused_before_a_query(self):
+        code, data, _ = self.run_cli(
+            "find-parent", "--query", "reset", "--type", "Epic", "--parent-key", "nope",
+        )
+        self.assertEqual(code, 2)
+        self.assertNotIn("descriptor", data)
+
+
+class ParentProjectTests(Base):
+    def setUp(self):
+        super().setUp()
+        self.write_config(JIRA_TOML + """
+[parent_ladder]
+Task = ["Epic"]
+[parent_project]
+Task = ["JET"]
+Epic = ["OTHER"]
+""")
+        self.run_cli("metadata", "store", "--tracker", "jira", "--scope", "OTHER-1", "--kind", "parent",
+                     stdin=parent_issue(key="OTHER-1"))
+
+    def test_create_project_must_be_one_configured_for_the_type(self):
+        code, data, _ = self.draft(jira_payload(issue_type="Task", parent="OTHER-1"))
+        self.assertEqual(code, 2)
+        self.assertTrue(any(e["field"] == "project_key" and e["code"] == "bad_value" for e in data["errors"]))
+        code, data, _ = self.draft(jira_payload(issue_type="Task", parent="OTHER-1", project_key="JET"))
+        self.assertEqual(code, 0, data)
+
+    def test_cross_project_parent_is_accepted_when_its_type_is_legal(self):
+        code, data, _ = self.draft(jira_payload(issue_type="Task", parent="OTHER-1", project_key="JET"))
+        self.assertEqual(code, 0, data)
+        self.assertIn("parent: OTHER-1 | Epic | Reset email | In Progress", data["render"])
+
+
+class RequiredForTests(Base):
+    def missing(self, data):
+        return {e["field"] for e in (data or {}).get("errors", []) if e["code"] == "required_missing"}
+
+    def test_required_for_replaces_required_and_keeps_type_extras(self):
+        base = JIRA_TOML.replace('forbid_empty = ["labels"]', "forbid_empty = []")
+        self.write_config(base + """
+[required_for]
+widget = ["summary", "description", "issue_type"]
+[required_by_type]
+widget = ["customfield_9"]
+""")
+        payload = jira_payload(issue_type="Widget")
+        payload.pop("labels")
+        code, data, _ = self.draft(payload)
+        self.assertEqual(code, 2)
+        self.assertEqual(self.missing(data), {"customfield_9"})
+        task = jira_payload(issue_type="Task")
+        task.pop("labels")
+        code, data, _ = self.draft(task)
+        self.assertIn("labels", self.missing(data))
+
+    def test_bug_extras_survive_a_replacement(self):
+        base = JIRA_TOML.replace('forbid_empty = ["labels"]', "forbid_empty = []")
+        self.write_config(base + """
+[required_for]
+bug = ["summary", "description", "issue_type"]
+[required_by_type]
+bug = ["customfield_10568", "customfield_10676"]
+""")
+        payload = jira_payload(issue_type="Bug")
+        payload.pop("labels")
+        code, data, _ = self.draft(payload)
+        self.assertEqual(self.missing(data), {"customfield_10568", "customfield_10676"})
+
+    def test_github_required_for_replaces_required(self):
+        self.write_config("""
+tracker = "github"
+required = ["summary", "description", "labels"]
+forbid_empty = []
+enforce_templates = false
+[required_for]
+Bug = ["summary", "description"]
+[defaults]
+repo = "acme/widgets"
+""", team="oss")
+        code, data, _ = self.draft({"summary": "Fix crash", "description": "Broken.", "issue_type": "Bug"})
+        self.assertEqual(code, 0, data)
+        code, data, _ = self.draft({"summary": "Fix crash", "description": "Broken.", "issue_type": "Task"})
+        self.assertEqual(code, 2)
+        self.assertIn("labels", self.missing(data))
 
 
 class AdapterContractTests(unittest.TestCase):

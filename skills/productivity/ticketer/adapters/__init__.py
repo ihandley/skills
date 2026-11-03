@@ -2,7 +2,8 @@
 
 NAME, FIELDS ({draft key: "str" | "list" | "object"}), DRAFT_KEYS, MERGE_LIST_KEYS,
 DISPLAY_ORDER, METADATA_KINDS, IDENT_KEYS, SUPPORTS_EXTRA, NORMALIZE_LABELS, CONFIG_TEMPLATE
-find_parent(query, config) -> descriptor, or None when the tracker has no parent search
+find_parent(query, config, types=None, match=None, parent_keys=None) -> descriptor, or None when the tracker has no parent search
+find_parent_types(config, types, parent_keys=None) -> descriptor for every non-Done issue of those types, or None
 scope(draft), metadata_needs(draft, scope), store_metadata(data, kind, raw, issue_type),
 validate(draft, config, metadata), build(draft, body_path), readback(draft),
 diff(draft, result) -> (mismatches, unverifiable, ref)
