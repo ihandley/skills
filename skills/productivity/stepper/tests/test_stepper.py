@@ -30,7 +30,7 @@ class StepperTests(unittest.TestCase):
         self.store = self.home / ".stepper"
         self.env = {**os.environ, "STEPPER_HOME": str(self.home)}
 
-    def cli(self, command, *args):
+    def cli(self, command, *args, env=None):
         named = {
             "capture",
             "add",
@@ -62,11 +62,17 @@ class StepperTests(unittest.TestCase):
             [sys.executable, str(STEPPER), command, "--root", str(self.root), *prefix, *args],
             text=True,
             capture_output=True,
-            env=self.env,
+            env=self.env if env is None else env,
             check=False,
         )
         data = json.loads(proc.stdout) if proc.stdout.strip() else None
         return proc.returncode, data
+
+    def stamp(self, context_id, updated_at):
+        path = self.store / "contexts" / f"{context_id}.json"
+        data = json.loads(path.read_text())
+        data["updated_at"] = updated_at
+        path.write_text(json.dumps(data))
 
     def hook(self, platform, payload, workspace=True):
         body = dict(payload)
@@ -272,8 +278,9 @@ class StepperTests(unittest.TestCase):
         self.assertEqual(proc.returncode, 0)
         reported = json.loads(proc.stdout)["hookSpecificOutput"]["additionalContext"]
         self.assertIn(
-            "--root %s on every command that changes state. For status, run status with no --session."
-            % self.root.resolve(),
+            "--root %s on every command that changes state. "
+            "For the index, run list. For the item table, run status with --session %s, or status with a name."
+            % (self.root.resolve(), "claude:t1"),
             reported,
         )
         proc = subprocess.run([sys.executable, str(STEPPER), "status", "--session", "claude:t1"],
@@ -329,8 +336,11 @@ class StepperTests(unittest.TestCase):
         self.assertIn("does not hold", data["error"])
         code, status = self.cli("status", "--session", "cursor:bbb")
         self.assertIsNone(status["context"])
-        code, inventory = self.cli("status")
-        self.assertEqual(inventory["contexts"][0]["lease"]["session_key"], "cursor:aaa")
+        self.assertEqual(status["message"], "this session holds no context")
+        code, inventory = self.cli("list", "--session", "cursor:bbb")
+        self.assertIn("| elsewhere |", inventory["table"])
+        code, mine = self.cli("list", "--session", "cursor:aaa")
+        self.assertIn("| here |", mine["table"])
 
     def test_state_change_default_output_is_the_brief(self):
         self.capture()
@@ -720,9 +730,9 @@ class StepperTests(unittest.TestCase):
             "AC-4: rate limit returns 429",
         )
         self.assertEqual(code, 0, data)
-        code, inventory = self.cli("status")
-        by_id = {ctx["id"]: ctx for ctx in inventory["contexts"]}
-        self.assertEqual(set(by_id), {"default", "other"})
+        code, inventory = self.cli("list")
+        self.assertIn("| default |", inventory["table"])
+        self.assertIn("| other |", inventory["table"])
         code, held = self.cli("status", "--session", "cursor:aaa")
         code, also = self.cli("status", "--session", "cursor:bbb")
         self.assertEqual(
@@ -730,7 +740,7 @@ class StepperTests(unittest.TestCase):
             [item["description"] for item in also["context"]["items"]],
         )
 
-    def test_status_lists_every_open_context_and_its_lease(self):
+    def test_list_shows_every_open_context_and_its_lease_word(self):
         self.capture()
         code, _data = self.cli(
             "capture",
@@ -743,15 +753,226 @@ class StepperTests(unittest.TestCase):
         )
         self.assertEqual(code, 0)
         self.cli("detach", "--session", "cursor:aaa", "--context", "other")
-        code, inventory = self.cli("status")
-        by_id = {ctx["id"]: ctx for ctx in inventory["contexts"]}
-        self.assertEqual(set(by_id), {"default", "other"})
-        self.assertEqual(by_id["default"]["lease"]["session_key"], "cursor:aaa")
-        self.assertIsNone(by_id["other"]["lease"])
+        code, inventory = self.cli("list", "--session", "cursor:aaa")
+        self.assertEqual(code, 0, inventory)
+        table = inventory["table"]
+        self.assertIn("| Name | Updated | Progress | Lease | Line |", table)
+        self.assertRegex(
+            table,
+            r"\| default \| \d{4}-\d{2}-\d{2} \| 0/2 \| here \| AC-3 reset email is sent \|",
+        )
+        self.assertRegex(
+            table,
+            r"\| other \| \d{4}-\d{2}-\d{2} \| 0/1 \| free \| M-5 waiting on Blaze \|",
+        )
+        self.assertLess(table.index("| default |"), table.index("| other |"))
+        self.assertNotIn("cursor:", table)
         self.cli("close", "--session", "cursor:aaa")
-        code, inventory = self.cli("status")
-        self.assertEqual([ctx["id"] for ctx in inventory["contexts"]], ["other"])
-        self.assertIsNone(inventory["contexts"][0]["lease"])
+        code, inventory = self.cli("list", "--session", "cursor:aaa")
+        self.assertEqual(code, 0, inventory)
+        self.assertNotIn("default", inventory["table"])
+        self.assertRegex(
+            inventory["table"],
+            r"\| other \| \d{4}-\d{2}-\d{2} \| 0/1 \| free \| M-5 waiting on Blaze \|",
+        )
+
+    def test_list_uses_the_local_day_when_utc_is_already_the_next_day(self):
+        self.capture()
+        self.stamp("default", "2026-11-04T07:30:00Z")
+        code, inventory = self.cli(
+            "list",
+            "--session",
+            "cursor:aaa",
+            env={**self.env, "TZ": "America/Los_Angeles"},
+        )
+        self.assertEqual(code, 0, inventory)
+        self.assertIn("| default | 2026-11-03 |", inventory["table"])
+
+    def test_list_orders_newest_local_day_first_and_same_day_by_name(self):
+        self.capture(context="zeta")
+        self.cli(
+            "capture",
+            "--session",
+            "cursor:aaa",
+            "--context",
+            "alpha",
+            "--item",
+            "AC-3: reset email is sent",
+        )
+        self.cli(
+            "capture",
+            "--session",
+            "cursor:aaa",
+            "--context",
+            "old",
+            "--item",
+            "AC-3: reset email is sent",
+        )
+        self.stamp("zeta", "2026-11-03T20:00:00Z")
+        self.stamp("alpha", "2026-11-03T18:00:00Z")
+        self.stamp("old", "2026-11-02T20:00:00Z")
+        code, inventory = self.cli("list", env={**self.env, "TZ": "America/Los_Angeles"})
+        self.assertEqual(code, 0, inventory)
+        table = inventory["table"]
+        self.assertLess(table.index("| alpha |"), table.index("| zeta |"))
+        self.assertLess(table.index("| zeta |"), table.index("| old |"))
+        self.assertIn("| alpha | 2026-11-03 |", table)
+        self.assertIn("| zeta | 2026-11-03 |", table)
+        self.assertIn("| old | 2026-11-02 |", table)
+        self.assertNotIn("| here |", table)
+
+    def test_list_marks_every_context_this_session_holds_as_here(self):
+        self.capture()
+        self.cli(
+            "capture",
+            "--session",
+            "cursor:aaa",
+            "--context",
+            "other",
+            "--item",
+            "M-5: waiting on Blaze",
+        )
+        code, inventory = self.cli("list", "--session", "cursor:aaa")
+        self.assertEqual(code, 0, inventory)
+        self.assertEqual(inventory["table"].count("| here |"), 2)
+
+    def test_list_marks_another_sessions_context_elsewhere(self):
+        self.capture()
+        self.register("cursor:bbb")
+        code, inventory = self.cli("list", "--session", "cursor:bbb")
+        self.assertEqual(code, 0, inventory)
+        self.assertIn("| elsewhere |", inventory["table"])
+        self.assertNotIn("| here |", inventory["table"])
+
+    def test_list_keeps_the_lease_word_and_adds_paused(self):
+        self.capture()
+        self.cli("pause", "--session", "cursor:aaa")
+        code, inventory = self.cli("list", "--session", "cursor:aaa")
+        self.assertEqual(code, 0, inventory)
+        self.assertIn("| here, paused |", inventory["table"])
+        self.assertIn("| AC-3 reset email is sent |", inventory["table"])
+
+    def test_list_line_is_the_active_child(self):
+        self.capture()
+        self.cli("add", "--session", "cursor:aaa", "--parent", "AC-3", "--item", "AC-3a: send the message")
+        self.cli("focus", "--session", "cursor:aaa", "AC-3a")
+        code, inventory = self.cli("list", "--session", "cursor:aaa")
+        self.assertEqual(code, 0, inventory)
+        self.assertIn("| 0/2 | here | AC-3a send the message |", inventory["table"])
+        self.assertNotIn("reset email is sent", inventory["table"])
+
+    def test_list_line_is_the_first_blocked_item_in_table_order(self):
+        self.capture()
+        self.cli("add", "--session", "cursor:aaa", "--parent", "AC-4", "--item", "AC-4a: first hold")
+        self.cli("add", "--session", "cursor:aaa", "--parent", "AC-4", "--item", "AC-4b: second hold")
+        self.cli("focus", "--session", "cursor:aaa", "AC-4a")
+        self.cli("block", "--session", "cursor:aaa", "AC-4a", "--reason", "waiting on the first")
+        self.cli("focus", "--session", "cursor:aaa", "AC-4b")
+        self.cli("block", "--session", "cursor:aaa", "AC-4b", "--reason", "waiting on the second")
+        self.cli("verify", "--session", "cursor:aaa", "AC-3", "--evidence", "sent")
+        code, inventory = self.cli("list", "--session", "cursor:aaa")
+        self.assertEqual(code, 0, inventory)
+        self.assertIn("| AC-4a first hold |", inventory["table"])
+        self.assertNotIn("second hold", inventory["table"])
+
+    def test_list_line_is_deferred_when_only_deferred_items_remain(self):
+        self.capture()
+        self.cli("defer", "--session", "cursor:aaa", "AC-3")
+        self.cli("defer", "--session", "cursor:aaa", "AC-4")
+        code, inventory = self.cli("list", "--session", "cursor:aaa")
+        self.assertEqual(code, 0, inventory)
+        self.assertIn("| 0/2 | here | deferred |", inventory["table"])
+
+    def test_list_line_is_complete_and_keeps_progress_and_the_lease_word(self):
+        self.capture()
+        self.cli("verify", "--session", "cursor:aaa", "AC-3", "--evidence", "sent")
+        self.cli("verify", "--session", "cursor:aaa", "AC-4", "--evidence", "429")
+        code, inventory = self.cli("list", "--session", "cursor:aaa")
+        self.assertEqual(code, 0, inventory)
+        self.assertIn("| 2/2 | here | complete |", inventory["table"])
+
+    def test_list_shows_complete_and_paused_together(self):
+        self.capture()
+        self.cli("verify", "--session", "cursor:aaa", "AC-3", "--evidence", "sent")
+        self.cli("verify", "--session", "cursor:aaa", "AC-4", "--evidence", "429")
+        self.cli("pause", "--session", "cursor:aaa")
+        code, inventory = self.cli("list", "--session", "cursor:aaa")
+        self.assertEqual(code, 0, inventory)
+        self.assertIn("| 2/2 | here, paused | complete |", inventory["table"])
+
+    def test_list_does_not_call_an_all_cancelled_context_complete(self):
+        self.capture()
+        self.cli("cancel", "--session", "cursor:aaa", "AC-3")
+        self.cli("cancel", "--session", "cursor:aaa", "AC-4")
+        code, inventory = self.cli("list", "--session", "cursor:aaa")
+        self.assertEqual(code, 0, inventory)
+        self.assertRegex(
+            inventory["table"],
+            r"\| default \| \d{4}-\d{2}-\d{2} \| 2/2 \| here \|  \|",
+        )
+        self.assertNotIn("complete", inventory["table"])
+
+    def test_list_line_stays_one_row_when_the_description_has_a_pipe_and_a_break(self):
+        self.capture()
+        path = self.store / "contexts" / "default.json"
+        stored = json.loads(path.read_text())
+        stored["items"][0]["description"] = "left | right\nstill the same row"
+        path.write_text(json.dumps(stored))
+        code, inventory = self.cli("list", "--session", "cursor:aaa")
+        self.assertEqual(code, 0, inventory)
+        self.assertEqual(inventory["table"].count("\n"), 2)
+        self.assertIn("| AC-3 left \\| right still the same row |", inventory["table"])
+
+    def test_list_counts_a_cancelled_top_level_item_and_leaves_a_child_out(self):
+        self.capture()
+        self.cli("add", "--session", "cursor:aaa", "--parent", "AC-3", "--item", "AC-3a: send the message")
+        self.cli("verify", "--session", "cursor:aaa", "AC-3a", "--evidence", "sent")
+        self.cli("cancel", "--session", "cursor:aaa", "AC-4")
+        code, inventory = self.cli("list", "--session", "cursor:aaa")
+        self.assertEqual(code, 0, inventory)
+        self.assertIn("| 1/2 | here | AC-3 reset email is sent |", inventory["table"])
+
+    def test_list_includes_contexts_from_other_repos_and_leaves_the_repo_off_the_row(self):
+        self.capture(context="plain")
+        other = Path(tempfile.mkdtemp())
+        subprocess.run(["git", "init", "-q", str(other)], check=True)
+        subprocess.run(
+            ["git", "-C", str(other), "remote", "add", "origin", "https://github.com/example/beta.git"],
+            check=True,
+        )
+        self.register("cursor:bbb")
+        proc = subprocess.run(
+            [
+                sys.executable,
+                str(STEPPER),
+                "capture",
+                "--root",
+                str(other),
+                "--session",
+                "cursor:bbb",
+                "--context",
+                "beta",
+                "--item",
+                "AC-9: other checkout",
+                "--full",
+            ],
+            text=True,
+            capture_output=True,
+            env=self.env,
+            check=False,
+        )
+        self.assertEqual(proc.returncode, 0, proc.stdout)
+        code, inventory = self.cli("list")
+        self.assertEqual(code, 0, inventory)
+        self.assertIn("| plain |", inventory["table"])
+        self.assertIn("| beta |", inventory["table"])
+        self.assertNotIn("github.com", inventory["table"])
+
+    def test_list_says_when_the_home_store_has_no_open_context(self):
+        code, inventory = self.cli("list")
+        self.assertEqual(code, 0, inventory)
+        self.assertEqual(inventory["table"], "")
+        self.assertEqual(inventory["message"], "the home store has no open context")
 
     def test_brief_after_a_change_covers_that_context(self):
         self.capture()
@@ -816,7 +1037,7 @@ class StepperTests(unittest.TestCase):
         copies = list((self.store / "quarantine").glob("*"))
         self.assertEqual(len(copies), 1)
         self.assertEqual(copies[0].read_bytes(), original)
-        code, status = self.cli("status")
+        code, status = self.cli("list")
         self.assertEqual(code, 0)
         self.assertTrue(any(Path(item).name == "default.json" for item in status["corrupt_files"]))
         self.assertEqual(path.read_bytes(), original)
@@ -905,7 +1126,7 @@ class StepperTests(unittest.TestCase):
             text,
             f"Stepper session: {key}. Project root: {root}. "
             f"Pass --session {key} --root {root} on every command that changes state. "
-            f"For status, run status with no --session.",
+            f"For the index, run list. For the item table, run status with --session {key}, or status with a name.",
         )
         self.assertEqual(len(list(sessions.glob("*.json"))), 1)
         self.assertEqual(list((self.store / "contexts").glob("*.json")), [])
@@ -1009,7 +1230,7 @@ class StepperTests(unittest.TestCase):
             announced["additional_context"],
             f"Stepper session: cursor:aaa. Project root: {root}. "
             f"Pass --session cursor:aaa --root {root} on every command that changes state. "
-            f"For status, run status with no --session.",
+            f"For the index, run list. For the item table, run status with --session cursor:aaa, or status with a name.",
         )
         code, submitted, _out = self.hook(
             "claude",
@@ -1913,6 +2134,100 @@ class StepperTests(unittest.TestCase):
         self.assertEqual(code, 0)
         self.assertIsNone(data["context"])
         self.assertEqual(data["table"], "")
+        self.assertEqual(data["message"], "this session holds no context")
+
+    def test_status_without_a_session_or_a_name_says_to_use_list(self):
+        self.capture()
+        code, data = self.cli("status")
+        self.assertEqual(code, 0, data)
+        self.assertEqual(data["message"], "use list")
+        self.assertEqual(data["table"], "")
+        self.assertNotIn("contexts", data)
+        self.assertNotIn("| default |", data["table"])
+
+    def test_status_with_several_held_contexts_names_them_and_chooses_none(self):
+        self.capture()
+        self.cli(
+            "capture",
+            "--session",
+            "cursor:aaa",
+            "--context",
+            "other",
+            "--item",
+            "M-5: waiting on Blaze",
+        )
+        code, data = self.cli("status", "--session", "cursor:aaa")
+        self.assertEqual(code, 0, data)
+        self.assertEqual(data["table"], "")
+        self.assertIsNone(data["context"])
+        self.assertEqual({row["id"] for row in data["held"]}, {"default", "other"})
+
+    def test_status_by_name_leaves_the_lease_where_it_is(self):
+        self.capture()
+        self.register("cursor:bbb")
+        _code, before = self.cli("list", "--session", "cursor:bbb")
+        code, named = self.cli("status", "--session", "cursor:bbb", "--context", "default")
+        self.assertEqual(code, 0, named)
+        self.assertIn("| AC-3 | active | reset email is sent |", named["table"])
+        _code, after = self.cli("list", "--session", "cursor:bbb")
+        self.assertEqual(after["table"], before["table"])
+
+        self.cli("detach", "--session", "cursor:aaa")
+        _code, before = self.cli("list", "--session", "cursor:bbb")
+        self.assertIn("| free |", before["table"])
+        code, named = self.cli("status", "--session", "cursor:bbb", "--context", "default")
+        self.assertEqual(code, 0, named)
+        _code, after = self.cli("list", "--session", "cursor:bbb")
+        self.assertEqual(after["table"], before["table"])
+
+        self.cli("attach", "--session", "cursor:aaa", "default")
+        _code, before = self.cli("list", "--session", "cursor:aaa")
+        self.assertIn("| here |", before["table"])
+        code, named = self.cli("status", "--session", "cursor:aaa", "--context", "default")
+        self.assertEqual(code, 0, named)
+        _code, after = self.cli("list", "--session", "cursor:aaa")
+        self.assertEqual(after["table"], before["table"])
+
+    def test_status_by_an_archived_name_says_closed_and_prints_no_table(self):
+        self.capture()
+        self.cli("drop", "--session", "cursor:aaa")
+        code, data = self.cli("status", "--context", "default")
+        self.assertEqual(code, 1)
+        self.assertIn("closed", data["error"])
+        self.assertNotIn("table", data)
+        code, inventory = self.cli("list")
+        self.assertEqual(inventory["message"], "the home store has no open context")
+
+    def test_status_by_name_shows_the_live_context_when_an_older_one_is_archived(self):
+        self.capture()
+        self.cli("drop", "--session", "cursor:aaa")
+        code, captured = self.cli(
+            "capture",
+            "--session",
+            "cursor:aaa",
+            "--item",
+            "AC-9: the current work",
+        )
+        self.assertEqual(code, 0, captured)
+        code, data = self.cli("status", "--context", "default")
+        self.assertEqual(code, 0, data)
+        self.assertIn("| AC-9 | active | the current work |", data["table"])
+        self.assertNotIn("AC-3", data["table"])
+
+    def test_status_by_a_missing_name_reports_that_name(self):
+        code, data = self.cli("status", "--context", "nope")
+        self.assertEqual(code, 1)
+        self.assertIn("no context nope", data["error"])
+        self.assertNotIn("closed", data["error"])
+
+    def test_pause_stays_on_list_and_status_still_prints_the_item_table(self):
+        self.capture()
+        self.cli("pause", "--session", "cursor:aaa")
+        code, listed = self.cli("list", "--session", "cursor:aaa")
+        self.assertIn("| here, paused |", listed["table"])
+        code, data = self.cli("status", "--session", "cursor:aaa")
+        self.assertEqual(code, 0, data)
+        self.assertIn("| AC-3 | active | reset email is sent |", data["table"])
 
     def test_skip_refuses_while_the_next_item_depends_on_the_held_item(self):
         self.capture()
@@ -2160,9 +2475,9 @@ class StepperTests(unittest.TestCase):
         self.assertEqual(code, 0, sitting)
 
         def queue():
-            code, inventory = self.cli("status")
-            self.assertEqual(code, 0)
-            return next(ctx for ctx in inventory["contexts"] if ctx["id"] == "pr-queue")
+            code, named = self.cli("status", "--context", "pr-queue")
+            self.assertEqual(code, 0, named)
+            return named["context"]
 
         self.assertFalse(queue()["complete"])
         self.cli(
@@ -2238,10 +2553,14 @@ class StepperTests(unittest.TestCase):
         self.assertEqual([row["id"] for row in held["held"]], ["default"])
         self.cli("verify", "--session", "cursor:aaa", "AC-3", "--evidence", "sent")
         self.cli("verify", "--session", "cursor:aaa", "AC-4", "--evidence", "429")
-        code, inventory = self.cli("status")
-        finished = next(ctx for ctx in inventory["contexts"] if ctx["id"] == "default")
-        self.assertTrue(finished["complete"])
-        self.assertEqual(finished["lease"]["session_key"], "cursor:aaa")
+        code, finished = self.cli("status", "--context", "default")
+        self.assertEqual(code, 0, finished)
+        self.assertTrue(finished["context"]["complete"])
+        self.assertEqual(finished["context"]["lease"]["session_key"], "cursor:aaa")
+        code, inventory = self.cli("list", "--session", "cursor:aaa")
+        self.assertIn("| default |", inventory["table"])
+        self.assertIn("| complete |", inventory["table"])
+        self.assertIn("| here |", inventory["table"])
 
     def cli_at(self, home, *args, payload=None):
         env = {**os.environ, "STEPPER_HOME": str(home)}
@@ -2313,13 +2632,15 @@ class StepperTests(unittest.TestCase):
         (self.root / ".stepper" / "suggestions.json").write_text(
             json.dumps({"version": 1, "items": {"abc": {"status": "offered", "count": 1, "entries": []}}})
         )
-        code, status = self.cli("status")
+        code, inventory = self.cli("list", "--session", "cursor:aaa")
+        self.assertEqual(code, 0, inventory)
+        self.assertIn("| default |", inventory["table"])
+        self.assertIn("| here, paused |", inventory["table"])
+        code, status = self.cli("status", "--context", "default")
         self.assertEqual(code, 0, status)
-        row = status["contexts"][0]
-        self.assertEqual(row["id"], "default")
-        self.assertEqual(row["lease"]["session_key"], "cursor:aaa")
-        self.assertTrue(row["paused"])
-        self.assertEqual(row["repo"], "https://github.com/example/widget.git")
+        self.assertEqual(status["context"]["lease"]["session_key"], "cursor:aaa")
+        self.assertTrue(status["context"]["paused"])
+        self.assertEqual(status["context"]["repo"], "https://github.com/example/widget.git")
         self.assertFalse((self.root / ".stepper" / "contexts" / "default.json").exists())
         self.assertTrue((self.store / "sessions" / "cursor_aaa.json").exists())
         self.assertFalse((self.root / ".stepper" / "sessions" / "cursor_aaa.json").exists())
@@ -2328,8 +2649,9 @@ class StepperTests(unittest.TestCase):
         self.assertFalse((self.root / ".stepper" / "suggestions.json").exists())
         sneaky = self.root / ".stepper" / "contexts" / "sneaky.json"
         sneaky.write_text(json.dumps(stored))
-        code, again = self.cli("status")
-        self.assertEqual([ctx["id"] for ctx in again["contexts"]], ["default"])
+        code, again = self.cli("list")
+        self.assertIn("| default |", again["table"])
+        self.assertNotIn("sneaky", again["table"])
         self.assertTrue(sneaky.exists())
 
     def test_import_leaves_conflicts_closed_files_and_corrupt_files(self):
@@ -2347,9 +2669,10 @@ class StepperTests(unittest.TestCase):
         (archive / "kept.json").write_text("stay")
         (local / "contexts" / "bad.json").write_text("{")
         before = (local / "contexts" / "default.json").read_text()
-        code, status = self.cli("status")
+        code, status = self.cli("list")
         self.assertEqual(code, 0, status)
-        self.assertEqual([ctx["id"] for ctx in status["contexts"]], ["default"])
+        self.assertIn("| default |", status["table"])
+        self.assertNotIn("| done |", status["table"])
         home_default = json.loads((self.store / "contexts" / "default.json").read_text())
         self.assertEqual(home_default["items"][0]["description"], "reset email is sent")
         self.assertEqual((local / "contexts" / "default.json").read_text(), before)
@@ -2362,7 +2685,7 @@ class StepperTests(unittest.TestCase):
         for item in status["checkout_leftovers"]:
             os.chmod(item["path"], 0)
         try:
-            code, again = self.cli("status")
+            code, again = self.cli("list")
             self.assertEqual(code, 0, again)
             self.assertEqual(again["checkout_leftovers"], status["checkout_leftovers"])
         finally:
@@ -2415,8 +2738,10 @@ class StepperTests(unittest.TestCase):
             workspace=False,
         )
         self.assertEqual(code, 0, out)
-        code, status = self.cli("status")
-        self.assertEqual({ctx["id"] for ctx in status["contexts"]}, {"from-root", "from-other"})
+        code, status = self.cli("list")
+        self.assertEqual(code, 0, status)
+        self.assertIn("| from-root |", status["table"])
+        self.assertIn("| from-other |", status["table"])
 
     def test_second_command_waits_until_the_import_finishes(self):
         self.seed_checkout(self.root)
@@ -2445,7 +2770,7 @@ class StepperTests(unittest.TestCase):
                 time.sleep(0.05)
             self.assertTrue(ready.exists())
             status = subprocess.Popen(
-                [sys.executable, str(STEPPER), "status", "--root", str(self.root)],
+                [sys.executable, str(STEPPER), "list", "--root", str(self.root)],
                 text=True,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
@@ -2458,7 +2783,7 @@ class StepperTests(unittest.TestCase):
             out, err = status.communicate(timeout=5)
             self.assertEqual(status.returncode, 0, err)
             data = json.loads(out)
-            self.assertEqual(data["contexts"][0]["id"], "default")
+            self.assertIn("| default |", data["table"])
             self.assertFalse((self.root / ".stepper" / "contexts" / "default.json").exists())
         finally:
             release.write_text("1")

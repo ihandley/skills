@@ -28,7 +28,7 @@ Yes, when you say so. Dropping archives it without marking the leftovers done. R
 No. A turn that already briefed or changed the list gets no reminder. When a reminder does follow a reply, its sentence ends with "Add nothing," and the agent adds nothing under it.
 
 **What follows an ordinary reply?**
-The reminder. It names the active item, the top-level count, and the rule to stick, and it tells the agent to add nothing. Done, left, blocked, and position show up when you ask for status, when the list changes, or before you start something else.
+The reminder. It names the active item, the top-level count, and the rule to stick, and it tells the agent to add nothing. Done, left, blocked, and position show up when you ask what is left, when the list changes, or before you start something else.
 
 **Does "verified" mean the tests passed?**
 It means the agent stored a non-empty note. You still have to trust, or check, that the note is true.
@@ -40,7 +40,12 @@ The first command or hook in that checkout moves its open lists into `~/.stepper
 No. The chat that starts the list holds it. Another chat can take it only when you ask to continue that work there.
 
 **What if more than one list is open?**
-Status with no session lists every open list and who holds it, or that nobody does. When you ask to change one and don't name it, the agent asks which one and waits.
+`list` is the index of every open list. Each row is the name, the day it last moved, how far the top-level items are, a lease word, and one line about the work. The lease word is `here` when this chat holds it, `elsewhere` when another chat does, and `free` when nobody does. A paused list keeps that word and adds `paused` in the same cell. A finished list stays, with the line `complete`. A closed list is left off. The repo and the chat id are left off the row. A damaged file or a leftover in the checkout is still reported with that index.
+
+`status` is the item table for one list. With no name, that is the list this chat holds. When this chat holds several, you are asked which name. Naming a list shows its items and leaves the hold where it is.
+
+**Which commands can I ask for?**
+track, add, focus, verify, block, unblock, skip, defer, cancel, pause, resume, replace, drop, attach, list, and status. Asking what is left, and naming no list, is the brief for the list this chat holds.
 
 **Can it offer another list while one is already open?**
 Yes. The offer names a free list and never uses `pr-queue`. Saying yes tracks that list beside the ones you already hold. A paused list does not hide the offer. Saying no keeps that candidate from being offered again.
@@ -49,8 +54,9 @@ Yes. The offer names a free list and never uses `pr-queue`. Saying yes tracks th
 
 - After you accept a list, the agent starts at the first item and stays there.
 - A blocked item comes back as "wait" before any offer to skip.
-- An ordinary reply is followed by the reminder: the active item, the top-level count, the rule to stick, and "Add nothing." Nothing follows that line. The four parts wait for a status request, a list change, or a new start.
-- Starting something new gets a status first: done, left, blocked, and where you are.
+- An ordinary reply is followed by the reminder: the active item, the top-level count, the rule to stick, and "Add nothing." Nothing follows that line. The four parts wait for a request for what is left, a list change, or a new start.
+- Starting something new gets the brief first: done, left, blocked, and where you are.
+- Asking what is open shows one row per open list, with the day, the progress, a lease word, and one line.
 - Asking for status shows each item on its own row.
-- Saying the list is wrong archives it or replaces it, and the next status matches that.
+- Saying the list is wrong archives it or replaces it, and the next item table matches that.
 - A second list is offered by name while the first is still open, including when the first is paused.

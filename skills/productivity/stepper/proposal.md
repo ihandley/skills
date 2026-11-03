@@ -154,8 +154,8 @@ Rules:
 - `attach --take` is the only way to move a live lease. The agent may pass `--take` only after the user explicitly asks to continue that tracked work in this session.
 - `detach` and `sessionEnd` release the lease when the ending session holds it. They do not delete or rewrite items.
 - A crashed or killed session keeps its lease. There is no timeout. A long-lived session must not lose its lease because a clock expired, and a new session must not inherit it by guessing. The user moves it with `attach --take`.
-- `status` without `--session` is a read-only inventory of contexts, leases, and corrupt files. It attaches nothing.
-- `status --session <key>` reports that session's lease and suggestion state.
+- `list` is the index of open contexts. It reports corrupt files and checkout leftovers. It attaches nothing.
+- `status` is the item table. With `--session` and no name, it is the one context that session holds. With a name, it reads that context and leaves the lease where it is.
 
 Tradeoff: the same conversation keeps its work across turns, Claude resume, and compaction, because those keep the same session id. A new conversation in the same repository does not automatically resume that work. Resuming there is an explicit attach. That is the safe choice. Automatic attach of "the" active context would be convenient and would also let two concurrent sessions interfere.
 

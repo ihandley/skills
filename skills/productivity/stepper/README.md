@@ -95,8 +95,9 @@ You interact with Stepper by talking to your coding agent. The agent invokes the
 | Say this | Expected behavior |
 | --- | --- |
 | “Track these acceptance criteria with Stepper.” | Create a tracked context |
+| “What's open?” | `list`: every open list, newest day first |
 | “What's left?” | Brief: done, left, blocked, and where the active item sits |
-| “/stepper status” | Each item on its own row |
+| “/stepper status” | The items in one list, each on its own row |
 | “Focus on AC-4.” | Make AC-4 the active item when its dependencies are met |
 | “Mark AC-3 complete; the integration test passes.” | Record verification evidence |
 | “We're blocked on AC-5 until the API is available.” | Hold on AC-5 and recommend waiting |
@@ -155,8 +156,9 @@ Hooks pass the session identifier and the checkout to the agent. The agent copie
 Most users should not need to run these commands directly. For troubleshooting or agent integration, pass `--root` with the project the hook named. The skill directory is not that project. State-changing commands require a valid hook-registered session key.
 
 ```bash
-python3 stepper.py status --root /path/to/project
+python3 stepper.py list --session 'cursor:<conversation-id>' --root /path/to/project
 python3 stepper.py status --session 'cursor:<conversation-id>' --root /path/to/project
+python3 stepper.py status --context auth-fix --root /path/to/project
 python3 stepper.py capture --session 'cursor:<conversation-id>' --root /path/to/project \
   --context auth-fix \
   --item 'AC-3: reset email is sent' \
