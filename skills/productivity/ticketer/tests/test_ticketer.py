@@ -800,6 +800,59 @@ class ParentLadderUpdateTests(Base):
         self.assertIn("parent: AB-1 | Epic | Reset email | In Progress", data["render"])
 
 
+class RequiredForTests(Base):
+    def missing(self, data):
+        return {e["field"] for e in (data or {}).get("errors", []) if e["code"] == "required_missing"}
+
+    def test_required_for_replaces_required_and_keeps_type_extras(self):
+        base = JIRA_TOML.replace('forbid_empty = ["labels"]', "forbid_empty = []")
+        self.write_config(base + """
+[required_for]
+widget = ["summary", "description", "issue_type"]
+[required_by_type]
+widget = ["customfield_9"]
+""")
+        payload = jira_payload(issue_type="Widget")
+        payload.pop("labels")
+        code, data, _ = self.draft(payload)
+        self.assertEqual(code, 2)
+        self.assertEqual(self.missing(data), {"customfield_9"})
+        task = jira_payload(issue_type="Task")
+        task.pop("labels")
+        code, data, _ = self.draft(task)
+        self.assertIn("labels", self.missing(data))
+
+    def test_bug_extras_survive_a_replacement(self):
+        base = JIRA_TOML.replace('forbid_empty = ["labels"]', "forbid_empty = []")
+        self.write_config(base + """
+[required_for]
+bug = ["summary", "description", "issue_type"]
+[required_by_type]
+bug = ["customfield_10568", "customfield_10676"]
+""")
+        payload = jira_payload(issue_type="Bug")
+        payload.pop("labels")
+        code, data, _ = self.draft(payload)
+        self.assertEqual(self.missing(data), {"customfield_10568", "customfield_10676"})
+
+    def test_github_required_for_replaces_required(self):
+        self.write_config("""
+tracker = "github"
+required = ["summary", "description", "labels"]
+forbid_empty = []
+enforce_templates = false
+[required_for]
+Bug = ["summary", "description"]
+[defaults]
+repo = "acme/widgets"
+""", team="oss")
+        code, data, _ = self.draft({"summary": "Fix crash", "description": "Broken.", "issue_type": "Bug"})
+        self.assertEqual(code, 0, data)
+        code, data, _ = self.draft({"summary": "Fix crash", "description": "Broken.", "issue_type": "Task"})
+        self.assertEqual(code, 2)
+        self.assertIn("labels", self.missing(data))
+
+
 class AdapterContractTests(unittest.TestCase):
     """The same checks run against every registered adapter."""
 

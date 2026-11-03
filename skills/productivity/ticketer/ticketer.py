@@ -557,11 +557,19 @@ def validate_draft(draft, config, adapter, metadata):
     problems, warnings, needs = [], [], []
     operation = draft["operation"]
     if operation == CREATE:
-        if "summary" not in config["required"]:
-            config = {**config, "required": ["summary"] + list(config["required"])}
-        issue_type = (draft.get("issue_type") or "").casefold()
+        issue_type_name = draft.get("issue_type") or ""
+        replacement = lookup_ci(config.get("required_for") or {}, issue_type_name)
+        if replacement is None:
+            required = list(config["required"])
+            if "summary" not in required:
+                required = ["summary"] + required
+        else:
+            required = list(replacement)
+            if not any(str(name).casefold() == "summary" for name in required):
+                required = ["summary"] + required
+        issue_type = issue_type_name.casefold()
         extra_required = [n for t, names in config["required_by_type"].items() if t.casefold() == issue_type for n in names]
-        for name in dict.fromkeys(list(config["required"]) + extra_required):
+        for name in dict.fromkeys(required + extra_required):
             value = draft.get("fields", {}).get(name) if name.startswith("customfield_") else draft.get(name)
             if is_empty(value):
                 problems.append(err("required_missing", "required field %r is missing or empty" % name, name))
