@@ -34,6 +34,18 @@ repo = "acme/widgets"
 TASK_BODY = "## Context\nWhy this exists.\n\n## Acceptance criteria\n- [ ] Reset email is sent within one minute\n"
 
 
+def parent_issue(key="AB-1", issue_type="Epic", summary="Reset email", status="In Progress",
+                 category="In Progress", parent=None):
+    fields = {
+        "summary": summary,
+        "issuetype": {"name": issue_type},
+        "status": {"name": status, "statusCategory": {"name": category}},
+    }
+    if parent:
+        fields["parent"] = {"key": parent}
+    return {"key": key, "fields": fields}
+
+
 class Base(unittest.TestCase):
     def setUp(self):
         self.tmp = Path(tempfile.mkdtemp())
@@ -647,6 +659,24 @@ class ParentLadderDraftTests(Base):
     def setUp(self):
         super().setUp()
         self.write_config(LADDER_TOML)
+
+    def store_parent(self, raw, key="AB-1"):
+        return self.run_cli(
+            "metadata", "store", "--tracker", "jira", "--scope", key, "--kind", "parent", stdin=raw,
+        )
+
+    def test_read_parent_of_a_legal_type_is_shown_on_the_confirm_line(self):
+        code, stored, _ = self.store_parent(parent_issue())
+        self.assertEqual(code, 0, stored)
+        code, data, _ = self.draft(jira_payload(issue_type="Task", parent="AB-1"))
+        self.assertEqual(code, 0, data)
+        self.assertIn("parent: AB-1 | Epic | Reset email | In Progress", data["render"])
+
+    def test_parent_of_an_illegal_type_is_refused(self):
+        self.store_parent(parent_issue(issue_type="Widget"))
+        code, data, _ = self.draft(jira_payload(issue_type="Task", parent="AB-1"))
+        self.assertEqual(code, 2)
+        self.assertTrue(any(e["code"] == "bad_parent" and e["field"] == "parent" for e in data["errors"]))
 
     def test_ladder_type_without_a_parent_is_refused(self):
         code, data, _ = self.draft(jira_payload(issue_type="Task"))

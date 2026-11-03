@@ -14,7 +14,7 @@ DRAFT_KEYS = set(FIELDS)
 MERGE_LIST_KEYS = {"labels", "components"}
 DISPLAY_ORDER = ("key", "project_key", "issue_type", "summary", "priority", "parent", "assignee",
                  "labels", "components")
-METADATA_KINDS = ("issue-types", "fields")
+METADATA_KINDS = ("issue-types", "fields", "parent")
 IDENT_KEYS = ("project_key", "cloud_id")
 SUPPORTS_EXTRA = True
 NORMALIZE_LABELS = True
@@ -107,7 +107,77 @@ def _scalar(value):
     return None if value is None else str(value)
 
 
+def _failure_message(raw):
+    if isinstance(raw.get("message"), str) and raw["message"].strip():
+        return raw["message"].strip()
+    messages = raw.get("errorMessages")
+    if isinstance(messages, list) and messages:
+        return "; ".join(str(item) for item in messages if str(item).strip())
+    errors = raw.get("errors")
+    if isinstance(errors, dict) and errors:
+        return "; ".join("%s: %s" % (key, value) for key, value in errors.items())
+    if raw.get("error") is True:
+        return "parent could not be read"
+    return None
+
+
+def parse_parent(raw):
+    """Keep the key, issue type, summary, status name, status category, and parent key."""
+    if not isinstance(raw, dict):
+        return None, "parent read was not an issue"
+    issue = raw.get("issue") if isinstance(raw.get("issue"), dict) and "fields" not in raw else raw
+    fields = issue.get("fields") if isinstance(issue.get("fields"), dict) else {}
+    issuetype = fields.get("issuetype") or fields.get("issueType") or issue.get("issuetype") or {}
+    if isinstance(issuetype, str):
+        type_name = issuetype
+    elif isinstance(issuetype, dict):
+        type_name = issuetype.get("name")
+    else:
+        type_name = None
+    key = issue.get("key") or fields.get("key")
+    if not key or not type_name:
+        return None, _failure_message(issue) or _failure_message(raw) or "parent could not be read"
+    status = fields.get("status") or {}
+    if isinstance(status, str):
+        status_name, category = status, ""
+    elif isinstance(status, dict):
+        status_name = status.get("name") or ""
+        category_value = status.get("statusCategory") or {}
+        if isinstance(category_value, str):
+            category = category_value
+        elif isinstance(category_value, dict):
+            category = category_value.get("name") or category_value.get("key") or ""
+        else:
+            category = ""
+    else:
+        status_name, category = "", ""
+    parent = fields.get("parent") or {}
+    if isinstance(parent, dict):
+        parent_key = parent.get("key")
+    elif isinstance(parent, str):
+        parent_key = parent
+    else:
+        parent_key = None
+    return {
+        "key": str(key),
+        "issue_type": str(type_name),
+        "summary": str(fields.get("summary") or "").strip(),
+        "status": str(status_name),
+        "status_category": str(category),
+        "parent": parent_key,
+    }, None
+
+
 def store_metadata(data, kind, raw, issue_type):
+    if kind == "parent":
+        read, error = parse_parent(raw)
+        data.pop("parent_read", None)
+        data.pop("parent_error", None)
+        if error:
+            data["parent_error"] = error
+        else:
+            data["parent_read"] = read
+        return
     if kind == "issue-types":
         data["issue_types"] = sorted({i["name"] for i in _items(raw, "issueTypes", "values") if isinstance(i, dict) and i.get("name")})
     elif kind == "fields":

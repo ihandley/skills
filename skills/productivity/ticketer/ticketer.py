@@ -532,6 +532,15 @@ def parent_ladder_problems(draft, config, adapter):
     if record is None:
         need = adapter.parent_read(draft, parent) if hasattr(adapter, "parent_read") else None
         return [err("parent_unread", "parent %s has not been read" % parent, "parent")], ([need] if need else []), None
+    if record.get("error"):
+        return [err("parent_unreadable", "parent %s could not be read: %s" % (parent, record["error"]), "parent")], [], None
+    allowed_types = {str(item).casefold() for item in allowed}
+    if str(record.get("issue_type", "")).casefold() not in allowed_types:
+        return [err(
+            "bad_parent",
+            "parent %s is a %s; %s allows %s" % (parent, record.get("issue_type"), draft.get("issue_type"), ", ".join(allowed)),
+            "parent",
+        )], [], record
     return [], [], record
 
 
@@ -751,6 +760,11 @@ def cmd_metadata_store(args):
         if args.kind not in adapter.METADATA_KINDS:
             raise ValueError("%s has no metadata kind %r; supported: %s" % (adapter.NAME, args.kind, ", ".join(adapter.METADATA_KINDS)))
         adapter.store_metadata(data, args.kind, raw, args.issue_type)
+        if args.kind == "parent" and data.get("parent_read"):
+            got = str(data["parent_read"].get("key", ""))
+            if got.casefold() != args.scope.casefold():
+                data["parent_error"] = "parent read returned %s, not %s" % (got, args.scope)
+                data.pop("parent_read", None)
     except ValueError as exc:
         raise Fail(EXIT_REFUSED, str(exc))
     data["fetched_at"] = time.time()
