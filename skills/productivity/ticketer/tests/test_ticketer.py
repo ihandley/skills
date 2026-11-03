@@ -800,6 +800,32 @@ class ParentLadderUpdateTests(Base):
         self.assertIn("parent: AB-1 | Epic | Reset email | In Progress", data["render"])
 
 
+class ParentProjectTests(Base):
+    def setUp(self):
+        super().setUp()
+        self.write_config(JIRA_TOML + """
+[parent_ladder]
+Task = ["Epic"]
+[parent_project]
+Task = ["JET"]
+Epic = ["OTHER"]
+""")
+        self.run_cli("metadata", "store", "--tracker", "jira", "--scope", "OTHER-1", "--kind", "parent",
+                     stdin=parent_issue(key="OTHER-1"))
+
+    def test_create_project_must_be_one_configured_for_the_type(self):
+        code, data, _ = self.draft(jira_payload(issue_type="Task", parent="OTHER-1"))
+        self.assertEqual(code, 2)
+        self.assertTrue(any(e["field"] == "project_key" and e["code"] == "bad_value" for e in data["errors"]))
+        code, data, _ = self.draft(jira_payload(issue_type="Task", parent="OTHER-1", project_key="JET"))
+        self.assertEqual(code, 0, data)
+
+    def test_cross_project_parent_is_accepted_when_its_type_is_legal(self):
+        code, data, _ = self.draft(jira_payload(issue_type="Task", parent="OTHER-1", project_key="JET"))
+        self.assertEqual(code, 0, data)
+        self.assertIn("parent: OTHER-1 | Epic | Reset email | In Progress", data["render"])
+
+
 class RequiredForTests(Base):
     def missing(self, data):
         return {e["field"] for e in (data or {}).get("errors", []) if e["code"] == "required_missing"}

@@ -592,6 +592,15 @@ def validate_draft(draft, config, adapter, metadata):
             problems.append(err("metadata_missing", "tracker metadata is missing or stale; fetch it and run 'metadata store' (see needs)", None))
         else:
             warnings.append("tracker metadata not checked (none cached)")
+    if operation == CREATE:
+        projects = lookup_ci(config.get("parent_project") or {}, draft.get("issue_type") or "")
+        if projects and draft.get("project_key") not in projects:
+            problems.append(err(
+                "bad_value",
+                "project_key %r is not configured for %s; configured: %s" % (
+                    draft.get("project_key"), draft.get("issue_type"), ", ".join(projects)),
+                "project_key",
+            ))
     problems += adapter.validate(draft, config, metadata)
     ladder_problems, ladder_needs, parent_read = parent_ladder_problems(draft, config, adapter)
     problems += ladder_problems
