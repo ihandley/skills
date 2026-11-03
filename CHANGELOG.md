@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.4.1](https://github.com/ihandley/skills/compare/ihandley-skills-v0.4.0...ihandley-skills-v0.4.1) (2026-11-02)
+
+
+### Bug Fixes
+
+* **stepper:** a status request reads the home store ([#96](https://github.com/ihandley/skills/issues/96)) ([8a62320](https://github.com/ihandley/skills/commit/8a6232039fcd1ff05396cf7b9fa312b18f337ae4))
+
 ## [0.4.0](https://github.com/ihandley/skills/compare/ihandley-skills-v0.3.0...ihandley-skills-v0.4.0) (2026-10-28)
 
 
