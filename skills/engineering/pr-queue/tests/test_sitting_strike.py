@@ -32,7 +32,8 @@ def brief(ctx):
     ids = lambda *s: [i["id"] for i in items if i["status"] in s]
     return {"done": ids("verified"), "left": ids("pending", "active", "deferred"), "blocked": ids("blocked"), "position": position}
 
-ctx = next((c for c in state["contexts"] if (c["lease"] or {}).get("session_key") == flag("--session") and not c["closed"]), None)
+wanted = flag("--context")
+ctx = next((c for c in state["contexts"] if (c["lease"] or {}).get("session_key") == flag("--session") and not c["closed"] and wanted in (None, c["id"])), None)
 cmd = args[0]
 if ctx is None:
     print(json.dumps({"ok": False, "error": "no sitting"}))
@@ -78,6 +79,13 @@ class SittingStrike(unittest.TestCase):
         self.state.write_text(json.dumps({"contexts": [
             {"id": "pr-queue", "closed": False, "lease": {"session_key": holder}, "items": items}]}))
 
+    def with_other_context_first(self):
+        data = json.loads(self.state.read_text())
+        other = {"id": "other-skill", "closed": False, "lease": {"session_key": "claude:s"},
+                 "items": [item("x1", "active"), item("x2", "pending")]}
+        data["contexts"].insert(0, other)
+        self.state.write_text(json.dumps(data))
+
     def sitting_cmd(self, command, *extra):
         return subprocess.run(
             ["ruby", str(SCRIPT), command, "--session", "claude:s", "--root", "/r", "--stepper", str(self.stepper), *extra],
@@ -101,6 +109,17 @@ class SittingStrike(unittest.TestCase):
         proc = self.sitting_cmd("strike", "--evidence", "e")
         self.assertEqual(proc.returncode, 0, proc.stderr)
         self.assertEqual(proc.stdout.splitlines(), ["done: i1", "left: i2, i3", "blocked: none", "position: 2 of 3"])
+
+    def test_strike_and_brief_use_the_pr_queue_sitting_when_the_session_holds_another_context(self):
+        self.sitting(["active", "pending"])
+        self.with_other_context_first()
+        brief = self.sitting_cmd("brief")
+        self.assertIn("position: 1 of 2", brief.stdout)
+        self.assertIn("left: i1, i2", brief.stdout)
+        proc = self.sitting_cmd("strike", "--evidence", "e")
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        verify = next(c for c in self.calls() if c[0] == "verify")
+        self.assertEqual(verify[verify.index("--context") + 2], "i1")
 
     def test_strike_asks_stepper_for_the_brief_form_not_the_store(self):
         self.sitting(["active", "pending"])

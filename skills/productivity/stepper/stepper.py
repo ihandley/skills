@@ -1494,7 +1494,7 @@ def cmd_decline(root: Path, session_key: str, digest: str) -> dict:
     return {"ok": True, "suggestion": digest, "status": "declined"}
 
 
-def cmd_status(root: Path, session_key: str | None, tree: bool = False) -> dict:
+def cmd_status(root: Path, session_key: str | None, tree: bool = False, context_id: str | None = None) -> dict:
     ensure_store(root)
     contexts, corrupt = read_contexts(root)
     if session_key is None:
@@ -1520,6 +1520,10 @@ def cmd_status(root: Path, session_key: str | None, tree: bool = False) -> dict:
     session = load_session(root, session_key)
     held = held_by(root, session_key)
     ctx = held[0] if len(held) == 1 else None
+    if context_id is not None:
+        ctx = next((item for item in held if item["id"] == context_id), None)
+        if ctx is None:
+            raise StepperError(f"session {session_key} holds no context {context_id}")
     return {
         "ok": True,
         "session": None
@@ -1896,7 +1900,7 @@ def run_command(args: argparse.Namespace) -> dict:
         elif args.cmd == "add":
             body = cmd_add(root, args.session, context_id, args.item or [], args.parent)
         elif args.cmd == "status":
-            body = cmd_status(root, args.session, args.tree)
+            body = cmd_status(root, args.session, args.tree, args.context)
         elif args.cmd == "focus":
             body = cmd_focus(root, args.session, context_id, args.item_id)
         elif args.cmd == "verify":
@@ -1936,7 +1940,7 @@ def run_command(args: argparse.Namespace) -> dict:
             body = cmd_decline(root, args.session, args.hash)
         else:
             raise StepperError(f"unknown command {args.cmd}")
-        if not getattr(args, "full", False) and hasattr(args, "full") and body.get("ok") and "brief" in body:
+        if hasattr(args, "full") and not args.full and body.get("ok") and "brief" in body:
             body = {"ok": True, "brief": body["brief"]}
         note_briefed(root, getattr(args, "session", None))
         return attach_leftovers(root, body)
@@ -1987,6 +1991,7 @@ def build_parser() -> argparse.ArgumentParser:
     root(status)
     session(status, required=False)
     status.add_argument("--tree", action="store_true")
+    status.add_argument("--context")
 
     for name in ("focus", "unblock", "defer", "cancel"):
         command = sub.add_parser(name)
