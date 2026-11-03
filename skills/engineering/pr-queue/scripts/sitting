@@ -1,0 +1,281 @@
+#!/usr/bin/env ruby
+# frozen_string_literal: true
+
+# The sitting commands. This file builds `open`, `strike`, `brief`,
+# `checkout`, and `walk`.
+#
+#   sitting open --session KEY --root PATH --stepper PATH --viewer LOGIN [--all]
+#                [--started EPOCH] [--aliases PATH] < issues
+#
+# Applies the lease rules to the `pr-queue` context, fetches a fresh queue with
+# `pr-queue` only when none is left in place, then prints the queue and the four
+# brief parts. The In Review issues arrive on stdin in the format `pr-queue`
+# reads; this command does not search Jira.
+#
+#   sitting checkout --session KEY --root PATH --stepper PATH [--aliases PATH]
+#
+#   sitting strike --session KEY --root PATH --stepper PATH --evidence TEXT
+#
+# Verifies the active pr-queue item with the evidence given, then prints the next
+# item's four brief parts (done, left, blocked, position) from stepper's --brief
+# form, never the whole store.
+#
+#   sitting brief --session KEY --root PATH --stepper PATH
+#
+# Prints the four brief parts for this chat's sitting. Changes nothing.
+#
+#   sitting walk --session KEY --root PATH --stepper PATH --viewer LOGIN
+#                [--qpre CMD] [--outcome-dir DIR] [--keys FILE]
+#
+# Walks the sitting in the terminal. For the active item it prints the brief, runs
+# qpre on the item's pull request with the terminal inherited (wait for it to
+# exit), reads the one outcome line qpre wrote, and speaks posted, clean, or
+# unfinished (a missing line is "missing outcome", never clean). It also says
+# whether --viewer approved the latest commit. Then one key: s strikes the item
+# and walks the next, k keeps it active, q or Ctrl-C leaves the walk, anything
+# else asks again. Quitting qpre (non-zero or signal exit) leaves the item active
+# with no strike prompt. --qpre (env SITTING_QPRE, default qpre), --outcome-dir
+# (env SITTING_OUTCOME_DIR, default ~/.qpr/outcomes), and --keys (a file of keys
+# instead of the terminal) are seams for tests.
+#
+# Resolves the active pr-queue item to its local clone, leaves that clone on the
+# pull request head, and prints the clone path and the pull request's base ref.
+
+require "json"
+require "open3"
+require "optparse"
+require "yaml"
+
+def stop(message)
+  warn message
+  exit 1
+end
+
+def run(*args, chdir: nil)
+  out, err, status = Open3.capture3(*args, chdir: chdir || Dir.pwd)
+  stop("#{args.first(3).join(" ")}: #{err.strip.empty? ? out.strip : err.strip}") unless status.success?
+  out
+end
+
+CONTEXT = "pr-queue"
+
+def stepper(options, *args)
+  JSON.parse(run("python3", options[:stepper], *args))
+end
+
+def scope(options)
+  ["--session", options[:session], "--root", options[:root]]
+end
+
+def sitting_status(options)
+  stepper(options, "status", *scope(options), "--context", CONTEXT)
+end
+
+def open_sitting(options)
+  %i[session root stepper].each { |key| stop("pass --#{key}") unless options[key] }
+
+  listed = stepper(options, "status", "--root", options[:root])
+  found = Array(listed["contexts"]).find { |context| context["id"] == CONTEXT && !context["closed"] }
+  holder = found && found.dig("lease", "session_key")
+  stop("the #{CONTEXT} sitting is held by #{holder}; ask that chat to finish or release it") if holder && holder != options[:session]
+
+  attach = ["attach", *scope(options), "--context", CONTEXT, "--brief"]
+  if found && !found["complete"]
+    stepper(options, *attach) unless holder
+    sitting = sitting_status(options).dig("context", "items")
+    puts Array(sitting).reject { |entry| %w[verified cancelled].include?(entry["status"]) }.map { |entry| entry["description"] }
+  else
+    if found
+      stepper(options, *attach) unless holder
+      stepper(options, "close", *scope(options), "--context", CONTEXT, "--brief")
+    end
+    fetch_queue(options)
+  end
+
+  held = Array(stepper(options, "status", "--root", options[:root])["contexts"]).any? { |context| context["id"] == CONTEXT && !context["closed"] }
+  print_brief(held ? stepper(options, *attach)["brief"] : { "done" => [], "left" => [], "blocked" => [], "position" => "none" })
+end
+
+def print_brief(brief)
+  %w[done left blocked].each { |part| puts "#{part}: #{Array(brief[part]).empty? ? "none" : brief[part].join(", ")}" }
+  puts "position: #{brief["position"]}"
+end
+
+def strike(options)
+  %i[session root stepper].each { |key| stop("pass --#{key}") unless options[key] }
+  stop("pass --evidence") if options[:evidence].to_s.strip.empty?
+
+  items = Array(sitting_status(options).dig("context", "items"))
+  active = items.find { |entry| entry["status"] == "active" }
+  stop("no active item in the sitting") unless active
+
+  print_brief(stepper(options, "verify", *scope(options), "--context", CONTEXT, active["id"], "--evidence", options[:evidence], "--brief")["brief"])
+end
+
+def brief(options)
+  %i[session root stepper].each { |key| stop("pass --#{key}") unless options[key] }
+
+  print_brief(sitting_status(options)["brief"])
+end
+
+PROMPT = "s strike, k keep active, q quit: "
+
+def key_reader(options)
+  if options[:keys]
+    file = File.open(options[:keys])
+    return -> { file.getc }
+  end
+  require "io/console"
+  tty = $stdin.tty? ? $stdin : (IO.console || stop("walk needs a terminal; there is none"))
+  -> { tty.getch }
+end
+
+def outcome_word(path)
+  line = File.file?(path) ? File.read(path).lines.first.to_s.strip : ""
+  case line
+  when /\Aposted\b/ then "posted"
+  when "clean" then "clean"
+  when /\A(partial|unfinished|unposted)\b/ then "unfinished"
+  else "missing outcome"
+  end
+end
+
+def approved_on_head?(url, viewer)
+  _, org, repo, number = url.match(%r{github\.com/([^/]+)/([^/]+)/pull/(\d+)}).to_a
+  pr = JSON.parse(run("gh", "pr", "view", number, "--repo", "#{org}/#{repo}", "--json", "headRefOid,reviews"))
+  Array(pr["reviews"]).any? do |review|
+    review["state"] == "APPROVED" && review.dig("author", "login") == viewer && review.dig("commit", "oid") == pr["headRefOid"]
+  end
+end
+
+def active_item(options)
+  Array(sitting_status(options).dig("context", "items")).find { |entry| entry["status"] == "active" }
+end
+
+def walk(options)
+  %i[session root stepper viewer].each { |key| stop("pass --#{key}") unless options[key] }
+
+  next_key = key_reader(options)
+  qpre = options[:qpre] || ENV["SITTING_QPRE"] || "qpre"
+  outcomes = File.expand_path(options[:outcome_dir] || ENV["SITTING_OUTCOME_DIR"] || "~/.qpr/outcomes")
+  active = active_item(options) || stop("no active item in the sitting")
+  print_brief(sitting_status(options)["brief"])
+
+  while active
+    url = active["completion_criteria"].to_s[%r{https://github\.com/[^/\s]+/[^/\s]+/pull/\d+}]
+    stop("active item #{active["id"]} names no pull request url") unless url
+    _, org, repo, number = url.match(%r{github\.com/([^/]+)/([^/]+)/pull/(\d+)}).to_a
+    path = File.join(outcomes, "#{org}-#{repo}-#{number}")
+    File.delete(path) if File.file?(path)
+
+    $stdout.flush
+    ran = system(qpre, url)
+    unless ran && $?.success?
+      puts "qpre quit; #{active["id"]} stays active"
+      return
+    end
+
+    outcome = outcome_word(path)
+    approved = approved_on_head?(url, options[:viewer])
+    puts "outcome: #{outcome}"
+    puts "approved: #{approved ? "yes" : "no"}"
+
+    choice = nil
+    until choice
+      print PROMPT
+      $stdout.flush
+      key = next_key.call
+      puts
+      case key
+      when "s", "k" then choice = key
+      when nil, "q", "\u0003" then choice = "q"
+      end
+    end
+    if choice != "s"
+      puts "#{active["id"]} stays active"
+      return
+    end
+
+    options[:evidence] = "#{outcome}; #{approved ? "approved" : "not approved"} on latest commit; struck in walk"
+    strike(options)
+    active = active_item(options)
+  end
+  puts "no active item; the walk is done"
+end
+
+def fetch_queue(options)
+  stop("pass --viewer") unless options[:viewer]
+
+  command = ["ruby", File.join(__dir__, "pr-queue"), "--viewer", options[:viewer], *scope(options),
+             "--stepper", options[:stepper], "--aliases", options[:aliases]]
+  command.push("--all") if options[:all]
+  command.push("--started", options[:started]) if options[:started]
+  command.push("--github-fixture", options[:fixture]) if options[:fixture]
+  command.push("--today", options[:today]) if options[:today]
+  out, err, status = Open3.capture3(*command, stdin_data: $stdin.tty? ? "" : $stdin.read)
+  stop(err.strip) unless status.success?
+  warn err.lines.reject { |line| line.start_with?("pr-queue brief") }.join
+  print out
+end
+
+def checkout(options)
+  %i[session root stepper].each { |key| stop("pass --#{key}") unless options[key] }
+
+  data = YAML.load_file(options[:aliases])
+  team = data.values.find { |value| value.is_a?(Hash) && value["type"] == "team" && Array(value["aliases"]).include?("my team") }
+  stop("missing team aliased my team in #{options[:aliases]}") unless team
+  roots = Array(team["clone_roots"]).map { |path| File.expand_path(path) }
+  stop("missing clone_roots on the team record in #{options[:aliases]}; add a line `clone_roots: [~/src/work]` under it") if roots.empty?
+
+  status = sitting_status(options)
+  items = Array(status.dig("context", "items"))
+  active = items.find { |item| item["status"] == "active" }
+  stop("no active item in the sitting") unless active
+
+  url = active["completion_criteria"].to_s[%r{https://github\.com/([^/\s]+)/([^/\s]+)/pull/(\d+)}]
+  stop("active item #{active["id"]} names no pull request url") unless url
+  _, org, repo, number = url.match(%r{github\.com/([^/]+)/([^/]+)/pull/(\d+)}).to_a
+
+  clone = roots.map { |root| File.join(root, repo) }.find { |path| File.directory?(File.join(path, ".git")) }
+  stop("no clone of #{repo} under #{roots.join(", ")}") unless clone
+
+  dirty = run("git", "status", "--porcelain", chdir: clone)
+  stop("#{clone} has uncommitted changes; commit or stash them first") unless dirty.strip.empty?
+
+  pr = JSON.parse(run("gh", "pr", "view", number, "--repo", "#{org}/#{repo}", "--json", "headRefName,headRefOid,baseRefName"))
+  run("git", "fetch", "origin", "refs/pull/#{number}/head", chdir: clone)
+  fetched = run("git", "rev-parse", "FETCH_HEAD", chdir: clone).strip
+  stop("fetched #{fetched} but the pull request head is #{pr["headRefOid"]}") unless fetched == pr["headRefOid"]
+  run("git", "checkout", "-B", pr["headRefName"], fetched, chdir: clone)
+
+  puts "clone: #{clone}"
+  puts "base: #{pr["baseRefName"]}"
+end
+
+options = { aliases: File.expand_path("~/.claude/aliases.yaml") }
+parser = OptionParser.new do |opts|
+  opts.on("--session KEY") { |value| options[:session] = value }
+  opts.on("--root PATH") { |value| options[:root] = value }
+  opts.on("--stepper PATH") { |value| options[:stepper] = value }
+  opts.on("--aliases PATH") { |value| options[:aliases] = value }
+  opts.on("--evidence TEXT") { |value| options[:evidence] = value }
+  opts.on("--viewer LOGIN") { |value| options[:viewer] = value }
+  opts.on("--qpre CMD") { |value| options[:qpre] = value }
+  opts.on("--outcome-dir DIR") { |value| options[:outcome_dir] = value }
+  opts.on("--keys FILE") { |value| options[:keys] = value }
+  opts.on("--all") { options[:all] = true }
+  opts.on("--started EPOCH") { |value| options[:started] = value }
+  opts.on("--github-fixture PATH") { |value| options[:fixture] = value }
+  opts.on("--today DATE") { |value| options[:today] = value }
+end
+command = ARGV.shift
+parser.parse!
+
+case command
+when "open" then open_sitting(options)
+when "strike" then strike(options)
+when "brief" then brief(options)
+when "checkout" then checkout(options)
+when "walk" then walk(options)
+else stop("usage: sitting open|strike|brief|checkout|walk --session KEY --root PATH --stepper PATH")
+end

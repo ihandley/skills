@@ -50,6 +50,21 @@ class PrQueueOutput(unittest.TestCase):
         self.assertEqual(proc.returncode, 0, proc.stderr)
         self.assertEqual(proc.stdout, (FIXTURES / "normal.txt").read_text())
 
+    def test_marks_show_a_gone_author_a_conflict_and_failing_checks(self):
+        proc = self.run_script(stdin=(FIXTURES / "jira.txt").read_text())
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        lines = proc.stdout.splitlines()
+        for ref, marks in [
+            ("r1#18", "gone"),
+            ("r1#19", "conflict"),
+            ("r1#20", "red"),
+            ("r1#21", "gone conflict red"),
+        ]:
+            line = next(l for l in lines if l.startswith(ref + " "))
+            self.assertTrue(line.startswith(f"{ref} {marks} · "), line)
+        healthy = next(l for l in lines if l.startswith("r1#22 "))
+        self.assertTrue(healthy.startswith("r1#22 · healthy · "), healthy)
+
     def test_normal_count_covers_the_daily_repos_older_than_seven_days(self):
         proc = self.run_script("--print-queries")
         self.assertEqual(proc.returncode, 0, proc.stderr)

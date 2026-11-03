@@ -78,6 +78,7 @@ SESSION_KEYS = {
     "reminded_generation",
     "followup_generation",
 }
+OPTIONAL_SESSION_KEYS = {"briefed_generation"}
 CURSOR_EVENTS = {
     "sessionStart",
     "sessionEnd",
@@ -462,11 +463,13 @@ def fresh_session(key: str, platform: str) -> dict:
         "parked": None,
         "reminded_generation": None,
         "followup_generation": None,
+        "briefed_generation": None,
     }
 
 
 def validate_session(data: dict) -> None:
-    if set(data) != SESSION_KEYS or data.get("version") != VERSION:
+    keys = set(data) - OPTIONAL_SESSION_KEYS
+    if keys != SESSION_KEYS or data.get("version") != VERSION:
         raise ValueError("session schema")
     if not isinstance(data["session_key"], str) or ":" not in data["session_key"]:
         raise ValueError("session key")
@@ -1491,7 +1494,7 @@ def cmd_decline(root: Path, session_key: str, digest: str) -> dict:
     return {"ok": True, "suggestion": digest, "status": "declined"}
 
 
-def cmd_status(root: Path, session_key: str | None, tree: bool = False) -> dict:
+def cmd_status(root: Path, session_key: str | None, tree: bool = False, context_id: str | None = None) -> dict:
     ensure_store(root)
     contexts, corrupt = read_contexts(root)
     if session_key is None:
@@ -1517,6 +1520,10 @@ def cmd_status(root: Path, session_key: str | None, tree: bool = False) -> dict:
     session = load_session(root, session_key)
     held = held_by(root, session_key)
     ctx = held[0] if len(held) == 1 else None
+    if context_id is not None:
+        ctx = next((item for item in held if item["id"] == context_id), None)
+        if ctx is None:
+            raise StepperError(f"session {session_key} holds no context {context_id}")
     return {
         "ok": True,
         "session": None
@@ -1779,6 +1786,7 @@ def handle_hook(inv: Invocation, payload: dict) -> dict | None:
         token = generation or "none"
         if sess.get("followup_generation") == token:
             return None
+        briefed = generation is not None and sess.get("briefed_generation") == generation
         if assistant:
             sess["last_assistant_text"] = assistant
             consider_candidate(root, sess, parse_candidates(assistant), ctx, generation)
@@ -1789,6 +1797,7 @@ def handle_hook(inv: Invocation, payload: dict) -> dict | None:
             shown
             and sess.get("prompt_class") == "tracked"
             and sess.get("reminded_generation") != token
+            and not briefed
             and not teaching_owner(root, key)
         ):
             parts.append(active_reminder(shown))
@@ -1891,7 +1900,7 @@ def run_command(args: argparse.Namespace) -> dict:
         elif args.cmd == "add":
             body = cmd_add(root, args.session, context_id, args.item or [], args.parent)
         elif args.cmd == "status":
-            body = cmd_status(root, args.session, args.tree)
+            body = cmd_status(root, args.session, args.tree, args.context)
         elif args.cmd == "focus":
             body = cmd_focus(root, args.session, context_id, args.item_id)
         elif args.cmd == "verify":
@@ -1921,14 +1930,32 @@ def run_command(args: argparse.Namespace) -> dict:
         elif args.cmd == "replace":
             body = cmd_replace(root, args.session, context_id, args.item or [])
         elif args.cmd == "attach":
-            body = cmd_attach(root, args.session, args.context_id, args.take)
+            attach_id = args.context_flag or args.context_id
+            if not attach_id:
+                raise StepperError("attach needs a context: pass --context <id>")
+            body = cmd_attach(root, args.session, attach_id, args.take)
         elif args.cmd == "detach":
             body = cmd_detach(root, args.session, context_id)
         elif args.cmd == "decline":
             body = cmd_decline(root, args.session, args.hash)
         else:
             raise StepperError(f"unknown command {args.cmd}")
+        if hasattr(args, "full") and not args.full and body.get("ok") and "brief" in body:
+            body = {"ok": True, "brief": body["brief"]}
+        note_briefed(root, getattr(args, "session", None))
         return attach_leftovers(root, body)
+
+
+def note_briefed(root: Path, session_key: str | None) -> None:
+    """A command run for a session this turn briefed or changed its sitting.
+
+    The stop hook reads the mark and sends no second brief for the turn.
+    """
+    sess = load_session(root, session_key) if session_key else None
+    if sess is None or sess.get("generation_id") is None:
+        return
+    sess["briefed_generation"] = sess["generation_id"]
+    save_session(root, sess)
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -1943,6 +1970,8 @@ def build_parser() -> argparse.ArgumentParser:
 
     def context(command: argparse.ArgumentParser) -> None:
         command.add_argument("--context", required=True)
+        command.add_argument("--brief", action="store_true")  # no-op alias: brief is the default
+        command.add_argument("--full", action="store_true")
 
     capture = sub.add_parser("capture")
     root(capture)
@@ -1962,6 +1991,7 @@ def build_parser() -> argparse.ArgumentParser:
     root(status)
     session(status, required=False)
     status.add_argument("--tree", action="store_true")
+    status.add_argument("--context")
 
     for name in ("focus", "unblock", "defer", "cancel"):
         command = sub.add_parser(name)
@@ -2012,7 +2042,10 @@ def build_parser() -> argparse.ArgumentParser:
     attach = sub.add_parser("attach")
     root(attach)
     session(attach)
-    attach.add_argument("context_id")
+    attach.add_argument("context_id", nargs="?")
+    attach.add_argument("--context", dest="context_flag")
+    attach.add_argument("--brief", action="store_true")  # no-op alias: brief is the default
+    attach.add_argument("--full", action="store_true")
     attach.add_argument("--take", action="store_true")
 
     decline = sub.add_parser("decline")

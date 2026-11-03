@@ -51,8 +51,13 @@ class StepperTests(unittest.TestCase):
             "detach",
         }
         prefix = []
+        args = list(args)
         if command in named and "--context" not in args:
             prefix = ["--context", "default"]
+        if "--default" in args:
+            args.remove("--default")
+        elif (command in named or command == "attach") and "--brief" not in args:
+            args.append("--full")
         proc = subprocess.run(
             [sys.executable, str(STEPPER), command, "--root", str(self.root), *prefix, *args],
             text=True,
@@ -212,6 +217,7 @@ class StepperTests(unittest.TestCase):
                 "default",
                 "--item",
                 "M-5: waiting on Blaze",
+                "--full",
             ],
             cwd=other,
             text=True,
@@ -325,6 +331,63 @@ class StepperTests(unittest.TestCase):
         self.assertIsNone(status["context"])
         code, inventory = self.cli("status")
         self.assertEqual(inventory["contexts"][0]["lease"]["session_key"], "cursor:aaa")
+
+    def test_state_change_default_output_is_the_brief(self):
+        self.capture()
+        code, data = self.cli("verify", "--session", "cursor:aaa", "AC-3", "--evidence", "sent", "--default")
+        self.assertEqual(code, 0)
+        self.assertEqual(set(data), {"ok", "brief"})
+        self.assertEqual(set(data["brief"]), {"done", "left", "blocked", "position"})
+
+    def test_state_change_with_full_returns_the_store(self):
+        self.capture()
+        code, data = self.cli(
+            "verify", "--session", "cursor:aaa", "AC-3", "--evidence", "sent", "--full"
+        )
+        self.assertEqual(code, 0)
+        for key in ("context", "reminder", "progress", "brief"):
+            self.assertIn(key, data)
+
+    def test_attach_default_is_the_brief_and_full_returns_the_store(self):
+        self.capture()
+        self.register("cursor:bbb")
+        code, taken = self.cli("attach", "--session", "cursor:bbb", "--context", "default", "--take", "--default")
+        self.assertEqual(set(taken), {"ok", "brief"})
+        self.register("cursor:ccc")
+        code, full = self.cli(
+            "attach", "--session", "cursor:ccc", "--context", "default", "--take", "--full"
+        )
+        self.assertIn("context", full)
+
+    def test_state_change_with_brief_prints_only_the_four_parts(self):
+        self.capture()
+        code, data = self.cli(
+            "verify", "--session", "cursor:aaa", "AC-3", "--evidence", "sent", "--brief"
+        )
+        self.assertEqual(code, 0)
+        self.assertEqual(set(data), {"ok", "brief"})
+        self.assertEqual(set(data["brief"]), {"done", "left", "blocked", "position"})
+        self.assertIn("AC-3", data["brief"]["done"])
+        code, full = self.cli("status", "--session", "cursor:aaa")
+        self.assertEqual(full["brief"], data["brief"])
+
+    def test_brief_flag_works_on_other_state_changes(self):
+        self.capture()
+        code, data = self.cli("block", "--session", "cursor:aaa", "AC-3", "--reason", "wait", "--brief")
+        self.assertEqual(code, 0)
+        self.assertEqual(set(data), {"ok", "brief"})
+        self.assertIn("AC-3", data["brief"]["blocked"])
+
+    def test_attach_takes_context_argument_like_other_commands(self):
+        self.capture()
+        self.register("cursor:bbb")
+        code, taken = self.cli(
+            "attach", "--session", "cursor:bbb", "--context", "default", "--take", "--brief"
+        )
+        self.assertEqual(code, 0)
+        self.assertEqual(set(taken), {"ok", "brief"})
+        code, full = self.cli("status", "--session", "cursor:bbb")
+        self.assertEqual(full["context"]["lease"]["session_key"], "cursor:bbb")
 
     def test_attach_requires_take_for_a_live_lease(self):
         self.capture()
@@ -630,6 +693,7 @@ class StepperTests(unittest.TestCase):
                 "default",
                 "--item",
                 "AC-3: reset email is sent",
+                "--full",
             ],
             cwd=checkout,
             text=True,
@@ -1187,6 +1251,69 @@ class StepperTests(unittest.TestCase):
             },
         )
         self.assertEqual(out, "")
+
+    def stop_after(self, generation):
+        return self.hook(
+            "cursor",
+            {
+                "hook_event_name": "stop",
+                "conversation_id": "aaa",
+                "generation_id": generation,
+                "status": "completed",
+                "loop_count": 0,
+            },
+        )
+
+    def test_stop_is_quiet_after_a_turn_that_briefed_the_sitting(self):
+        self.capture()
+        self.register("cursor:aaa", prompt="fix AC-3", generation="g-brief")
+        self.cli("status", "--session", "cursor:aaa")
+        _code, _data, out = self.stop_after("g-brief")
+        self.assertEqual(out, "")
+
+    def test_status_with_context_speaks_that_sitting_when_the_session_holds_several(self):
+        self.capture()
+        self.cli("capture", "--session", "cursor:aaa", "--context", "pr-queue", "--item", "PQ-1: review one")
+        _code, unscoped = self.cli("status", "--session", "cursor:aaa")
+        self.assertIsNone(unscoped["context"])
+        code, scoped = self.cli("status", "--session", "cursor:aaa", "--context", "pr-queue")
+        self.assertEqual(code, 0, scoped)
+        self.assertEqual([i["id"] for i in scoped["context"]["items"]], ["PQ-1"])
+        self.assertEqual(scoped["brief"]["left"], ["PQ-1"])
+        code, missing = self.cli("status", "--session", "cursor:aaa", "--context", "nope")
+        self.assertNotEqual(code, 0)
+
+    def test_stop_reminds_once_when_the_turn_left_the_active_item_without_a_brief(self):
+        self.capture()
+        self.register("cursor:aaa", prompt="fix AC-3", generation="g-none")
+        _code, data, _out = self.stop_after("g-none")
+        self.assertIn("AC-3 active", data["followup_message"])
+        _code, _data, out = self.stop_after("g-none")
+        self.assertEqual(out, "")
+
+    def test_stop_is_quiet_when_another_skill_owns_the_turn(self):
+        self.capture()
+        latch = self.root / ".claude" / "turn-owner.json"
+        latch.parent.mkdir()
+        latch.write_text(json.dumps({"session_key": "cursor:aaa", "owner": "pair", "pending_offer": False}))
+        self.register("cursor:aaa", prompt="fix AC-3", generation="g-owned")
+        _code, _data, out = self.stop_after("g-owned")
+        self.assertEqual(out, "")
+
+    def test_stop_is_quiet_after_a_turn_that_changed_the_sitting(self):
+        self.capture()
+        self.register("cursor:aaa", prompt="fix AC-3", generation="g-change")
+        self.cli("verify", "--session", "cursor:aaa", "AC-3", "--evidence", "tested")
+        _code, _data, out = self.stop_after("g-change")
+        self.assertEqual(out, "")
+
+    def test_a_brief_in_an_earlier_turn_does_not_silence_a_later_stop(self):
+        self.capture()
+        self.register("cursor:aaa", prompt="fix AC-3", generation="g-one")
+        self.cli("status", "--session", "cursor:aaa")
+        self.register("cursor:aaa", prompt="fix AC-3", generation="g-two")
+        _code, data, _out = self.stop_after("g-two")
+        self.assertIn("AC-3 active", data["followup_message"])
 
     def test_teaching_owner_suppresses_stop_and_session_start_reminders(self):
         self.capture()

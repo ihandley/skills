@@ -224,6 +224,166 @@
      }
     ]
    }
+  },
+  {
+   "number": 18,
+   "title": "orphaned",
+   "isDraft": false,
+   "state": "OPEN",
+   "updatedAt": "2026-10-22T10:00:00Z",
+   "headRefName": "x",
+   "headRefOid": "h",
+   "body": "",
+   "repository": {
+    "name": "r1"
+   },
+   "author": {
+    "__typename": "User",
+    "login": "dana"
+   },
+   "commits": {
+    "nodes": []
+   },
+   "reviews": {
+    "nodes": []
+   },
+   "reviewRequests": {
+    "nodes": []
+   }
+  },
+  {
+   "number": 19,
+   "title": "clashes",
+   "isDraft": false,
+   "state": "OPEN",
+   "updatedAt": "2026-10-22T11:00:00Z",
+   "headRefName": "x",
+   "headRefOid": "h",
+   "body": "",
+   "repository": {
+    "name": "r1"
+   },
+   "author": {
+    "__typename": "User",
+    "login": "bob"
+   },
+   "commits": {
+    "nodes": []
+   },
+   "reviews": {
+    "nodes": []
+   },
+   "reviewRequests": {
+    "nodes": []
+   },
+   "mergeable": "CONFLICTING"
+  },
+  {
+   "number": 20,
+   "title": "broken checks",
+   "isDraft": false,
+   "state": "OPEN",
+   "updatedAt": "2026-10-22T12:00:00Z",
+   "headRefName": "x",
+   "headRefOid": "h",
+   "body": "",
+   "repository": {
+    "name": "r1"
+   },
+   "author": {
+    "__typename": "User",
+    "login": "bob"
+   },
+   "commits": {
+    "nodes": [
+     {
+      "commit": {
+       "message": "",
+       "statusCheckRollup": {
+        "state": "FAILURE"
+       }
+      }
+     }
+    ]
+   },
+   "reviews": {
+    "nodes": []
+   },
+   "reviewRequests": {
+    "nodes": []
+   }
+  },
+  {
+   "number": 21,
+   "title": "all marks",
+   "isDraft": false,
+   "state": "OPEN",
+   "updatedAt": "2026-10-22T13:00:00Z",
+   "headRefName": "x",
+   "headRefOid": "h",
+   "body": "",
+   "repository": {
+    "name": "r1"
+   },
+   "author": {
+    "__typename": "User",
+    "login": "dana"
+   },
+   "commits": {
+    "nodes": [
+     {
+      "commit": {
+       "message": "",
+       "statusCheckRollup": {
+        "state": "ERROR"
+       }
+      }
+     }
+    ]
+   },
+   "reviews": {
+    "nodes": []
+   },
+   "reviewRequests": {
+    "nodes": []
+   },
+   "mergeable": "CONFLICTING"
+  },
+  {
+   "number": 22,
+   "title": "healthy",
+   "isDraft": false,
+   "state": "OPEN",
+   "updatedAt": "2026-10-22T14:00:00Z",
+   "headRefName": "x",
+   "headRefOid": "h",
+   "body": "",
+   "repository": {
+    "name": "r1"
+   },
+   "author": {
+    "__typename": "User",
+    "login": "bob"
+   },
+   "commits": {
+    "nodes": [
+     {
+      "commit": {
+       "message": "",
+       "statusCheckRollup": {
+        "state": "SUCCESS"
+       }
+      }
+     }
+    ]
+   },
+   "reviews": {
+    "nodes": []
+   },
+   "reviewRequests": {
+    "nodes": []
+   },
+   "mergeable": "MERGEABLE"
   }
  ],
  "old": [

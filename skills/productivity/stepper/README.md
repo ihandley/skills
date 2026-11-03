@@ -169,7 +169,7 @@ python3 stepper.py resume --session 'cursor:<conversation-id>' --root /path/to/p
 python3 stepper.py close --session 'cursor:<conversation-id>' --root /path/to/project --context auth-fix
 ```
 
-The agent should supply the session key and project root from the hook line, not the placeholders above. Other commands include `add`, `block`, `unblock`, `defer`, `cancel`, `attach`, `detach`, and `decline`.
+The agent should supply the session key and project root from the hook line, not the placeholders above. Other commands include `add`, `block`, `unblock`, `defer`, `cancel`, `attach`, `detach`, and `decline`. Any state change prints only the four brief parts (`done`, `left`, `blocked`, `position`) by default; add `--full` for the whole store. `--brief` is still accepted and does nothing. `attach` takes `--context <id>` (the positional id still works).
 
 ## Current limitations
 
