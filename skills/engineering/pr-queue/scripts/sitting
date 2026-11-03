@@ -1,8 +1,8 @@
 #!/usr/bin/env ruby
 # frozen_string_literal: true
 
-# The sitting commands. This file builds `open` and `checkout`; strike, brief,
-# and walk join it as their tickets land.
+# The sitting commands. This file builds `open`, `strike`, `brief`, and
+# `checkout`; walk joins it as its ticket lands.
 #
 #   sitting open --session KEY --root PATH --stepper PATH --viewer LOGIN [--all]
 #                [--started EPOCH] [--aliases PATH] < issues
@@ -13,6 +13,16 @@
 # reads; this command does not search Jira.
 #
 #   sitting checkout --session KEY --root PATH --stepper PATH [--aliases PATH]
+#
+#   sitting strike --session KEY --root PATH --stepper PATH --evidence TEXT
+#
+# Verifies the active pr-queue item with the evidence given, then prints the next
+# item's four brief parts (done, left, blocked, position) from stepper's --brief
+# form, never the whole store.
+#
+#   sitting brief --session KEY --root PATH --stepper PATH
+#
+# Prints the four brief parts for this chat's sitting. Changes nothing.
 #
 # Resolves the active pr-queue item to its local clone, leaves that clone on the
 # pull request head, and prints the clone path and the pull request's base ref.
@@ -65,9 +75,29 @@ def open_sitting(options)
   end
 
   held = Array(stepper(options, "status", "--root", options[:root])["contexts"]).any? { |context| context["id"] == CONTEXT && !context["closed"] }
-  brief = held ? stepper(options, *attach)["brief"] : { "done" => [], "left" => [], "blocked" => [], "position" => "none" }
+  print_brief(held ? stepper(options, *attach)["brief"] : { "done" => [], "left" => [], "blocked" => [], "position" => "none" })
+end
+
+def print_brief(brief)
   %w[done left blocked].each { |part| puts "#{part}: #{Array(brief[part]).empty? ? "none" : brief[part].join(", ")}" }
   puts "position: #{brief["position"]}"
+end
+
+def strike(options)
+  %i[session root stepper].each { |key| stop("pass --#{key}") unless options[key] }
+  stop("pass --evidence") if options[:evidence].to_s.strip.empty?
+
+  items = Array(stepper(options, "status", *scope(options)).dig("context", "items"))
+  active = items.find { |entry| entry["status"] == "active" }
+  stop("no active item in the sitting") unless active
+
+  print_brief(stepper(options, "verify", *scope(options), "--context", CONTEXT, active["id"], "--evidence", options[:evidence], "--brief")["brief"])
+end
+
+def brief(options)
+  %i[session root stepper].each { |key| stop("pass --#{key}") unless options[key] }
+
+  print_brief(stepper(options, "status", *scope(options))["brief"])
 end
 
 def fetch_queue(options)
@@ -125,6 +155,7 @@ parser = OptionParser.new do |opts|
   opts.on("--root PATH") { |value| options[:root] = value }
   opts.on("--stepper PATH") { |value| options[:stepper] = value }
   opts.on("--aliases PATH") { |value| options[:aliases] = value }
+  opts.on("--evidence TEXT") { |value| options[:evidence] = value }
   opts.on("--viewer LOGIN") { |value| options[:viewer] = value }
   opts.on("--all") { options[:all] = true }
   opts.on("--started EPOCH") { |value| options[:started] = value }
@@ -136,6 +167,8 @@ parser.parse!
 
 case command
 when "open" then open_sitting(options)
+when "strike" then strike(options)
+when "brief" then brief(options)
 when "checkout" then checkout(options)
-else stop("usage: sitting open|checkout --session KEY --root PATH --stepper PATH")
+else stop("usage: sitting open|strike|brief|checkout --session KEY --root PATH --stepper PATH")
 end

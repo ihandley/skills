@@ -55,10 +55,10 @@ After qpre exits, read the one outcome line qpre wrote for that pull request, an
 
 Then ask the user to strike the item or do something else. Something else is handled, then the same question comes back. An unfinished walk still offers a strike.
 
-A **strike** is the user's decision that the item is finished. `verify` the active item with the outcome and the user's decision as evidence, then speak the four brief parts for the next item. Do not start qpre until the user says start.
+A **strike** is the user's decision that the item is finished. Run `sitting strike --session KEY --root PATH --stepper PATH --evidence TEXT`, with the outcome and the user's decision as the evidence. Do not run `stepper verify` yourself. It verifies the active item and prints the next item's four brief parts, which you speak (`done`, `left`, `blocked`, `position`). Do not start qpre until the user says start. `sitting brief` with the same `--session`, `--root`, and `--stepper` prints the four parts again without changing anything.
 
 A **row number** on the backlog table runs `qpre` with that row's URL, rebuilt as `https://github.com/<github_org>/<repo>/pull/<number>`. It captures no list.
 
 `skip` only when the user asks to skip.
 
-Done when qpre has been started for the active item, or a backlog row was named, or the item was struck and the next item briefed.
+Done when qpre has been started for the active item, or a backlog row was named, or `sitting strike` ran and the next item was briefed.
