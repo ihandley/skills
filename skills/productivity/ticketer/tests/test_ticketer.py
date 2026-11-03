@@ -800,6 +800,107 @@ class ParentLadderUpdateTests(Base):
         self.assertIn("parent: AB-1 | Epic | Reset email | In Progress", data["render"])
 
 
+class ParentSearchTests(Base):
+    def setUp(self):
+        super().setUp()
+        self.write_config("""
+tracker = "jira"
+required = ["summary"]
+parent_match_field = "customfield_10691"
+parent_match_type = "Epic"
+[defaults]
+cloud_id = "acme.atlassian.net"
+project_key = "PROJ"
+[parent_ladder]
+Task = ["Epic"]
+[parent_project]
+Epic = ["JET"]
+Task = ["JET"]
+Bucket = ["LPP"]
+Widget = ["LPP"]
+""")
+
+    def test_search_limits_project_type_and_done_and_escapes_quotes(self):
+        code, data, _ = self.run_cli("find-parent", "--query", 'say "hi"', "--type", "Epic")
+        self.assertEqual(code, 0, data)
+        payload = data["descriptor"]["payload"]
+        self.assertEqual(
+            payload["jql"],
+            'project = JET AND issuetype = "Epic" AND statusCategory != Done AND text ~ "say  hi" ORDER BY updated DESC',
+        )
+        self.assertEqual(payload["maxResults"], 10)
+        self.assertEqual(payload["fields"], ["summary", "status", "issuetype", "parent"])
+        self.assertEqual(payload["cloudId"], "acme.atlassian.net")
+        self.assertEqual(data["cap"], 10)
+        self.assertEqual(data["descriptor"]["operation"], "jira.search_issues")
+
+    def test_match_field_applies_only_to_the_match_type(self):
+        _, epic, _ = self.run_cli("find-parent", "--query", "reset", "--type", "Epic", "--match", 'Edge "Cloud"')
+        self.assertEqual(
+            epic["descriptor"]["payload"]["jql"],
+            'project = JET AND issuetype = "Epic" AND cf[10691] = "Edge  Cloud" AND statusCategory != Done AND text ~ "reset" ORDER BY updated DESC',
+        )
+        _, other, _ = self.run_cli("find-parent", "--query", "reset", "--type", "Bucket", "--match", "Edge")
+        self.assertNotIn("cf[10691]", other["descriptor"]["payload"]["jql"])
+        _, both, _ = self.run_cli(
+            "find-parent", "--query", "reset", "--type", "Epic", "--type", "Bucket", "--match", "Edge",
+        )
+        self.assertEqual(
+            both["descriptor"]["payload"]["jql"],
+            '((project = JET AND issuetype = "Epic" AND cf[10691] = "Edge") OR (project = LPP AND issuetype = "Bucket")) AND statusCategory != Done AND text ~ "reset" ORDER BY updated DESC',
+        )
+
+    def test_search_can_require_parent_keys(self):
+        _, keys, _ = self.run_cli(
+            "find-parent", "--query", "reset", "--type", "Epic", "--parent-key", "EN-1", "--parent-key", "EN-2",
+        )
+        self.assertEqual(
+            keys["descriptor"]["payload"]["jql"],
+            'project = JET AND issuetype = "Epic" AND statusCategory != Done AND text ~ "reset" AND parent in (EN-1, EN-2) ORDER BY updated DESC',
+        )
+
+    def test_types_that_share_a_project_share_a_clause(self):
+        _, data, _ = self.run_cli("find-parent", "--query", "reset", "--type", "Bucket", "--type", "Widget")
+        self.assertEqual(
+            data["descriptor"]["payload"]["jql"],
+            'project = LPP AND issuetype in ("Bucket", "Widget") AND statusCategory != Done AND text ~ "reset" ORDER BY updated DESC',
+        )
+
+    def test_search_reports_when_the_cap_hides_further_hits(self):
+        def issue(key):
+            return {"key": key, "fields": {"summary": "Reset", "status": {"name": "Open"}}}
+
+        code, data, _ = self.run_cli(
+            "find-parent", "--query", "reset", "--type", "Epic", "--result", "-",
+            stdin={"issues": [issue("AB-1"), issue("AB-2")], "isLast": False, "total": 12},
+        )
+        self.assertEqual(code, 0, data)
+        self.assertTrue(data["more"])
+        self.assertEqual(data["shown"], [
+            {"key": "AB-1", "summary": "Reset", "status": "Open"},
+            {"key": "AB-2", "summary": "Reset", "status": "Open"},
+        ])
+        _, done, _ = self.run_cli(
+            "find-parent", "--query", "reset", "--type", "Epic", "--result", "-",
+            stdin={"issues": [issue("AB-1")], "isLast": True, "total": 1},
+        )
+        self.assertFalse(done["more"])
+        many = [issue("AB-%d" % n) for n in range(1, 13)]
+        _, capped, _ = self.run_cli(
+            "find-parent", "--query", "reset", "--type", "Epic", "--result", "-",
+            stdin={"issues": many, "isLast": True, "total": 12},
+        )
+        self.assertEqual(len(capped["shown"]), 10)
+        self.assertTrue(capped["more"])
+
+    def test_malformed_parent_key_is_refused_before_a_query(self):
+        code, data, _ = self.run_cli(
+            "find-parent", "--query", "reset", "--type", "Epic", "--parent-key", "nope",
+        )
+        self.assertEqual(code, 2)
+        self.assertNotIn("descriptor", data)
+
+
 class ParentProjectTests(Base):
     def setUp(self):
         super().setUp()

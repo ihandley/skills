@@ -881,14 +881,47 @@ def cmd_verify(args):
     return {"ok": ok, "ref": ref, "mismatches": mismatches, "unverifiable": unverifiable}, 0 if ok else EXIT_REFUSED
 
 
+def search_report(raw, cap):
+    """Shown hits, and whether the cap hid further ones."""
+    if not isinstance(raw, dict):
+        return [], False
+    issues = raw.get("issues") if isinstance(raw.get("issues"), list) else raw.get("values")
+    if not isinstance(issues, list):
+        issues = []
+    total = raw.get("total")
+    more = bool(raw.get("nextPageToken")) or raw.get("isLast") is False or (
+        isinstance(total, int) and not isinstance(total, bool) and total > cap) or len(issues) > cap
+    shown = []
+    for issue in issues[:cap]:
+        if not isinstance(issue, dict):
+            continue
+        fields = issue.get("fields") if isinstance(issue.get("fields"), dict) else {}
+        status = fields.get("status")
+        if isinstance(status, dict):
+            status = status.get("name")
+        shown.append({"key": issue.get("key"), "summary": fields.get("summary"), "status": status})
+    return shown, more
+
+
 def cmd_find_parent(args):
     info = require_config(args)
     config = load_config(info["config_path"], info["overrides"])
     adapter = get_adapter(config["tracker"])
-    descriptor = adapter.find_parent(args.query, config)
+    try:
+        descriptor = adapter.find_parent(
+            args.query, config, types=args.type or [], match=args.match,
+            parent_keys=args.parent_key or [],
+        )
+    except ValueError as exc:
+        raise Fail(EXIT_REFUSED, str(exc))
     if descriptor is None:
         raise Fail(EXIT_REFUSED, "%s does not support parent search" % adapter.NAME)
-    return {"ok": True, "descriptor": descriptor}, 0
+    result = {"ok": True, "descriptor": descriptor, "cap": descriptor.get("payload", {}).get("maxResults", 10)}
+    if args.result:
+        shown, more = search_report(read_json_input(args.result), result["cap"])
+        result["shown"] = shown
+        result["more"] = more
+    return result, 0
 
 
 def parser():
@@ -946,9 +979,13 @@ def parser():
     p.add_argument("--result", default="-")
     p.set_defaults(fn=cmd_verify)
 
-    p = sub.add_parser("find-parent", help="emit a search for an existing parent epic")
+    p = sub.add_parser("find-parent", help="emit a search for an existing parent")
     common(p)
     p.add_argument("--query", required=True)
+    p.add_argument("--type", action="append", help="issue type to search; repeat for several")
+    p.add_argument("--match", help="value for parent_match_field when the searched type is parent_match_type")
+    p.add_argument("--parent-key", action="append", help="hit parent must be one of these keys")
+    p.add_argument("--result", help="search JSON; report whether the cap hid further hits")
     p.set_defaults(fn=cmd_find_parent)
     return top
 

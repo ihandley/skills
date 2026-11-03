@@ -58,7 +58,7 @@ def metadata_needs(draft, scope_value):
     }]
 
 
-def find_parent(query, config):
+def find_parent(query, config, types=None, match=None, parent_keys=None):
     """GitHub issues have no parent search."""
     return None
 

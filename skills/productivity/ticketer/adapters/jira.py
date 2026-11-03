@@ -317,14 +317,95 @@ def readback(draft):
                         "fields": ["summary", "description", "issuetype", "priority", "labels", "components", "parent", "assignee"]}}
 
 
-def find_parent(query, config):
-    defaults = config["defaults"]
-    project = defaults.get("project_key", "<project_key>")
-    safe = query.replace("\\", " ").replace('"', " ")
+def _jql_escape(text):
+    return (text or "").replace("\\", " ").replace('"', " ").strip()
+
+
+def _projects_for(type_name, config):
+    listed = None
+    for key, value in (config.get("parent_project") or {}).items():
+        if str(key).casefold() == type_name.casefold():
+            listed = value
+            break
+    if listed:
+        return tuple(listed)
+    return (config.get("defaults", {}).get("project_key") or "<project_key>",)
+
+
+def _project_clause(projects):
+    if len(projects) == 1:
+        return "project = %s" % projects[0]
+    return "project in (%s)" % ", ".join(projects)
+
+
+def _type_clause(types):
+    if len(types) == 1:
+        return 'issuetype = "%s"' % types[0]
+    return "issuetype in (%s)" % ", ".join('"%s"' % item for item in types)
+
+
+def _match_clause(config, match):
+    field = config.get("parent_match_field") or ""
+    match_id = re.fullmatch(r"customfield_(\d+)", field)
+    if match_id:
+        return 'cf[%s] = "%s"' % (match_id.group(1), _jql_escape(match))
+    if re.fullmatch(r"[A-Za-z][A-Za-z0-9_ ]*", field):
+        return '"%s" = "%s"' % (field, _jql_escape(match))
+    raise ValueError("parent_match_field %r cannot be used in a search" % field)
+
+
+def find_parent(query, config, types=None, match=None, parent_keys=None):
+    """Emit one Jira search. Parent keys are a `parent in (...)` clause.
+
+    Jira Cloud's parent field accepts issue keys, not issue types, so a parent
+    type is a search of that type followed by this clause.
+    """
+    defaults = config.get("defaults") or {}
+    types = list(types or [])
+    parent_keys = list(parent_keys or [])
+    if not types:
+        project = defaults.get("project_key", "<project_key>")
+        safe = _jql_escape(query)
+        jql = 'project = %s AND issuetype = Epic AND statusCategory != Done AND text ~ "%s" ORDER BY updated DESC' % (project, safe)
+        return {"operation": "jira.search_issues",
+                "payload": {"cloudId": defaults.get("cloud_id", "<cloud_id>"),
+                            "jql": jql, "maxResults": 10, "fields": ["summary", "status"]}}
+    for name in types:
+        if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9 _-]*", name):
+            raise ValueError("issue type %r cannot be searched" % name)
+    for key in parent_keys:
+        if not KEY_RE.match(key):
+            raise ValueError("parent %r is not an issue key like PROJ-123" % key)
+    match_type = (config.get("parent_match_type") or "").casefold()
+    narrowed = _match_clause(config, match) if match and match_type else None
+    groups = []
+    index = {}
+    for name in types:
+        projects = _projects_for(name, config)
+        for project in projects:
+            if not PROJECT_RE.match(project):
+                raise ValueError("project %r cannot be searched" % project)
+        if projects not in index:
+            index[projects] = len(groups)
+            groups.append((projects, []))
+        groups[index[projects]][1].append(name)
+    parts = []
+    for projects, names in groups:
+        matched = [name for name in names if narrowed and name.casefold() == match_type]
+        others = [name for name in names if name not in matched]
+        if matched:
+            parts.append("%s AND %s AND %s" % (_project_clause(projects), _type_clause(matched), narrowed))
+        if others:
+            parts.append("%s AND %s" % (_project_clause(projects), _type_clause(others)))
+    head = parts[0] if len(parts) == 1 else "(" + " OR ".join("(%s)" % part for part in parts) + ")"
+    jql = '%s AND statusCategory != Done AND text ~ "%s"' % (head, _jql_escape(query))
+    if parent_keys:
+        jql += " AND parent in (%s)" % ", ".join(parent_keys)
+    jql += " ORDER BY updated DESC"
     return {"operation": "jira.search_issues",
             "payload": {"cloudId": defaults.get("cloud_id", "<cloud_id>"),
-                        "jql": 'project = %s AND issuetype = Epic AND statusCategory != Done AND text ~ "%s" ORDER BY updated DESC' % (project, safe),
-                        "maxResults": 10, "fields": ["summary", "status"]}}
+                        "jql": jql, "maxResults": 10, "searchResultMode": "all",
+                        "fields": ["summary", "status", "issuetype", "parent"]}}
 
 
 def _names(items):
