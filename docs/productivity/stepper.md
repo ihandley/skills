@@ -15,6 +15,9 @@ Reach for it when you want to walk one feature through to the end without losing
 **Where does the list live?**
 In `~/.stepper` on this machine, outside any checkout. The `Stepper session:` line names the checkout. Commands pass that path as `--root` so a list about one repo can record that repo's origin. The checkout itself gains no store. The skill directory is refused as a checkout. The repository that contains the skill is a normal checkout.
 
+**Can a state change print less than the whole list?**
+Yes. Add `--brief` to a state change and it prints only the four brief parts: done, left, blocked, and position. Without it the command prints the full store.
+
 **What happens when the active item is blocked?**
 Stepper recommends waiting, and says why. You can skip to the next item when that item does not depend on the blocked one. Skipping is available. Waiting is the recommendation.
 

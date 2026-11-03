@@ -42,7 +42,7 @@ Done when all four parts were spoken and match `status`.
 
 A state change names one context. The user's words select it when they name the sitting `pr-queue`, a pull request on that sitting, or a list name they already accepted. When a message asks for a state change and names none of those, ask once which context and wait. Do not choose the context that changed most recently. Do not choose from the checkout.
 
-A brief spoken after a change is the `brief` on that command's result. It covers the context that changed.
+A brief spoken after a change is the `brief` on that command's result. It covers the context that changed. Add `--brief` to a state change to print only `ok` and the `brief`; without it the command prints the full store. `attach` takes `--session`, `--root`, and `--context` like the rest.
 
 ## Status
 
