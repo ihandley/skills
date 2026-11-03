@@ -14,7 +14,9 @@ metadata:
 
 A session may hold several contexts. Each context is one ordered list with one active item. The CLI in this directory is the source of truth. Leave files in the home store untouched; report the CLI error. Record evidence only for a criterion you have actually established, and pass that sentence to `verify`.
 
-**Brief.** The status spoken when an item becomes active, and again when the user moves to start something else: what is done, what is left, what is blocked, and where this item sits.
+**Reminder.** The one sentence a hook shows for the active item. A turn whose new input is that sentence adds nothing.
+
+**Brief.** The four-part account spoken when an item becomes active, and again when the user moves to start something else: what is done, what is left, what is blocked, and where this item sits.
 
 **Stick.** Work the active item until it is verified, or until the user chooses hold or skip.
 
@@ -34,7 +36,7 @@ Done when every state change in this turn passed `--session` and `--root` from t
 
 Read `brief` from `status`. Speak all four parts: `done`, `left`, `blocked`, and `position`. An empty list is the part with nothing in it. `position` `none` means no item is held.
 
-Do this when an item becomes active, and again before any new start.
+Do this when an item becomes active, and again before any new start. "Brief before any new start" in a reminder names that later start. Receiving the reminder is not one.
 
 Done when all four parts were spoken and match `status`.
 
@@ -72,6 +74,6 @@ Done when the user has been told to hold and why, or `skip` has moved the active
 - A list is held and the user has not accepted an order: [ORDER.md](references/ORDER.md).
 - The user says to drop the list or replace it: [REPLACE.md](references/REPLACE.md).
 
-An unrelated question or a pause leaves the list in place. Answer it, then brief. While `.claude/turn-owner.json` names this session's owner as understand or pair, that skill owns the turn. Leave the list leased and untouched. A turn that already briefed or changed the list gets no stop-hook reminder; the brief is spoken once.
+An unrelated question or a pause leaves the list in place. Answer it. Leave the brief for a new start, a list change, or a status request. While `.claude/turn-owner.json` names this session's owner as understand or pair, that skill owns the turn. Leave the list leased and untouched. A turn that already briefed or changed the list gets no stop-hook reminder. A turn whose new input is the reminder adds nothing: no brief, and no repeated questions. The brief is spoken once.
 
 Lease, archive, and corrupt-file failures: [proposal.md](proposal.md).

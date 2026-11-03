@@ -48,6 +48,14 @@ _Avoid_: Sitting, conversation, context
 An open context with its reminders off.
 _Avoid_: Blocked, held
 
+**Reminder**:
+The one sentence a hook shows for the active item.
+_Avoid_: Brief, status
+
+**Brief**:
+What is done, what is left, what is blocked, and where the active item sits.
+_Avoid_: Reminder, status
+
 **Complete**:
 A context in which every item is verified or cancelled, and at least one item is verified.
 _Avoid_: Done, closed
