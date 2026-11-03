@@ -34,11 +34,27 @@ _Avoid_: Structural, rewrite
 
 **Context**:
 One ordered list of work with a single active item, and its own name while it is open. It may name the repo it is about.
-_Avoid_: Instance, stepper instance
+_Avoid_: Instance, stepper instance, session
 
 **Lease**:
-A session's hold on a context. One context has one lease.
+A session's hold on one context. One context has one lease, and a session may hold several.
 _Avoid_: Lock, owner
+
+**Session**:
+One chat with the agent.
+_Avoid_: Sitting, conversation, context
+
+**Paused**:
+An open context with its reminders off.
+_Avoid_: Blocked, held
+
+**Complete**:
+A context in which every item is verified or cancelled, and at least one item is verified.
+_Avoid_: Done, closed
+
+**Closed**:
+A context that has been archived and has no lease.
+_Avoid_: Complete, deleted
 
 **Sitting**:
 One review of a queue, from capture until its ledger is done.
@@ -83,3 +99,23 @@ _Avoid_: Hierarchy, parent rules
 **Parent allow-list**:
 The only issue keys that satisfy a parent type.
 _Avoid_: Catalog, enabler list
+
+**Document**:
+An existing Markdown or plain-text file supplied by path. A shorter version does not have to be easier for a person to skim.
+_Avoid_: Outward draft, AI-generated doc
+
+**Outward draft**:
+Slack, email, Jira, Confluence, or pull-request text being drafted or rewritten in the conversation.
+_Avoid_: Document
+
+**Signal**:
+A fact, decision, condition, obligation, or instruction the next reader would get wrong without. A trigger phrase in a skill description is signal too.
+_Avoid_: Meaning, content, behavior
+
+**Padding**:
+History, motive, restatement, or transition whose removal leaves the signal in place.
+_Avoid_: Noise, fluff, prose
+
+**Candidate**:
+A proposed replacement for a document, held until it is accepted.
+_Avoid_: Draft, rewrite
