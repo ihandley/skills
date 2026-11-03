@@ -34,7 +34,7 @@ It runs `qpre` with the active item's pull request URL. Leaving `qpre` halfway l
 The loop reads the one outcome line `qpre` wrote and says `posted`, `clean`, or `unfinished`. It does not read the findings, which stay on the terminal. A missing line is a missing outcome, and you are still asked. You then strike the item or do something else. Something else returns to the same question. An unfinished walk still offers a strike.
 
 **What does a strike do?**
-It verifies the item with the outcome and your decision, then briefs the next item. `qpre` waits until you say start.
+`sitting strike --session KEY --root PATH --stepper PATH --evidence TEXT` verifies the active item with the evidence you give (the outcome and your decision), then prints the next item's four brief parts: `done`, `left`, `blocked`, `position`. It uses stepper's `--brief` form, so it never prints the whole store. The agent runs it instead of a raw `stepper verify`. `sitting brief` with the same session, root, and stepper arguments prints the four parts for the current sitting and changes nothing. `qpre` waits until you say start.
 
 **How do I check the active item out locally?**
 `sitting checkout --session KEY --root PATH --stepper PATH` (`scripts/sitting`, beside `pr-queue`) finds the clone of the active item's repository under `clone_roots` on the team record, leaves it on the pull request head, and prints `clone:` and `base:`. Diff against that base ref, not a local branch of the same name. A clone with uncommitted changes stops the command and is left alone. A missing `clone_roots` stops the run and names the key.
@@ -64,5 +64,6 @@ The Atlassian connection or the GitHub connection is missing, or the stepper hoo
 - The quiet count arrives without those older pull requests being downloaded.
 - The list is printed from searches that return pull requests. A search that comes back empty stops the run and names the query.
 - The run prints its total time from the prompt to the list, and it stays under five minutes.
-- `python3 skills/engineering/pr-queue/tests/test_pr_queue.py` and `test_sitting_open.py`, and `test_sitting_checkout.py` pass with no network.
+- `python3 skills/engineering/pr-queue/tests/test_pr_queue.py` and `test_sitting_open.py`, `test_sitting_strike.py`, and `test_sitting_checkout.py` pass with no network.
+- A strike prints four lines (`done`, `left`, `blocked`, `position`), not the ledger.
 - The run makes one Jira search with the stored cloud id and no site lookup.
