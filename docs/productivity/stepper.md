@@ -6,7 +6,7 @@ The list is temporary working memory for one stretch of delivery. The agent hold
 
 ## When to reach for it
 
-Type `/stepper`, or the agent reaches for it when a reply contains a concrete list of remaining work, when you ask what is left, or when you say to drop or replace the list.
+Type `/stepper`, or the agent reaches for it when a reply contains a concrete list of remaining work, when you ask what is left, when you ask what is open (the index), or when you say to drop or replace the list.
 
 Reach for it when you want to walk one feature through to the end without losing the thread. It is the wrong tool for learning a subject (`understand`) or for a ticket backlog.
 
@@ -40,7 +40,7 @@ The first command or hook in that checkout moves its open lists into `~/.stepper
 No. The chat that starts the list holds it. Another chat can take it only when you ask to continue that work there.
 
 **What if more than one list is open?**
-`list` is the index of every open list. Each row is the name, the day it last moved, how far the top-level items are, a lease word, and one line about the work. The lease word is `here` when this chat holds it, `elsewhere` when another chat does, and `free` when nobody does. A paused list keeps that word and adds `paused` in the same cell. A finished list stays, with the line `complete`. A closed list is left off. The repo and the chat id are left off the row. A damaged file or a leftover in the checkout is still reported with that index.
+`list` is the index of every open list. The index is newest local day first, then by name when the day is the same. Each row is the name, the day it last moved, how far the top-level items are, a lease word, and one line about the work. The lease word is `here` when this chat holds it, `elsewhere` when another chat does, and `free` when nobody does. A paused list keeps that word and adds `paused` in the same cell. A finished list stays, with the line `complete`. A closed list is left off. The repo and the chat id are left off the row. A damaged file or a leftover in the checkout is still reported with that index.
 
 `status` is the item table for one list. With no name, that is the list this chat holds. When this chat holds several, you are asked which name. Naming a list shows its items and leaves the hold where it is.
 

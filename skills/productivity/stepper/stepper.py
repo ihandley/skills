@@ -949,9 +949,8 @@ def local_day(stamp: str) -> str:
 
 
 def list_progress(ctx: dict) -> str:
-    tops = _children(ctx, None)
-    resolved = sum(1 for item in tops if item["status"] in ("verified", "cancelled"))
-    return f"{resolved}/{len(tops)}"
+    counts = _progress(ctx)["top_level"]
+    return f"{counts['resolved']}/{counts['total']}"
 
 
 def list_line(ctx: dict) -> str:

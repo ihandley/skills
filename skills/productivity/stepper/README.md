@@ -95,7 +95,7 @@ You interact with Stepper by talking to your coding agent. The agent invokes the
 | Say this | Expected behavior |
 | --- | --- |
 | “Track these acceptance criteria with Stepper.” | Create a tracked context |
-| “What's open?” | `list`: every open list, newest day first |
+| “What's open?” | `list`: every open list, newest day first, then by name when the day is the same |
 | “What's left?” | Brief: done, left, blocked, and where the active item sits |
 | “/stepper status” | The items in one list, each on its own row |
 | “Focus on AC-4.” | Make AC-4 the active item when its dependencies are met |

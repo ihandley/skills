@@ -3,8 +3,9 @@ name: stepper
 description: >-
   Track one ordered list of work and stick to the active item. Use when a
   concrete list of remaining work should be tracked, when a Stepper reminder
-  is in context, when the user asks what is left, or when the user says to
-  drop or replace the list. Change list state only through the stepper CLI.
+  is in context, when the user asks what is left, when the user asks what
+  is open, or when the user says to drop or replace the list. Change list
+  state only through the stepper CLI.
 compatibility: Requires Python 3
 metadata:
   author: ian.handley
