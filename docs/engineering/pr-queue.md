@@ -19,7 +19,7 @@ The `type: team` entry aliased "my team" in `~/.claude/aliases.yaml`. Authors ar
 One stepper list, not a table. In Review tickets stay in Jira rank, at any age. Recent pull requests are the ones updated in the last 7 days, newest first. The quiet count is every open pull request on the daily repos last updated more than 7 days ago, including pull requests you already approved. `all` counts the team's other repo lists as well. Your own open pull requests stay in the recent section. A pull request you have approved on its latest commit does not. Drafts, merged, and closed pull requests are never rows. A bot's pull request is a row only when an In Review ticket links it.
 
 **What is on a line?**
-`repo#number`, the title, the author's name, and days since the last update. A mark appears only when it applies: a repo list other than `repos_active` (`eol`, `lib`, and the other names shortened the same way) or `asked` when you are a requested reviewer, and and nothing else.
+`repo#number`, the title, the author's name, and days since the last update. A mark appears only when it applies: a repo list other than `repos_active` (`eol`, `lib`, and the other names shortened the same way) `asked` when you are a requested reviewer, `gone` when the author is not a known person, `conflict` when the pull request conflicts, or `red` when its checks are failing. The last three come from the same fetch as the queue. A line with none of these has no mark.
 
 **What if an In Review ticket has no pull request?**
 It is a count beside the quiet count ("2 without a pull request"), not a row. The same goes for a ticket whose only pull requests are drafts, merged, closed, or already approved by you.

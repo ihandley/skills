@@ -14,10 +14,10 @@ GQL = <<~GQL.tr("\n", " ")
       pageInfo { hasNextPage endCursor }
       nodes {
         ... on PullRequest {
-          number title isDraft state updatedAt headRefName headRefOid body
+          number title isDraft state updatedAt headRefName headRefOid mergeable body
           repository { name }
           author { __typename login }
-          commits(last: 20) { nodes { commit { message } } }
+          commits(last: 20) { nodes { commit { message statusCheckRollup { state } } } }
           reviews(last: 50) { nodes { state author { login } commit { oid } } }
           reviewRequests(first: 20) { nodes { requestedReviewer { ... on User { login } } } }
         }
@@ -135,6 +135,8 @@ def project_pr(node, viewer, project)
         review.dig("author", "login") == viewer &&
         review.dig("commit", "oid") == head
     end,
+    "conflicts" => node["mergeable"] == "CONFLICTING",
+    "red" => %w[FAILURE ERROR].include?(Array(node.dig("commits", "nodes")).last&.dig("commit", "statusCheckRollup", "state")),
     "approvals" => reviews.count { |review| review["state"] == "APPROVED" },
     "reviewRequestLogins" => Array(node.dig("reviewRequests", "nodes")).map { |request| request.dig("requestedReviewer", "login") }.compact
   }
@@ -217,6 +219,7 @@ repo_set = if options[:all]
 abort "missing repos_active" if repo_set.empty?
 
 names = {}
+known = people.values.map { |person| person.dig("ids", "github").to_s }.reject(&:empty?)
 people.each_value do |person|
   login = person.dig("ids", "github").to_s
   next if login.empty?
@@ -298,10 +301,13 @@ def list_mark(repo, lists)
   nil
 end
 
-def marks_for(pr, viewer, lists)
+def marks_for(pr, viewer, lists, known = nil)
   [
     list_mark(pr["repository"], lists),
-    ("asked" if pr["reviewRequestLogins"].include?(viewer))
+    ("asked" if pr["reviewRequestLogins"].include?(viewer)),
+    ("gone" if known && !known.include?(pr.dig("author", "login").to_s)),
+    ("conflict" if pr["conflicts"]),
+    ("red" if pr["red"])
   ].compact
 end
 
@@ -371,7 +377,7 @@ else
       homed[pr["id"]] = true
       text = item_text(
         "#{pr["repository"]}##{pr["number"]}",
-        marks_for(pr, options[:viewer], lists),
+        marks_for(pr, options[:viewer], lists, known),
         pr["title"],
         author_name(pr, names),
         age_days(pr["updatedAt"])
@@ -387,7 +393,7 @@ else
         .each do |pr|
     text = item_text(
       "#{pr["repository"]}##{pr["number"]}",
-      marks_for(pr, options[:viewer], lists),
+      marks_for(pr, options[:viewer], lists, known),
       pr["title"],
       author_name(pr, names),
       age_days(pr["updatedAt"])
