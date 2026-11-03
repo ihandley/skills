@@ -51,8 +51,13 @@ class StepperTests(unittest.TestCase):
             "detach",
         }
         prefix = []
+        args = list(args)
         if command in named and "--context" not in args:
             prefix = ["--context", "default"]
+        if "--default" in args:
+            args.remove("--default")
+        elif (command in named or command == "attach") and "--brief" not in args:
+            args.append("--full")
         proc = subprocess.run(
             [sys.executable, str(STEPPER), command, "--root", str(self.root), *prefix, *args],
             text=True,
@@ -212,6 +217,7 @@ class StepperTests(unittest.TestCase):
                 "default",
                 "--item",
                 "M-5: waiting on Blaze",
+                "--full",
             ],
             cwd=other,
             text=True,
@@ -326,12 +332,32 @@ class StepperTests(unittest.TestCase):
         code, inventory = self.cli("status")
         self.assertEqual(inventory["contexts"][0]["lease"]["session_key"], "cursor:aaa")
 
-    def test_state_change_default_output_is_the_full_store(self):
+    def test_state_change_default_output_is_the_brief(self):
         self.capture()
-        code, data = self.cli("verify", "--session", "cursor:aaa", "AC-3", "--evidence", "sent")
+        code, data = self.cli("verify", "--session", "cursor:aaa", "AC-3", "--evidence", "sent", "--default")
+        self.assertEqual(code, 0)
+        self.assertEqual(set(data), {"ok", "brief"})
+        self.assertEqual(set(data["brief"]), {"done", "left", "blocked", "position"})
+
+    def test_state_change_with_full_returns_the_store(self):
+        self.capture()
+        code, data = self.cli(
+            "verify", "--session", "cursor:aaa", "AC-3", "--evidence", "sent", "--full"
+        )
         self.assertEqual(code, 0)
         for key in ("context", "reminder", "progress", "brief"):
             self.assertIn(key, data)
+
+    def test_attach_default_is_the_brief_and_full_returns_the_store(self):
+        self.capture()
+        self.register("cursor:bbb")
+        code, taken = self.cli("attach", "--session", "cursor:bbb", "--context", "default", "--take", "--default")
+        self.assertEqual(set(taken), {"ok", "brief"})
+        self.register("cursor:ccc")
+        code, full = self.cli(
+            "attach", "--session", "cursor:ccc", "--context", "default", "--take", "--full"
+        )
+        self.assertIn("context", full)
 
     def test_state_change_with_brief_prints_only_the_four_parts(self):
         self.capture()
@@ -667,6 +693,7 @@ class StepperTests(unittest.TestCase):
                 "default",
                 "--item",
                 "AC-3: reset email is sent",
+                "--full",
             ],
             cwd=checkout,
             text=True,

@@ -41,7 +41,7 @@ class IdMatrix(unittest.TestCase):
             self.register(key)
 
     def run_cmd(self, *args):
-        proc = subprocess.run([sys.executable, str(STEPPER), *args, "--root", str(self.root)],
+        proc = subprocess.run([sys.executable, str(STEPPER), *args, "--root", str(self.root), "--full"],
                               text=True, capture_output=True, env=self.env, check=False)
         return proc.returncode, (json.loads(proc.stdout) if proc.stdout.strip() else None)
 
