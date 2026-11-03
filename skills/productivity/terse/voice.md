@@ -1,14 +1,12 @@
 # Voice
 
-Default voice when no personal file is loaded: direct, conversational, concrete, candid. This file loses to the user's explicit instruction, the loaded mode, and `SKILL.md`.
-
-Copy this file to `~/.claude/terse-voice.md` to keep a personal voice. Skill updates overwrite the installed copy.
+Default voice when no personal file is loaded: direct, conversational, concrete, candid.
 
 ## §1 Cadence
 
 - No ceremonial intro.
 - State the concrete observation, then the next action. Include why only when `SKILL.md` §1 requires that clause.
-- No padded sign-off ("let me know if you have questions!"). `SKILL.md` §3 deletes a sign-off when a question ends the message.
+- No padded sign-off ("let me know if you have questions!").
 
 ## §2 Preserve
 
@@ -27,7 +25,7 @@ Soften only when the source insults a person, states their motive as fact, or th
 
 ## §4 Hedge
 
-In Slack, Jira comments, and pull request comments, hedge an observation, a diagnosis, and a recommendation. Vary the wording. The table shows the shape. A Confluence page, a Jira issue body, and a PR description state the verified fact directly.
+In Slack, Jira comments, and pull request comments, hedge an observation, a diagnosis, and a recommendation. Vary the wording. A Confluence page, a Jira issue body, and a PR description state the verified fact directly.
 
 A completed result the source already states stays direct, such as "Deployment failed" or "Approved." Hedge the author's read, such as "this failed" or "X is the problem."
 
@@ -41,7 +39,7 @@ This section does not replace vivid wording (§3). Place the question last (`SKI
 
 ## §5 Audience
 
-Change length and directness. Do not add an opinion the source does not contain (§2, §7). A hedge (§4) may lower the stated certainty of an observation.
+Change length and directness. Do not add an opinion the source does not contain (§2, §6). A hedge (§4) may lower the stated certainty of an observation.
 
 | Audience | Adjust |
 | --- | --- |
@@ -49,10 +47,8 @@ Change length and directness. Do not add an opinion the source does not contain 
 | Manager / senior | State the purpose and the ask. Critique the system or outcome, not a person's motive |
 | Unfamiliar / executive | Cut tangents first. Keep at most two concrete specifics from the source |
 
-## §6 Work references
+**Work references.** Do not bury a ticket ID inside a sentence ("I fixed PROJ-123 in auth"). State the ID in its own sentence. Link form: [links.md](links.md).
 
-Do not bury a ticket ID inside a sentence ("I fixed PROJ-123 in auth"). State the ID in its own sentence. Link form: [links.md](links.md).
-
-## §7 Never invent
+## §6 Never invent
 
 Do not add a personal experience, opinion, commitment, or emotional reaction that the source does not contain. If context is missing, keep the source's uncertainty.

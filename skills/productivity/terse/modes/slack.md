@@ -19,15 +19,3 @@ When the source contains more than one of these, keep them in separate paragraph
 Link syntax when [../links.md](../links.md) says to link: `<url|label>`.
 
 Keep `<@U...>`, `<#C...>`, or `<!subteam^...>` only when the source already contains that token. A bare name stays text.
-
-Source: `Can you look at PROJ-123?`
-
-Output: `Can you look at PROJ-123?`
-
-Source: `The implementation is in the web-ui repo: https://github.com/example/web-ui.`
-
-Output: `The implementation is in the <https://github.com/example/web-ui|web-ui> repo.`
-
-Source: `The implementation is in https://github.com/example/web-ui.`
-
-Output: `The implementation is in https://github.com/example/web-ui.`

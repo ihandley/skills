@@ -13,15 +13,3 @@
 Link syntax when [../links.md](../links.md) says to link: `[name](url)`.
 
 Keep a Confluence mention only when the source already contains it. A Jira issue key stays bare unless the source also contains its URL.
-
-Source: `Tracked in PROJ-123.`
-
-Output: `Tracked in PROJ-123.`
-
-Source: `Tracked in PROJ-123: https://example.atlassian.net/browse/PROJ-123.`
-
-Output: `Tracked in [PROJ-123](https://example.atlassian.net/browse/PROJ-123).`
-
-Source: `The implementation is in https://github.com/example/web-ui.`
-
-Output: `The implementation is in https://github.com/example/web-ui.`
