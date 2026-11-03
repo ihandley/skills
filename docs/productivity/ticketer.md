@@ -8,7 +8,7 @@ The constraint is that the agent cannot file without your confirmation of the ex
 
 Type `/ticketer`, or the agent reaches for it when you ask to file, open, or edit a ticket, bug, or issue.
 
-Reach for it when the ticket must follow team rules: required fields, labels, a parent epic, an issue-type template. It is the wrong tool for reading, searching, commenting on, or transitioning a ticket. Use the tracker's own tools for those.
+Reach for it when the ticket must follow team rules: required fields, labels, a parent ladder, an issue-type template. It is the wrong tool for reading, searching, commenting on, or transitioning a ticket. Use the tracker's own tools for those.
 
 ## Common questions
 
@@ -19,7 +19,16 @@ In provider configs in `~/.config/ticketer/`, named by provider: `jira.toml`, `g
 Nothing is filed and there is no default. The agent asks which provider config to use, or whether to create one with `ticketer.py init`. It saves the answer with `ticketer.py map add`, so it does not ask again.
 
 **Can a field be required for only one issue type?**
-Yes. List the fields under `[required_by_type]` in the team config, keyed by issue type, for example `Bug = ["customfield_10568"]`. They apply on top of `required`, and the match ignores case.
+Yes. List the fields under `[required_by_type]` in the team config, keyed by issue type, for example `Bug = ["customfield_10568"]`. They apply on top of `required`, and the match ignores case. A `[required_for]` entry replaces `required` for that issue type. `required_by_type` still adds its fields.
+
+**Where does the parent ladder live?**
+In the Jira provider config, next to the parent allow-list. A Jira config with no parent ladder keeps the previous parent behavior.
+
+**What does the confirm line show for a parent?**
+The parent's key, issue type, summary, and status name. Nothing is filed until you say yes.
+
+**What happens in a GitHub-mapped directory?**
+Filing is unchanged. A GitHub config cannot carry a parent ladder, and a GitHub-mapped directory does not inherit one.
 
 **Which trackers work?**
 Jira and GitHub Issues. Each is a small adapter, so another tracker is an added module.
@@ -39,6 +48,8 @@ After the ticket is filed, the agent reads it back and the CLI compares the fiel
 ## It's working if
 
 - The agent shows you a rendered draft and waits for a yes before anything is filed.
+- When a parent ladder applies, that draft shows the parent's key, issue type, summary, and status name.
+- A GitHub-mapped directory files as it does today.
 - A draft missing a required field comes back with a specific error, and the agent fixes it instead of filing anyway.
 - Labels reach the tracker in lowercase kebab-case.
 - After filing, the agent reports the ticket reference and either confirms the fields match or names the one that does not.
