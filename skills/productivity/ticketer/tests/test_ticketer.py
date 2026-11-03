@@ -176,6 +176,20 @@ class MappingTests(Base):
         _, data, _ = self.run_cli("locate")
         self.assertEqual(data["team"], "oss")
 
+    def test_override_replaces_a_parent_ladder_wholesale(self):
+        (self.home / "jira.toml").write_text(JIRA_TOML + '\n[parent_ladder]\nTask = ["Epic"]\n')
+        self.mappings('[[mapping]]\npath = "%s"\nprovider = "jira"\n'
+                      '[mapping.overrides.parent_ladder]\nTask = ["Feature"]\n' % self.proj)
+        self.run_cli("metadata", "store", "--tracker", "jira", "--scope", "AB-1", "--kind", "parent",
+                     stdin=parent_issue(issue_type="Epic"))
+        code, data, _ = self.draft(jira_payload(parent="AB-1"), "--cwd", str(self.proj))
+        self.assertEqual(code, 2)
+        self.assertTrue(any(e["code"] == "bad_parent" for e in data["errors"]))
+        self.run_cli("metadata", "store", "--tracker", "jira", "--scope", "AB-1", "--kind", "parent",
+                     stdin=parent_issue(issue_type="Feature"))
+        code, data, _ = self.draft(jira_payload(parent="AB-1"), "--cwd", str(self.proj))
+        self.assertEqual(code, 0, data)
+
     def test_overrides_reach_the_draft(self):
         self.mappings('[[mapping]]\npath = "%s"\nprovider = "github"\n'
                       '[mapping.overrides.defaults]\nrepo = "acme/special"\nlabels = ["triage"]\n' % self.proj)
