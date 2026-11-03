@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.6.0](https://github.com/ihandley/skills/compare/ihandley-skills-v0.5.0...ihandley-skills-v0.6.0) (2026-11-03)
+
+
+### Features
+
+* **ticketer:** require a legal parent when a parent ladder is configured ([#116](https://github.com/ihandley/skills/issues/116)) ([4f4263b](https://github.com/ihandley/skills/commit/4f4263b7d71437634e7f36de5bb6b38bf57b3b9d))
+
 ## [0.5.0](https://github.com/ihandley/skills/compare/ihandley-skills-v0.4.1...ihandley-skills-v0.5.0) (2026-11-03)
 
 
