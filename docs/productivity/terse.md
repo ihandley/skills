@@ -26,7 +26,7 @@ Python 3, for the dash check.
 
 ## It's working if
 
-- The point or decision is in the first sentence.
+- The opening contains the point or decision. A required visual may precede that prose.
 - No em dash or en dash appears, and `scripts/check-dashes` exits 0.
 - Facts, uncertainty, and requests match the source.
 - No praise remains.

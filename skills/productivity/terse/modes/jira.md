@@ -24,11 +24,3 @@ A Jira issue key stays bare, e.g. `PROJ-123`.
 Link syntax when [../links.md](../links.md) says to link an external artifact: `[name](url)`.
 
 Keep `@name` only when the source already contains that mention.
-
-Source: `See the implementation in the web-ui repo: https://github.com/example/web-ui.`
-
-Output: `See the implementation in the [web-ui](https://github.com/example/web-ui) repo.`
-
-Source: `See the implementation in https://github.com/example/web-ui.`
-
-Output: `See the implementation in https://github.com/example/web-ui.`

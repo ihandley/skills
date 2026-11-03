@@ -1,31 +1,45 @@
 # Pull request description
 
-When another active skill requires a PR body structure or visual, preserve it. Apply every content rule in `SKILL.md` and in the Rules section below within that structure. Do not apply the Structure section, and do not drop a required section or visual to shorten the body. When rewriting an existing draft, treat its sections and visuals as required when they match a known PR template.
-
-Otherwise, the diff shows what changed. The description explains why and the non-obvious context. State verified facts and decisions directly. Do not hedge them.
+- When another active skill requires a PR body structure or visual, preserve it. Apply every content rule in `SKILL.md` and in the Rules section below within that structure. Do not apply the Structure section, and do not drop a required section or visual to shorten the body.
+- When rewriting an existing draft, treat its sections and visuals as required when they match a known PR template.
+- State verified facts and decisions directly. Do not hedge them.
 
 ## Structure
 
-Keep the description under 15 lines. Include a section only when the source contains that content:
+- Keep the prose under 15 lines. The Summary visual is exempt.
+- The Summary visual is required when a shape, flow, or boundary is the point. Use the smallest one: pseudocode, a call tree, a component tree, a file tree, mermaid, or a diff. Add a second visual only when it shows a different boundary.
+- Include Evidence only when the diff or the source shows both a before and an after. Do not invent either side.
+- Include a Merge Danger line only when the diff or the source supports it. Do not invent a door or a blast radius.
 
 ```markdown
-## Purpose
-[1-2 sentences: the problem this solves]
+## Summary
+
+[1-2 sentences: why, and context the diff does not show]
+
+[smallest visual]
 
 **Ticket:** PROJ-123
 
-## Key Changes
-- [Architectural decisions, breaking changes, or non-obvious logic only]
+## Evidence
 
-## Testing
-- [Test commands run, CI checks, or local verification. At most 2-3 lines.]
+- **Before:** [failing output or screenshot]
+  **After:** [passing output or screenshot]
+
+## Merge Danger
+
+**Door:** [one-way or two-way]
+
+**Blast Radius:** [one word]
 ```
 
-If the source contains the ticket URL, link the key as `[PROJ-123](url)`. Do not invent the URL.
+- A two-way door can be rolled back. A one-way door cannot.
+- Blast Radius is one word for the scope, such as `callers` or `layout`.
+- Add one sentence under Merge Danger only when the source states a ramification of the merge.
+- Include the ticket line only when the source names a ticket. If the source contains the ticket URL, link the key as `[PROJ-123](url)`. Do not invent the URL.
 
 ## Rules
 
-- Do not list every modified file or summarize an edit that is visible in the diff.
+- Do not list every modified file, and do not walk an edit the visual already shows.
 - Do not restate the commit log.
 - Omit an empty section. Do not write `## Questions`, `## TO-DOs`, or `N/A`.
 - Do not copy QA steps or the ticket spec into the body.

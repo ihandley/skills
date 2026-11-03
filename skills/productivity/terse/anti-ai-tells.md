@@ -1,6 +1,6 @@
 # Anti-AI tells
 
-Final scrub after density and medium rules. Em dash and en dash ban, and filler-adverb cuts: [SKILL.md](SKILL.md) §6 and §4.
+Final scrub after density and medium rules. Em dash and en dash ban, and filler-adverb cuts: [SKILL.md](SKILL.md) §5 and §4.
 
 - Rewrite on one sighting: chatbot residue, sycophancy, knowledge-limit disclaimers, not-X-but-Y, arguing with no one, signposting.
 - Every other row needs a cluster. One ordinary word ("robust", "ensuring", "leverage") stays.
