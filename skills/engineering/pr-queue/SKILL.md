@@ -5,7 +5,7 @@ compatibility: Requires Ruby 2.6+ and the gh CLI
 disable-model-invocation: true
 ---
 
-Build the queue by running the script beside this file, then stop. A `backlog` invocation does Stop and Script with `--backlog`. Any other invocation does Stop, Sitting, and then either stops or does In review and Script, which also captures the list. `all` adds `--all`. Later turns use what this invocation stored.
+Build the queue by running the scripts beside this file, then stop. A `backlog` invocation does Stop and Open's backlog line. Any other invocation does Stop, In review, and Open. `all` adds `--all`. Later turns use what this invocation stored.
 
 Run `date +%s` first and keep the number as the start time.
 
@@ -23,22 +23,6 @@ On a list invocation, copy `--session` and `--root` from the hook line that star
 
 Done when the viewer and (on a list invocation) a session key are in hand, or the run has stopped.
 
-## Sitting
-
-The context name is `pr-queue`. A capture outside this skill uses some other name.
-
-On a list invocation, run `status` with no `--session` and find the context `pr-queue`.
-
-- Another session holds it: stop and name that session. Do not fetch.
-- This session holds it and `complete` is false: say the sitting is already there. Do not fetch.
-- Nobody holds it and `complete` is false: `attach` it to this session. Do not fetch.
-- This session holds it, or nobody holds it, and `complete` is true: `attach` first when nobody holds it, then `close` it, and continue to a fresh fetch.
-- No `pr-queue` context: continue. Capture uses `--context pr-queue`.
-
-`complete` is true only when every item is verified or cancelled and at least one item is verified. A blocked or deferred item leaves the sitting in place. A finished context with any other name stays leased until the user closes it. Attaching or rolling `pr-queue` leaves this session's other contexts leased.
-
-Done when the run has stopped, an existing sitting is in this session, or a finished sitting was closed and a fresh fetch is next.
-
 ## In review
 
 A list invocation runs the script with `--print-jql` and the `--viewer` login. It prints `cloud_id=`, `site=`, and `jql=` lines. A non-zero exit stops the run: say its stderr. Do not look the site up and do not build the query.
@@ -47,19 +31,19 @@ Search Jira once with `searchJiraIssuesUsingJql`, passing the printed cloud id a
 
 Done when every issue from that JQL is held in rank order. A failed call stops the run.
 
-## Script
+## Open
 
-Write the issues to the script's stdin as one line each, in rank order: `KEY|assignee display name|updated|summary`. Use `unassigned` for no assignee. Do not write JSON. Do not read the script. Do not rebuild or retype its output.
+A list invocation runs `sitting open`, one command. `sitting` is `scripts/sitting` in the directory of this file. Write the issues to its stdin in the format below. Run `ruby` on it as `sitting open --session KEY --root PATH --stepper PATH --viewer LOGIN --started EPOCH`, with `--session` and `--root` from the hook line, `--stepper` the stepper CLI path named in the stepper skill, `--viewer` the login from `get_me`, and `--started` the start time. Add `--all` for an `all` invocation. Do not run stepper commands, apply lease rules, or call `pr-queue` yourself. `open` decides, fetches only when it must, and prints the queue and the four brief parts.
 
-Run `ruby` on `scripts/pr-queue` with `--viewer` set to the login from `get_me` and `--started` set to the start time. Add `--all` for an `all` invocation. A backlog run adds `--backlog` and sends no issues.
+Print its stdout. A non-zero exit stops the run. Say its stderr, which names the chat when another chat holds the sitting.
 
-A list run also passes `--session` and `--root` from the hook line, `--stepper` set to the stepper CLI path named in the stepper skill. The script prints the list, then captures every item under `--context pr-queue`, orders them all free, and prints a `pr-queue brief` line on stderr. Only open, non-draft pull requests you have not approved on the current head become items. An In Review ticket with no such pull request is counted beside the quiet count, not captured.
+Speak `done`, `left`, `blocked`, and `position` from the last four lines. Print the `pr-queue total` line from stderr as the run time when it is there. A run that fetched nothing has no total.
 
-Print its stdout. A non-zero exit stops the run. Say its stderr. A search that returns no pull requests is a non-zero exit that names the query.
+Issues go in one line each, in rank order: `KEY|assignee display name|updated|summary`. Use `unassigned` for no assignee. Do not write JSON. Do not read the scripts. Do not rebuild or retype their output.
 
-Speak `done`, `left`, `blocked`, and `position` from the `pr-queue brief` line. Print the `pr-queue total` line as the run time. It covers the clock from the prompt to the printed list, not only GitHub.
+A `backlog` invocation skips Open and runs `pr-queue` with `--viewer`, `--started`, and `--backlog`, sending no issues. Print its stdout and stderr totals.
 
-Done when stdout is printed, the brief is spoken, and the total is printed. The script has captured the list. Do not start qpre. An empty home is the quiet line and no capture.
+Done when stdout is printed and the brief is spoken, or the run has stopped. Do not start qpre. An empty home is the quiet line and no capture.
 
 ## Later
 

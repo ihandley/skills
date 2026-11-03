@@ -1,8 +1,16 @@
 #!/usr/bin/env ruby
 # frozen_string_literal: true
 
-# The sitting commands. This file builds `checkout`; open, strike, brief, and
-# walk join it as their tickets land.
+# The sitting commands. This file builds `open` and `checkout`; strike, brief,
+# and walk join it as their tickets land.
+#
+#   sitting open --session KEY --root PATH --stepper PATH --viewer LOGIN [--all]
+#                [--started EPOCH] [--aliases PATH] < issues
+#
+# Applies the lease rules to the `pr-queue` context, fetches a fresh queue with
+# `pr-queue` only when none is left in place, then prints the queue and the four
+# brief parts. The In Review issues arrive on stdin in the format `pr-queue`
+# reads; this command does not search Jira.
 #
 #   sitting checkout --session KEY --root PATH --stepper PATH [--aliases PATH]
 #
@@ -23,6 +31,58 @@ def run(*args, chdir: nil)
   out, err, status = Open3.capture3(*args, chdir: chdir || Dir.pwd)
   stop("#{args.first(3).join(" ")}: #{err.strip.empty? ? out.strip : err.strip}") unless status.success?
   out
+end
+
+CONTEXT = "pr-queue"
+
+def stepper(options, *args)
+  JSON.parse(run("python3", options[:stepper], *args))
+end
+
+def scope(options)
+  ["--session", options[:session], "--root", options[:root]]
+end
+
+def open_sitting(options)
+  %i[session root stepper].each { |key| stop("pass --#{key}") unless options[key] }
+
+  listed = stepper(options, "status", "--root", options[:root])
+  found = Array(listed["contexts"]).find { |context| context["id"] == CONTEXT && !context["closed"] }
+  holder = found && found.dig("lease", "session_key")
+  stop("the #{CONTEXT} sitting is held by #{holder}; ask that chat to finish or release it") if holder && holder != options[:session]
+
+  attach = ["attach", *scope(options), "--context", CONTEXT, "--brief"]
+  if found && !found["complete"]
+    stepper(options, *attach) unless holder
+    sitting = stepper(options, "status", *scope(options)).dig("context", "items")
+    puts Array(sitting).reject { |entry| %w[verified cancelled].include?(entry["status"]) }.map { |entry| entry["description"] }
+  else
+    if found
+      stepper(options, *attach) unless holder
+      stepper(options, "close", *scope(options), "--context", CONTEXT, "--brief")
+    end
+    fetch_queue(options)
+  end
+
+  held = Array(stepper(options, "status", "--root", options[:root])["contexts"]).any? { |context| context["id"] == CONTEXT && !context["closed"] }
+  brief = held ? stepper(options, *attach)["brief"] : { "done" => [], "left" => [], "blocked" => [], "position" => "none" }
+  %w[done left blocked].each { |part| puts "#{part}: #{Array(brief[part]).empty? ? "none" : brief[part].join(", ")}" }
+  puts "position: #{brief["position"]}"
+end
+
+def fetch_queue(options)
+  stop("pass --viewer") unless options[:viewer]
+
+  command = ["ruby", File.join(__dir__, "pr-queue"), "--viewer", options[:viewer], *scope(options),
+             "--stepper", options[:stepper], "--aliases", options[:aliases]]
+  command.push("--all") if options[:all]
+  command.push("--started", options[:started]) if options[:started]
+  command.push("--github-fixture", options[:fixture]) if options[:fixture]
+  command.push("--today", options[:today]) if options[:today]
+  out, err, status = Open3.capture3(*command, stdin_data: $stdin.tty? ? "" : $stdin.read)
+  stop(err.strip) unless status.success?
+  warn err.lines.reject { |line| line.start_with?("pr-queue brief") }.join
+  print out
 end
 
 def checkout(options)
@@ -65,11 +125,17 @@ parser = OptionParser.new do |opts|
   opts.on("--root PATH") { |value| options[:root] = value }
   opts.on("--stepper PATH") { |value| options[:stepper] = value }
   opts.on("--aliases PATH") { |value| options[:aliases] = value }
+  opts.on("--viewer LOGIN") { |value| options[:viewer] = value }
+  opts.on("--all") { options[:all] = true }
+  opts.on("--started EPOCH") { |value| options[:started] = value }
+  opts.on("--github-fixture PATH") { |value| options[:fixture] = value }
+  opts.on("--today DATE") { |value| options[:today] = value }
 end
 command = ARGV.shift
 parser.parse!
 
 case command
+when "open" then open_sitting(options)
 when "checkout" then checkout(options)
-else stop("usage: sitting checkout --session KEY --root PATH --stepper PATH")
+else stop("usage: sitting open|checkout --session KEY --root PATH --stepper PATH")
 end
