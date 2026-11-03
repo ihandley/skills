@@ -52,7 +52,7 @@ The open step decides it, so you apply none of these rules. It speaks the queue 
 The Atlassian connection or the GitHub connection is missing, or the stepper hook never named this chat. The session line arrives with the first tool result. Install the stepper hook when that line is absent after those calls.
 
 **How is the printed list checked?**
-`python3 skills/engineering/pr-queue/tests/test_pr_queue.py` runs the script on saved input, a Jira file and a GitHub JSON file, without calling GitHub or Jira. It compares the normal list and the backlog table to files in `tests/fixtures`. Any change to the printed lines fails it. The script needs Ruby 2.6 or newer and the `gh` CLI, as the skill's `compatibility` line says.
+`python3 skills/engineering/pr-queue/tests/test_pr_queue.py` runs the script on saved input, a Jira file and a GitHub JSON file, without calling GitHub or Jira. It compares the normal list and the backlog table to files in `tests/fixtures`. Any change to the printed lines fails it. The script needs Python 3.11 or newer and the `gh` CLI, as the skill's `compatibility` line says.
 
 ## It's working if
 

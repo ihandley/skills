@@ -3,7 +3,7 @@
 
     python3 skills/engineering/pr-queue/tests/test_sitting_walk.py
 
-No network and no terminal is touched. Needs Ruby 2.6 or newer.
+No network and no terminal is touched. Needs Python 3.11 or newer.
 """
 
 import json
@@ -94,7 +94,7 @@ print(json.dumps(json.load(open("{self.gh_data}"))[a[2]]))
         keys_file.write_text(keys)
         env = {"PATH": f"{self.bin}:/usr/bin:/bin:/usr/local/bin:/opt/homebrew/bin"}
         return subprocess.run(
-            ["ruby", str(SCRIPT), "walk", "--session", "claude:s", "--root", "/r", "--stepper", str(self.stepper),
+            [sys.executable, str(SCRIPT), "walk", "--session", "claude:s", "--root", "/r", "--stepper", str(self.stepper),
              "--viewer", "me", "--qpre", str(self.qpre), "--outcome-dir", str(self.outcomes), "--keys", str(keys_file), *extra],
             text=True, capture_output=True, check=False, env=env,
         )
@@ -219,7 +219,7 @@ print(json.dumps(json.load(open("{self.gh_data}"))[a[2]]))
 
     def test_missing_viewer_stops(self):
         self.sitting(["active"])
-        proc = subprocess.run(["ruby", str(SCRIPT), "walk", "--session", "claude:s", "--root", "/r", "--stepper", str(self.stepper)],
+        proc = subprocess.run([sys.executable, str(SCRIPT), "walk", "--session", "claude:s", "--root", "/r", "--stepper", str(self.stepper)],
                               text=True, capture_output=True)
         self.assertEqual(proc.returncode, 1)
         self.assertIn("pass --viewer", proc.stderr)

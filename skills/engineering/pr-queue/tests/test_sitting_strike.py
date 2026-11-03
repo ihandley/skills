@@ -3,11 +3,12 @@
 
     python3 skills/engineering/pr-queue/tests/test_sitting_strike.py
 
-No network is touched. Needs Ruby 2.6 or newer.
+No network is touched. Needs Python 3.11 or newer.
 """
 
 import json
 import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -88,7 +89,7 @@ class SittingStrike(unittest.TestCase):
 
     def sitting_cmd(self, command, *extra):
         return subprocess.run(
-            ["ruby", str(SCRIPT), command, "--session", "claude:s", "--root", "/r", "--stepper", str(self.stepper), *extra],
+            [sys.executable, str(SCRIPT), command, "--session", "claude:s", "--root", "/r", "--stepper", str(self.stepper), *extra],
             text=True, capture_output=True, check=False,
         )
 
@@ -160,7 +161,7 @@ class SittingStrike(unittest.TestCase):
         self.assertEqual(self.state.read_text(), before)
 
     def test_missing_session_stops(self):
-        proc = subprocess.run(["ruby", str(SCRIPT), "strike", "--root", "/r", "--stepper", "x", "--evidence", "e"],
+        proc = subprocess.run([sys.executable, str(SCRIPT), "strike", "--root", "/r", "--stepper", "x", "--evidence", "e"],
                               text=True, capture_output=True)
         self.assertEqual(proc.returncode, 1)
         self.assertIn("pass --session", proc.stderr)

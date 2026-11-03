@@ -4,13 +4,14 @@
     python3 skills/engineering/pr-queue/tests/test_sitting_open.py
 
 No network is touched: `gh` is a stub that fails if called, and the fetch reads
-tests/fixtures/github.json. Needs Ruby 2.6 or newer.
+tests/fixtures/github.json. Needs Python 3.11 or newer.
 """
 
 import json
 import os
 import stat
 import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -111,7 +112,7 @@ class SittingOpen(unittest.TestCase):
     def run_open(self):
         env = dict(os.environ, TZ="UTC", PATH=f"{self.bin}:{os.environ['PATH']}")
         return subprocess.run(
-            ["ruby", str(SCRIPT), "open", "--session", "claude:s", "--root", "/r",
+            [sys.executable, str(SCRIPT), "open", "--session", "claude:s", "--root", "/r",
              "--stepper", str(Path(self.tmp.name) / "stepper.py"),
              "--viewer", "ian", "--aliases", str(FIXTURES / "aliases.yaml"),
              "--github-fixture", str(FIXTURES / "github.json"), "--today", "2026-10-28"],
@@ -202,7 +203,7 @@ class SittingOpen(unittest.TestCase):
 
     def test_missing_session_stops(self):
         env = dict(os.environ, PATH=f"{self.bin}:{os.environ['PATH']}")
-        proc = subprocess.run(["ruby", str(SCRIPT), "open", "--root", "/r", "--stepper", "x"], text=True, capture_output=True, env=env)
+        proc = subprocess.run([sys.executable, str(SCRIPT), "open", "--root", "/r", "--stepper", "x"], text=True, capture_output=True, env=env)
         self.assertEqual(proc.returncode, 1)
         self.assertIn("pass --session", proc.stderr)
 

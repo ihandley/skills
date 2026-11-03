@@ -1,431 +1,565 @@
-#!/usr/bin/env ruby
-# frozen_string_literal: true
+#!/usr/bin/env python3
+"""Build the review queue from the team record, Jira lines, and GitHub."""
 
-require "date"
-require "json"
-require "open3"
-require "optparse"
-require "time"
-require "yaml"
+from __future__ import annotations
 
-GQL = <<~GQL.tr("\n", " ")
-  query($q: String!, $cursor: String) {
-    search(query: $q, type: ISSUE, first: 50, after: $cursor) {
-      pageInfo { hasNextPage endCursor }
-      nodes {
-        ... on PullRequest {
-          number title isDraft state updatedAt headRefName headRefOid mergeable body
-          repository { name }
-          author { __typename login }
-          commits(last: 20) { nodes { commit { message statusCheckRollup { state } } } }
-          reviews(last: 50) { nodes { state author { login } commit { oid } } }
-          reviewRequests(first: 20) { nodes { requestedReviewer { ... on User { login } } } }
+import argparse
+import json
+import re
+import subprocess
+import sys
+import textwrap
+import time
+from concurrent.futures import ThreadPoolExecutor
+from datetime import date, datetime, timedelta, timezone
+from pathlib import Path
+
+if sys.version_info < (3, 11):
+    sys.stderr.write(
+        "pr-queue needs Python 3.11 or newer; found %s at %s.\n"
+        % (sys.version.split()[0], sys.executable)
+    )
+    raise SystemExit(3)
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+import aliases_yaml  # noqa: E402
+
+GQL = textwrap.dedent(
+    """\
+    query($q: String!, $cursor: String) {
+      search(query: $q, type: ISSUE, first: 50, after: $cursor) {
+        pageInfo { hasNextPage endCursor }
+        nodes {
+          ... on PullRequest {
+            number title isDraft state updatedAt headRefName headRefOid mergeable body
+            repository { name }
+            author { __typename login }
+            commits(last: 20) { nodes { commit { message statusCheckRollup { state } } } }
+            reviews(last: 50) { nodes { state author { login } commit { oid } } }
+            reviewRequests(first: 20) { nodes { requestedReviewer { ... on User { login } } } }
+          }
         }
       }
     }
-  }
-GQL
+    """
+).replace("\n", " ")
 
-options = { aliases: File.expand_path("~/.claude/aliases.yaml") }
-OptionParser.new do |opts|
-  opts.on("--viewer LOGIN") { |value| options[:viewer] = value }
-  opts.on("--all") { options[:all] = true }
-  opts.on("--backlog") { options[:backlog] = true }
-  opts.on("--aliases PATH") { |value| options[:aliases] = value }
-  opts.on("--started EPOCH", Integer) { |value| options[:started] = value }
-  opts.on("--session KEY") { |value| options[:session] = value }
-  opts.on("--root PATH") { |value| options[:root] = value }
-  opts.on("--stepper PATH") { |value| options[:stepper] = value }
-  opts.on("--github-fixture PATH") { |value| options[:fixture] = value }
-  opts.on("--today DATE") { |value| options[:today] = Date.parse(value) }
-  opts.on("--print-queries") { options[:print_queries] = true }
-  opts.on("--print-jql") { options[:print_jql] = true }
-end.parse!
-abort "pass --viewer" if options[:viewer].to_s.empty?
+FIXTURE = None
+TODAY = date.today()
 
-$fixture = options[:fixture]
-$today = options[:today] || Date.today
 
-started = Process.clock_gettime(Process::CLOCK_MONOTONIC)
+def abort(message: str) -> None:
+    print(message, file=sys.stderr)
+    raise SystemExit(1)
 
-def fail(query, detail)
-  warn query
-  warn detail
-  exit 2
-end
 
-def fixture_nodes(path, query)
-  data = JSON.parse(File.read(path))
-  query.include?("updated:<") ? data["old"] : data["recent"]
-end
+def die(query: str, detail: str) -> None:
+    print(query, file=sys.stderr)
+    if detail and not str(detail).endswith("\n"):
+        detail = str(detail) + "\n"
+    sys.stderr.write(detail or "\n")
+    raise SystemExit(2)
 
-def graphql(query, cursor: nil)
-  args = ["gh", "api", "graphql", "-f", "query=#{GQL}", "-f", "q=#{query}"]
-  args.push("-f", "cursor=#{cursor}") if cursor
-  out, err, status = Open3.capture3(*args)
-  fail(query, err) unless status.success?
 
-  body = JSON.parse(out)
-  if body["errors"]
-    fail(query, body["errors"].map { |error| error["message"] }.join("\n"))
-  end
-  body
-rescue JSON::ParserError => error
-  fail(query, error.message)
-end
+def as_list(value):
+    if value is None:
+        return []
+    if isinstance(value, list):
+        return value
+    return [value]
 
-def search(query, required: false)
-  if $fixture
-    nodes = Array(fixture_nodes($fixture, query))
-    fail(query, "search returned no pull requests") if required && nodes.empty?
+
+def to_s(value) -> str:
+    if value is None:
+        return ""
+    if value is True:
+        return "true"
+    if value is False:
+        return "false"
+    return str(value)
+
+
+def dig(obj, *keys):
+    for key in keys:
+        if not isinstance(obj, dict):
+            return None
+        obj = obj.get(key)
+    return obj
+
+
+def uniq(items):
+    seen = set()
+    kept = []
+    for item in items:
+        if item in seen:
+            continue
+        seen.add(item)
+        kept.append(item)
+    return kept
+
+
+def parse_time(iso: str) -> datetime:
+    text = str(iso)
+    if text.endswith("Z"):
+        text = text[:-1] + "+00:00"
+    return datetime.fromisoformat(text)
+
+
+def fixture_nodes(query: str):
+    data = json.loads(Path(FIXTURE).read_text())
+    return data["old"] if "updated:<" in query else data["recent"]
+
+
+def graphql(query: str, cursor: str | None = None) -> dict:
+    args = ["gh", "api", "graphql", "-f", f"query={GQL}", "-f", f"q={query}"]
+    if cursor:
+        args.extend(["-f", f"cursor={cursor}"])
+    proc = subprocess.run(args, text=True, capture_output=True, encoding="utf-8")
+    if proc.returncode != 0:
+        die(query, proc.stderr)
+    try:
+        body = json.loads(proc.stdout)
+    except json.JSONDecodeError as error:
+        die(query, str(error))
+    if body.get("errors"):
+        die(query, "\n".join(error.get("message", "") for error in body["errors"]))
+    return body
+
+
+def search(query: str, required: bool = False) -> list:
+    if FIXTURE:
+        nodes = as_list(fixture_nodes(query))
+        if required and not nodes:
+            die(query, "search returned no pull requests")
+        return nodes
+    nodes = []
+    cursor = None
+    while True:
+        page = dig(graphql(query, cursor), "data", "search") or {}
+        nodes.extend(as_list(page.get("nodes")))
+        info = page.get("pageInfo") or {}
+        if not (info.get("hasNextPage") and to_s(info.get("endCursor"))):
+            break
+        cursor = info["endCursor"]
+    if required and not nodes:
+        die(query, "search returned no pull requests")
     return nodes
-  end
 
-  nodes = []
-  cursor = nil
-  loop do
-    page = graphql(query, cursor: cursor).dig("data", "search") || {}
-    nodes.concat(Array(page["nodes"]))
-    info = page["pageInfo"] || {}
-    break unless info["hasNextPage"] && !info["endCursor"].to_s.empty?
 
-    cursor = info["endCursor"]
-  end
-  fail(query, "search returned no pull requests") if required && nodes.empty?
-  nodes
-end
-
-def quiet_count(query)
-  return Integer(JSON.parse(File.read($fixture))["quiet"]) if $fixture
-
-  out, err, status = Open3.capture3(
-    "gh", "api", "--method", "GET", "search/issues",
-    "-f", "q=#{query}", "-f", "per_page=1", "--jq", ".total_count"
-  )
-  fail(query, err) unless status.success?
-
-  Integer(out.strip)
-rescue ArgumentError
-  fail(query, out)
-end
-
-def keys_in(text, project)
-  text.to_s.scan(/#{Regexp.escape(project)}-\d+/).uniq
-end
-
-def project_pr(node, viewer, project)
-  return nil unless node.is_a?(Hash) && node["number"]
-
-  reviews = Array(node.dig("reviews", "nodes"))
-  head = node["headRefOid"]
-  messages = Array(node.dig("commits", "nodes")).map { |commit| commit.dig("commit", "message") }
-  {
-    "number" => node["number"],
-    "title" => node["title"].to_s.gsub(/\s+/, " ").strip,
-    "isDraft" => node["isDraft"] == true,
-    "state" => node["state"],
-    "updatedAt" => node["updatedAt"],
-    "repository" => node.dig("repository", "name"),
-    "author" => node["author"] || {},
-    "branchKeys" => keys_in(node["headRefName"], project),
-    "commitKeys" => keys_in(messages.join("\n"), project),
-    "bodyKeys" => keys_in(node["body"], project),
-    "headApproved" => reviews.any? do |review|
-      review["state"] == "APPROVED" &&
-        review.dig("author", "login") == viewer &&
-        review.dig("commit", "oid") == head
-    end,
-    "conflicts" => node["mergeable"] == "CONFLICTING",
-    "red" => %w[FAILURE ERROR].include?(Array(node.dig("commits", "nodes")).last&.dig("commit", "statusCheckRollup", "state")),
-    "approvals" => reviews.count { |review| review["state"] == "APPROVED" },
-    "reviewRequestLogins" => Array(node.dig("reviewRequests", "nodes")).map { |request| request.dig("requestedReviewer", "login") }.compact
-  }
-end
-
-def dedupe(nodes)
-  seen = {}
-  nodes.each_with_object([]) do |node, kept|
-    id = "#{node["repository"]}##{node["number"]}"
-    next if seen[id]
-
-    seen[id] = true
-    kept << node.merge("id" => id)
-  end
-end
-
-def age_days(iso)
-  return 0 if iso.to_s.empty?
-
-  ($today - Time.parse(iso).getlocal.to_date).to_i
-end
-
-def item_text(ref, marks, title, author, age)
-  left = marks.empty? ? ref : "#{ref} #{marks.join(" ")}"
-  "#{left} · #{title} · #{author} · #{age}d"
-end
-
-def walkable?(pr, viewer)
-  return false unless pr["state"] == "OPEN" && !pr["isDraft"]
-
-  pr.dig("author", "login") == viewer || !pr["headApproved"]
-end
-
-data = YAML.load_file(options[:aliases])
-people = data.select { |_key, value| value.is_a?(Hash) && value["type"] == "person" }
-team = data.values.find { |value| value.is_a?(Hash) && value["type"] == "team" && Array(value["aliases"]).include?("my team") }
-abort "missing team aliased my team" unless team
-
-me = people.values.find { |person| Array(person["aliases"]).include?("me") }
-abort "missing person aliased me" unless me
-expected = me.dig("ids", "github").to_s
-if options[:viewer] != expected
-  warn "#{options[:viewer]} != #{expected}"
-  exit 1
-end
-
-org = team["github_org"].to_s
-project = team["jira_project"].to_s
-abort "missing github_org" if org.empty?
-abort "missing jira_project" if project.empty?
-
-if options[:print_jql]
-  %w[atlassian_cloud_id atlassian_site jira_tech_domains].each do |key|
-    next unless Array(team[key]).empty?
-
-    warn "missing #{key} on the team record in #{options[:aliases]}; add a line `#{key}: ...` under it"
-    exit 1
-  end
-  domains = Array(team["jira_tech_domains"]).map { |name| %("#{name}") }.join(", ")
-  puts "cloud_id=#{team["atlassian_cloud_id"]}"
-  puts "site=#{team["atlassian_site"]}"
-  puts %(jql=project = #{project} AND "Tech Domain[Dropdown]" in (#{domains}) AND status = "In Review" AND sprint in openSprints() ORDER BY Rank ASC)
-  exit
-end
-
-authors = Array(team["members"]) + Array(team["qa"])
-logins = authors.map do |name|
-  login = people.dig(name, "ids", "github").to_s
-  abort "missing ids.github for #{name}" if login.empty?
-
-  login
-end
-
-lists = team.keys.select { |key| key.start_with?("repos_") }.map { |key| [key, Array(team[key])] }
-repo_set = if options[:all]
-             lists.flat_map { |_name, repos| repos }.uniq
-           else
-             Array(team["repos_active"])
-           end
-abort "missing repos_active" if repo_set.empty?
-
-names = {}
-known = people.values.map { |person| person.dig("ids", "github").to_s }.reject(&:empty?)
-people.each_value do |person|
-  login = person.dig("ids", "github").to_s
-  next if login.empty?
-
-  spaced = Array(person["aliases"]).select { |alias_name| alias_name.include?(" ") }
-  names[login] = spaced.max_by(&:length) unless spaced.empty?
-end
-
-issues = []
-unless options[:backlog] || $stdin.tty?
-  raw = $stdin.read
-  if raw.lstrip.start_with?("{", "[")
-    parsed = JSON.parse(raw)
-    parsed = parsed["data"] if parsed.is_a?(Hash) && parsed["issues"].nil? && parsed["data"].is_a?(Hash)
-    rows = parsed.is_a?(Hash) ? Array(parsed["issues"]) : Array(parsed)
-    issues = rows.map do |issue|
-      fields = issue["fields"] || {}
-      assignee = fields["assignee"] || issue["assignee"]
-      {
-        "key" => issue["key"],
-        "summary" => (fields["summary"] || issue["summary"]).to_s.gsub(/\s+/, " ").strip,
-        "assignee" => assignee.is_a?(Hash) ? assignee["displayName"] : assignee,
-        "updated" => fields["updated"] || issue["updated"]
-      }
-    end
-  elsif !raw.strip.empty?
-    issues = raw.lines.map(&:chomp).reject { |line| line.strip.empty? }.map do |line|
-      key, assignee, updated, summary = line.split("|", 4).map(&:strip)
-      abort "bad issue line: #{line}" if key.to_s.empty? || summary.nil?
-
-      { "key" => key, "summary" => summary, "assignee" => assignee, "updated" => updated }
-    end
-  end
-end
-
-cutoff = ($today - 7).strftime("%Y-%m-%d")
-repo_qualifiers = repo_set.map { |repo| "repo:#{org}/#{repo}" }.join(" ")
-author_qualifiers = logins.map { |login| "author:#{login}" }.join(" ")
-recent_prefix = "is:pr is:open draft:false updated:>=#{cutoff}"
-old_prefix = "is:pr is:open updated:<#{cutoff}"
-prefix = options[:backlog] ? old_prefix : recent_prefix
-repo_query = "#{prefix} #{repo_qualifiers}"
-author_query = "#{prefix} #{author_qualifiers}"
-quiet_query = "is:pr is:open updated:<#{cutoff} #{repo_qualifiers}"
-
-if options[:print_queries]
-  puts quiet_query unless options[:backlog]
-  exit
-end
-
-jobs = {
-  repos: -> { search(repo_query, required: true).map { |node| project_pr(node, options[:viewer], project) }.compact },
-  authors: -> { search(author_query, required: true).map { |node| project_pr(node, options[:viewer], project) }.compact }
-}
-jobs[:quiet] = -> { quiet_count(quiet_query) } unless options[:backlog]
-batch = {}
-jobs.map { |name, work| Thread.new { [name, work.call] } }.each { |thread| name, value = thread.value; batch[name] = value }
-
-key_nodes = []
-unless options[:backlog] || issues.empty?
-  key_groups = issues.map { |issue| issue["key"] }.each_slice(6).map do |group|
-    "is:pr org:#{org} #{group.join(" OR ")}"
-  end
-  key_nodes = key_groups.map { |query| Thread.new { search(query) } }
-                        .flat_map(&:value)
-                        .map { |node| project_pr(node, options[:viewer], project) }.compact
-end
-
-recent = dedupe(batch[:repos] + batch[:authors])
-pulled = dedupe(recent + key_nodes)
-
-def list_mark(repo, lists)
-  lists.each do |name, members|
-    next unless members.include?(repo)
-    return nil if name == "repos_active"
-
-    return name.delete_prefix("repos_")
-  end
-  nil
-end
-
-def marks_for(pr, viewer, lists, known = nil)
-  [
-    list_mark(pr["repository"], lists),
-    ("asked" if pr["reviewRequestLogins"].include?(viewer)),
-    ("gone" if known && !known.include?(pr.dig("author", "login").to_s)),
-    ("conflict" if pr["conflicts"]),
-    ("red" if pr["red"])
-  ].compact
-end
-
-def author_name(pr, names)
-  login = pr.dig("author", "login").to_s
-  return "unknown" if login.empty?
-
-  names[login] || login
-end
-
-def recent_pr?(pr, viewer, repo_set, logins, cutoff)
-  return false unless walkable?(pr, viewer)
-  return false if pr.dig("author", "__typename") == "Bot"
-  return false unless repo_set.include?(pr["repository"]) || logins.include?(pr.dig("author", "login"))
-  return false if Time.parse(pr["updatedAt"]).utc.to_date < Date.parse(cutoff)
-
-  true
-end
-
-if options[:backlog]
-  rows = recent.select { |pr| recent_pr?(pr, options[:viewer], repo_set, logins, "1970-01-01") && !pr["headApproved"] }
-               .sort_by { |pr| Time.parse(pr["updatedAt"]) }
-               .reverse
-  bots = recent.count { |pr| pr.dig("author", "__typename") == "Bot" }
-  heading = "Backlog · #{rows.size}"
-  heading += " · none approved" if rows.all? { |pr| pr["approvals"].zero? }
-  puts heading
-  puts "| # | PR | title | author | age | approvals |"
-  puts "| --- | --- | --- | --- | --- | --- |"
-  rows.each_with_index do |pr, index|
-    ref = "#{pr["repository"]}##{pr["number"]}"
-    marks = marks_for(pr, options[:viewer], lists)
-    cell = marks.empty? ? ref : "#{ref} #{marks.join(" ")}"
-    title = pr["title"].gsub("|", "/")
-    puts "| #{index + 1} | #{cell} | #{title} | #{author_name(pr, names)} | #{age_days(pr["updatedAt"])}d | #{pr["approvals"]} |"
-  end
-  puts "#{bots} bots" if bots.positive?
-else
-  homed = {}
-  lines = []
-  items = []
-  tidy = ->(text) { id = text.gsub(/[^A-Za-z0-9-]/, ""); id.match?(/\A[A-Za-z]/) ? id : "pr-#{id}" }
-  pr_item = lambda do |issue_key, pr, text|
-    repo = pr["repository"]
-    id = issue_key ? "#{issue_key}-#{repo.gsub(/[^A-Za-z0-9]/, "")}-#{pr["number"]}" : tidy.call("#{repo.gsub(/[^A-Za-z0-9]/, "")}-#{pr["number"]}")
-    url = "https://github.com/#{org}/#{repo}/pull/#{pr["number"]}"
-    criteria = "Start runs qpre on #{url}. After qpre exits, read the outcome line qpre wrote for this pull request and speak posted, clean, or unfinished. Done when the user strikes the item. Quitting qpre leaves the item active."
-    items << [id, text, criteria]
-  end
-  without_pr = 0
-  issues.each do |issue|
-    key = issue["key"]
-    matched = []
-    %w[branchKeys commitKeys bodyKeys].each do |field|
-      hits = pulled.select { |pr| pr[field].include?(key) && !homed[pr["id"]] && walkable?(pr, options[:viewer]) }
-      next if hits.empty?
-
-      matched = hits
-      break
-    end
-    if matched.empty?
-      without_pr += 1
-      next
-    end
-
-    matched.sort_by { |pr| Time.parse(pr["updatedAt"]) }.reverse.each do |pr|
-      homed[pr["id"]] = true
-      text = item_text(
-        "#{pr["repository"]}##{pr["number"]}",
-        marks_for(pr, options[:viewer], lists, known),
-        pr["title"],
-        author_name(pr, names),
-        age_days(pr["updatedAt"])
-      )
-      lines << text
-      pr_item.call(key, pr, text)
-    end
-  end
-
-  recent.select { |pr| !homed[pr["id"]] && recent_pr?(pr, options[:viewer], repo_set, logins, cutoff) }
-        .sort_by { |pr| Time.parse(pr["updatedAt"]) }
-        .reverse
-        .each do |pr|
-    text = item_text(
-      "#{pr["repository"]}##{pr["number"]}",
-      marks_for(pr, options[:viewer], lists, known),
-      pr["title"],
-      author_name(pr, names),
-      age_days(pr["updatedAt"])
+def quiet_count(query: str) -> int:
+    if FIXTURE:
+        return int(json.loads(Path(FIXTURE).read_text())["quiet"])
+    proc = subprocess.run(
+        ["gh", "api", "--method", "GET", "search/issues", "-f", f"q={query}", "-f", "per_page=1", "--jq", ".total_count"],
+        text=True, capture_output=True, encoding="utf-8",
     )
-    lines << text
-    pr_item.call(nil, pr, text)
-  end
+    if proc.returncode != 0:
+        die(query, proc.stderr)
+    try:
+        return int(proc.stdout.strip())
+    except ValueError:
+        die(query, proc.stdout)
 
-  bots = pulled.count { |pr| pr.dig("author", "__typename") == "Bot" && !homed[pr["id"]] }
-  quiet = "#{batch[:quiet]} quiet"
-  quiet += " · #{without_pr} without a pull request" if without_pr.positive?
-  quiet += " · #{bots} bots" if bots.positive?
-  puts quiet
-  puts lines
 
-  if options[:session] && !items.empty?
-    abort "pass --root and --stepper with --session" unless options[:root] && options[:stepper]
+def keys_in(text, project: str) -> list:
+    return uniq(re.findall(re.escape(project) + r"-\d+", to_s(text)))
 
-    base = ["python3", options[:stepper]]
-    scope = ["--session", options[:session], "--root", options[:root], "--context", "pr-queue"]
-    run = lambda do |args|
-      out, err, status = Open3.capture3(*args)
-      fail(args.first(3).join(" "), err.empty? ? out : err) unless status.success?
-      out
-    end
-    run.call(base + ["capture"] + scope + items.flat_map { |id, text, criteria| ["--item", "#{id} | #{text} | #{criteria}"] })
-    run.call(base + ["order"] + scope + items.flat_map { |id, _text, _criteria| ["--item", id, "--free", id] })
-    brief = JSON.parse(run.call(base + ["status", "--session", options[:session], "--root", options[:root]]))["brief"]
-    warn "pr-queue brief #{JSON.generate(brief)}" if brief
-  end
-end
 
-elapsed = Process.clock_gettime(Process::CLOCK_MONOTONIC) - started
-warn format("pr-queue %.1fs", elapsed)
-warn format("pr-queue total %ds from prompt", Time.now.to_i - options[:started]) if options[:started]
+def project_pr(node, viewer: str, project: str):
+    if not isinstance(node, dict) or not node.get("number"):
+        return None
+    reviews = as_list(dig(node, "reviews", "nodes"))
+    head = node.get("headRefOid")
+    commits = as_list(dig(node, "commits", "nodes"))
+    messages = [to_s(dig(commit, "commit", "message")) for commit in commits]
+    rollup = dig(commits[-1], "commit", "statusCheckRollup", "state") if commits else None
+    requests = []
+    for request in as_list(dig(node, "reviewRequests", "nodes")):
+        login = dig(request, "requestedReviewer", "login")
+        if login:
+            requests.append(login)
+    return {
+        "number": node["number"],
+        "title": re.sub(r"\s+", " ", to_s(node.get("title"))).strip(),
+        "isDraft": node.get("isDraft") is True,
+        "state": node.get("state"),
+        "updatedAt": node.get("updatedAt"),
+        "repository": dig(node, "repository", "name"),
+        "author": node.get("author") or {},
+        "branchKeys": keys_in(node.get("headRefName"), project),
+        "commitKeys": keys_in("\n".join(messages), project),
+        "bodyKeys": keys_in(node.get("body"), project),
+        "headApproved": any(
+            review.get("state") == "APPROVED"
+            and dig(review, "author", "login") == viewer
+            and dig(review, "commit", "oid") == head
+            for review in reviews
+        ),
+        "conflicts": node.get("mergeable") == "CONFLICTING",
+        "red": rollup in ("FAILURE", "ERROR"),
+        "approvals": sum(1 for review in reviews if review.get("state") == "APPROVED"),
+        "reviewRequestLogins": requests,
+    }
+
+
+def dedupe(nodes: list) -> list:
+    seen = set()
+    kept = []
+    for node in nodes:
+        ident = f"{node['repository']}#{node['number']}"
+        if ident in seen:
+            continue
+        seen.add(ident)
+        kept.append({**node, "id": ident})
+    return kept
+
+
+def age_days(iso) -> int:
+    if not to_s(iso):
+        return 0
+    return (TODAY - parse_time(iso).astimezone().date()).days
+
+
+def item_text(ref: str, marks: list, title: str, author: str, age: int) -> str:
+    left = ref if not marks else f"{ref} {' '.join(marks)}"
+    return f"{left} · {title} · {author} · {age}d"
+
+
+def walkable(pr, viewer: str) -> bool:
+    if pr.get("state") != "OPEN" or pr.get("isDraft"):
+        return False
+    return dig(pr, "author", "login") == viewer or not pr.get("headApproved")
+
+
+def list_mark(repo, lists):
+    for name, members in lists:
+        if repo not in members:
+            continue
+        if name == "repos_active":
+            return None
+        return name.removeprefix("repos_")
+    return None
+
+
+def marks_for(pr, viewer: str, lists, known=None) -> list:
+    marks = [
+        list_mark(pr.get("repository"), lists),
+        "asked" if viewer in pr.get("reviewRequestLogins", []) else None,
+        "gone" if known is not None and to_s(dig(pr, "author", "login")) not in known else None,
+        "conflict" if pr.get("conflicts") else None,
+        "red" if pr.get("red") else None,
+    ]
+    return [mark for mark in marks if mark]
+
+
+def author_name(pr, names: dict) -> str:
+    login = to_s(dig(pr, "author", "login"))
+    if not login:
+        return "unknown"
+    return names.get(login, login)
+
+
+def recent_pr(pr, viewer, repo_set, logins, cutoff: str) -> bool:
+    if not walkable(pr, viewer):
+        return False
+    if dig(pr, "author", "__typename") == "Bot":
+        return False
+    if pr.get("repository") not in repo_set and dig(pr, "author", "login") not in logins:
+        return False
+    updated = parse_time(pr["updatedAt"]).astimezone(timezone.utc).date()
+    return updated >= date.fromisoformat(cutoff)
+
+
+def by_updated_desc(rows: list) -> list:
+    return [row for _, row in sorted(enumerate(rows), key=lambda pair: (parse_time(pair[1]["updatedAt"]), pair[0]), reverse=True)]
+
+
+def load_issues(raw: str) -> list:
+    if raw.lstrip().startswith(("{", "[")):
+        parsed = json.loads(raw)
+        if isinstance(parsed, dict) and parsed.get("issues") is None and isinstance(parsed.get("data"), dict):
+            parsed = parsed["data"]
+        rows = as_list(parsed.get("issues")) if isinstance(parsed, dict) else as_list(parsed)
+        issues = []
+        for issue in rows:
+            fields = issue.get("fields") or {}
+            assignee = fields.get("assignee") if fields.get("assignee") is not None else issue.get("assignee")
+            summary = fields.get("summary") if fields.get("summary") is not None else issue.get("summary")
+            issues.append({
+                "key": issue.get("key"),
+                "summary": re.sub(r"\s+", " ", to_s(summary)).strip(),
+                "assignee": assignee.get("displayName") if isinstance(assignee, dict) else assignee,
+                "updated": fields.get("updated") if fields.get("updated") is not None else issue.get("updated"),
+            })
+        return issues
+    if not raw.strip():
+        return []
+    issues = []
+    for line in raw.splitlines():
+        if not line.strip():
+            continue
+        parts = [part.strip() for part in line.split("|", 3)]
+        if len(parts) < 4 or not parts[0]:
+            abort(f"bad issue line: {line}")
+        key, assignee, updated, summary = parts
+        issues.append({"key": key, "summary": summary, "assignee": assignee, "updated": updated})
+    return issues
+
+
+def tidy(text: str) -> str:
+    ident = re.sub(r"[^A-Za-z0-9-]", "", text)
+    return ident if re.match(r"^[A-Za-z]", ident) else f"pr-{ident}"
+
+
+def run_stepper(args: list) -> str:
+    proc = subprocess.run(args, text=True, capture_output=True, encoding="utf-8")
+    if proc.returncode != 0:
+        die(" ".join(args[:3]), proc.stderr if proc.stderr.strip() else proc.stdout)
+    return proc.stdout
+
+
+def main() -> None:
+    global FIXTURE, TODAY
+    parser = argparse.ArgumentParser(add_help=False)
+    parser.add_argument("--viewer", default="")
+    parser.add_argument("--all", action="store_true")
+    parser.add_argument("--backlog", action="store_true")
+    parser.add_argument("--aliases", default=str(Path.home() / ".claude" / "aliases.yaml"))
+    parser.add_argument("--started", type=int)
+    parser.add_argument("--session")
+    parser.add_argument("--root")
+    parser.add_argument("--stepper")
+    parser.add_argument("--github-fixture")
+    parser.add_argument("--today")
+    parser.add_argument("--print-queries", action="store_true")
+    parser.add_argument("--print-jql", action="store_true")
+    options = parser.parse_args()
+    if not options.viewer:
+        abort("pass --viewer")
+
+    started = time.monotonic()
+    FIXTURE = options.github_fixture
+    TODAY = date.fromisoformat(options.today) if options.today else date.today()
+
+    try:
+        data = aliases_yaml.load(options.aliases)
+    except OSError as error:
+        abort(str(error))
+    people = {key: value for key, value in data.items() if isinstance(value, dict) and value.get("type") == "person"}
+    team = next(
+        (
+            value for value in data.values()
+            if isinstance(value, dict) and value.get("type") == "team" and "my team" in as_list(value.get("aliases"))
+        ),
+        None,
+    )
+    if team is None:
+        abort("missing team aliased my team")
+    me = next((person for person in people.values() if "me" in as_list(person.get("aliases"))), None)
+    if me is None:
+        abort("missing person aliased me")
+    expected = to_s(dig(me, "ids", "github"))
+    if options.viewer != expected:
+        print(f"{options.viewer} != {expected}", file=sys.stderr)
+        raise SystemExit(1)
+
+    org = to_s(team.get("github_org"))
+    project = to_s(team.get("jira_project"))
+    if not org:
+        abort("missing github_org")
+    if not project:
+        abort("missing jira_project")
+
+    if options.print_jql:
+        for key in ("atlassian_cloud_id", "atlassian_site", "jira_tech_domains"):
+            if as_list(team.get(key)):
+                continue
+            abort(
+                f"missing {key} on the team record in {options.aliases}; "
+                f"add a line `{key}: ...` under it"
+            )
+        domains = ", ".join(f'"{name}"' for name in as_list(team.get("jira_tech_domains")))
+        print(f"cloud_id={team.get('atlassian_cloud_id')}")
+        print(f"site={team.get('atlassian_site')}")
+        print(
+            f'jql=project = {project} AND "Tech Domain[Dropdown]" in ({domains}) '
+            f'AND status = "In Review" AND sprint in openSprints() ORDER BY Rank ASC'
+        )
+        raise SystemExit(0)
+
+    logins = []
+    for name in as_list(team.get("members")) + as_list(team.get("qa")):
+        login = to_s(dig(people, name, "ids", "github"))
+        if not login:
+            abort(f"missing ids.github for {name}")
+        logins.append(login)
+
+    lists = [(key, as_list(team[key])) for key in team if str(key).startswith("repos_")]
+    if options.all:
+        repo_set = uniq([repo for _name, repos in lists for repo in repos])
+    else:
+        repo_set = as_list(team.get("repos_active"))
+    if not repo_set:
+        abort("missing repos_active")
+
+    known = [login for login in (to_s(dig(person, "ids", "github")) for person in people.values()) if login]
+    names = {}
+    for person in people.values():
+        login = to_s(dig(person, "ids", "github"))
+        if not login:
+            continue
+        spaced = [alias for alias in as_list(person.get("aliases")) if isinstance(alias, str) and " " in alias]
+        if spaced:
+            names[login] = max(spaced, key=len)
+
+    issues = []
+    if not options.backlog and not sys.stdin.isatty():
+        issues = load_issues(sys.stdin.read())
+
+    cutoff = (TODAY - timedelta(days=7)).isoformat()
+    repo_qualifiers = " ".join(f"repo:{org}/{repo}" for repo in repo_set)
+    author_qualifiers = " ".join(f"author:{login}" for login in logins)
+    recent_prefix = f"is:pr is:open draft:false updated:>={cutoff}"
+    old_prefix = f"is:pr is:open updated:<{cutoff}"
+    prefix = old_prefix if options.backlog else recent_prefix
+    repo_query = f"{prefix} {repo_qualifiers}"
+    author_query = f"{prefix} {author_qualifiers}"
+    quiet_query = f"is:pr is:open updated:<{cutoff} {repo_qualifiers}"
+
+    if options.print_queries:
+        if not options.backlog:
+            print(quiet_query)
+        raise SystemExit(0)
+
+    def mapped(query: str):
+        return [pr for pr in (project_pr(node, options.viewer, project) for node in search(query, required=True)) if pr]
+
+    with ThreadPoolExecutor(max_workers=3) as pool:
+        repo_future = pool.submit(mapped, repo_query)
+        author_future = pool.submit(mapped, author_query)
+        quiet_future = None if options.backlog else pool.submit(quiet_count, quiet_query)
+        batch = {"repos": repo_future.result(), "authors": author_future.result()}
+        if quiet_future is not None:
+            batch["quiet"] = quiet_future.result()
+
+    key_nodes = []
+    if not options.backlog and issues:
+        groups = [f"is:pr org:{org} {' OR '.join(keys)}" for keys in _slices([issue["key"] for issue in issues], 6)]
+        with ThreadPoolExecutor(max_workers=max(1, len(groups))) as pool:
+            found = [future.result() for future in [pool.submit(search, query) for query in groups]]
+        key_nodes = [pr for nodes in found for pr in (project_pr(node, options.viewer, project) for node in nodes) if pr]
+
+    recent = dedupe(batch["repos"] + batch["authors"])
+    pulled = dedupe(recent + key_nodes)
+
+    if options.backlog:
+        rows = by_updated_desc([
+            pr for pr in recent
+            if recent_pr(pr, options.viewer, repo_set, logins, "1970-01-01") and not pr.get("headApproved")
+        ])
+        bots = sum(1 for pr in recent if dig(pr, "author", "__typename") == "Bot")
+        heading = f"Backlog · {len(rows)}"
+        if all(pr.get("approvals") == 0 for pr in rows):
+            heading += " · none approved"
+        print(heading)
+        print("| # | PR | title | author | age | approvals |")
+        print("| --- | --- | --- | --- | --- | --- |")
+        for index, pr in enumerate(rows, start=1):
+            ref = f"{pr['repository']}#{pr['number']}"
+            marks = marks_for(pr, options.viewer, lists)
+            cell = ref if not marks else f"{ref} {' '.join(marks)}"
+            title = pr["title"].replace("|", "/")
+            print(f"| {index} | {cell} | {title} | {author_name(pr, names)} | {age_days(pr['updatedAt'])}d | {pr['approvals']} |")
+        if bots > 0:
+            print(f"{bots} bots")
+    else:
+        homed = {}
+        lines = []
+        items = []
+
+        def pr_item(issue_key, pr, text):
+            repo = pr["repository"]
+            repo_id = re.sub(r"[^A-Za-z0-9]", "", to_s(repo))
+            if issue_key:
+                item_id = f"{issue_key}-{repo_id}-{pr['number']}"
+            else:
+                item_id = tidy(f"{repo_id}-{pr['number']}")
+            url = f"https://github.com/{org}/{repo}/pull/{pr['number']}"
+            criteria = (
+                f"Start runs qpre on {url}. After qpre exits, read the outcome line qpre wrote for this pull request "
+                "and speak posted, clean, or unfinished. Done when the user strikes the item. Quitting qpre leaves the item active."
+            )
+            items.append((item_id, text, criteria))
+
+        without_pr = 0
+        for issue in issues:
+            key = issue["key"]
+            matched = []
+            for field in ("branchKeys", "commitKeys", "bodyKeys"):
+                hits = [pr for pr in pulled if key in pr[field] and not homed.get(pr["id"]) and walkable(pr, options.viewer)]
+                if hits:
+                    matched = hits
+                    break
+            if not matched:
+                without_pr += 1
+                continue
+            for pr in by_updated_desc(matched):
+                homed[pr["id"]] = True
+                text = item_text(
+                    f"{pr['repository']}#{pr['number']}",
+                    marks_for(pr, options.viewer, lists, known),
+                    pr["title"],
+                    author_name(pr, names),
+                    age_days(pr["updatedAt"]),
+                )
+                lines.append(text)
+                pr_item(key, pr, text)
+
+        for pr in by_updated_desc([
+            pr for pr in recent
+            if not homed.get(pr["id"]) and recent_pr(pr, options.viewer, repo_set, logins, cutoff)
+        ]):
+            text = item_text(
+                f"{pr['repository']}#{pr['number']}",
+                marks_for(pr, options.viewer, lists, known),
+                pr["title"],
+                author_name(pr, names),
+                age_days(pr["updatedAt"]),
+            )
+            lines.append(text)
+            pr_item(None, pr, text)
+
+        bots = sum(1 for pr in pulled if dig(pr, "author", "__typename") == "Bot" and not homed.get(pr["id"]))
+        quiet = f"{batch['quiet']} quiet"
+        if without_pr > 0:
+            quiet += f" · {without_pr} without a pull request"
+        if bots > 0:
+            quiet += f" · {bots} bots"
+        print(quiet)
+        for line in lines:
+            print(line)
+
+        if options.session and items:
+            if not options.root or not options.stepper:
+                abort("pass --root and --stepper with --session")
+            base = ["python3", options.stepper]
+            scope = ["--session", options.session, "--root", options.root, "--context", "pr-queue"]
+            run_stepper(base + ["capture"] + scope + [flag for item_id, text, criteria in items for flag in ("--item", f"{item_id} | {text} | {criteria}")])
+            run_stepper(base + ["order"] + scope + [flag for item_id, _text, _criteria in items for flag in ("--item", item_id, "--free", item_id)])
+            brief = json.loads(run_stepper(base + ["status", "--session", options.session, "--root", options.root])).get("brief")
+            if brief:
+                print(f"pr-queue brief {json.dumps(brief, separators=(',', ':'))}", file=sys.stderr)
+
+    elapsed = time.monotonic() - started
+    print(f"pr-queue {elapsed:.1f}s", file=sys.stderr)
+    if options.started is not None:
+        print(f"pr-queue total {int(time.time()) - options.started}s from prompt", file=sys.stderr)
+
+
+def _slices(items: list, size: int):
+    return [items[index:index + size] for index in range(0, len(items), size)]
+
+
+if __name__ == "__main__":
+    main()

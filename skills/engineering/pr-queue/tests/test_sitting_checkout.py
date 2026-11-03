@@ -3,13 +3,14 @@
 
     python3 skills/engineering/pr-queue/tests/test_sitting_checkout.py
 
-No network and no real clone is touched. Needs Ruby 2.6 or newer and git on PATH.
+No network and no real clone is touched. Needs Python 3.11 or newer and git on PATH.
 """
 
 import json
 import os
 import stat
 import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -80,7 +81,7 @@ class SittingCheckout(unittest.TestCase):
     def run_checkout(self, aliases=None):
         env = dict(os.environ, PATH=f"{self.bin}:{os.environ['PATH']}")
         return subprocess.run(
-            ["ruby", str(SCRIPT), "checkout", "--session", "claude:s", "--root", "/r",
+            [sys.executable, str(SCRIPT), "checkout", "--session", "claude:s", "--root", "/r",
              "--stepper", str(Path(self.tmp.name) / "stepper.py"),
              "--aliases", str(aliases or self.aliases)],
             text=True, capture_output=True, env=env, check=False,
