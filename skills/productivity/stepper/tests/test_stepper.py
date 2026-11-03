@@ -1188,6 +1188,40 @@ class StepperTests(unittest.TestCase):
         )
         self.assertEqual(out, "")
 
+    def stop_after(self, generation):
+        return self.hook(
+            "cursor",
+            {
+                "hook_event_name": "stop",
+                "conversation_id": "aaa",
+                "generation_id": generation,
+                "status": "completed",
+                "loop_count": 0,
+            },
+        )
+
+    def test_stop_is_quiet_after_a_turn_that_briefed_the_sitting(self):
+        self.capture()
+        self.register("cursor:aaa", prompt="fix AC-3", generation="g-brief")
+        self.cli("status", "--session", "cursor:aaa")
+        _code, _data, out = self.stop_after("g-brief")
+        self.assertEqual(out, "")
+
+    def test_stop_is_quiet_after_a_turn_that_changed_the_sitting(self):
+        self.capture()
+        self.register("cursor:aaa", prompt="fix AC-3", generation="g-change")
+        self.cli("verify", "--session", "cursor:aaa", "AC-3", "--evidence", "tested")
+        _code, _data, out = self.stop_after("g-change")
+        self.assertEqual(out, "")
+
+    def test_a_brief_in_an_earlier_turn_does_not_silence_a_later_stop(self):
+        self.capture()
+        self.register("cursor:aaa", prompt="fix AC-3", generation="g-one")
+        self.cli("status", "--session", "cursor:aaa")
+        self.register("cursor:aaa", prompt="fix AC-3", generation="g-two")
+        _code, data, _out = self.stop_after("g-two")
+        self.assertIn("AC-3 active", data["followup_message"])
+
     def test_teaching_owner_suppresses_stop_and_session_start_reminders(self):
         self.capture()
         latch = self.root / ".claude" / "turn-owner.json"
