@@ -67,6 +67,10 @@ def scope(options)
   ["--session", options[:session], "--root", options[:root]]
 end
 
+def sitting_status(options)
+  stepper(options, "status", *scope(options), "--context", CONTEXT)
+end
+
 def open_sitting(options)
   %i[session root stepper].each { |key| stop("pass --#{key}") unless options[key] }
 
@@ -78,7 +82,7 @@ def open_sitting(options)
   attach = ["attach", *scope(options), "--context", CONTEXT, "--brief"]
   if found && !found["complete"]
     stepper(options, *attach) unless holder
-    sitting = stepper(options, "status", *scope(options)).dig("context", "items")
+    sitting = sitting_status(options).dig("context", "items")
     puts Array(sitting).reject { |entry| %w[verified cancelled].include?(entry["status"]) }.map { |entry| entry["description"] }
   else
     if found
@@ -101,7 +105,7 @@ def strike(options)
   %i[session root stepper].each { |key| stop("pass --#{key}") unless options[key] }
   stop("pass --evidence") if options[:evidence].to_s.strip.empty?
 
-  items = Array(stepper(options, "status", *scope(options)).dig("context", "items"))
+  items = Array(sitting_status(options).dig("context", "items"))
   active = items.find { |entry| entry["status"] == "active" }
   stop("no active item in the sitting") unless active
 
@@ -111,7 +115,7 @@ end
 def brief(options)
   %i[session root stepper].each { |key| stop("pass --#{key}") unless options[key] }
 
-  print_brief(stepper(options, "status", *scope(options))["brief"])
+  print_brief(sitting_status(options)["brief"])
 end
 
 PROMPT = "s strike, k keep active, q quit: "
@@ -145,7 +149,7 @@ def approved_on_head?(url, viewer)
 end
 
 def active_item(options)
-  Array(stepper(options, "status", *scope(options)).dig("context", "items")).find { |entry| entry["status"] == "active" }
+  Array(sitting_status(options).dig("context", "items")).find { |entry| entry["status"] == "active" }
 end
 
 def walk(options)
@@ -155,7 +159,7 @@ def walk(options)
   qpre = options[:qpre] || ENV["SITTING_QPRE"] || "qpre"
   outcomes = File.expand_path(options[:outcome_dir] || ENV["SITTING_OUTCOME_DIR"] || "~/.qpr/outcomes")
   active = active_item(options) || stop("no active item in the sitting")
-  print_brief(stepper(options, "status", *scope(options))["brief"])
+  print_brief(sitting_status(options)["brief"])
 
   while active
     url = active["completion_criteria"].to_s[%r{https://github\.com/[^/\s]+/[^/\s]+/pull/\d+}]
@@ -223,7 +227,7 @@ def checkout(options)
   roots = Array(team["clone_roots"]).map { |path| File.expand_path(path) }
   stop("missing clone_roots on the team record in #{options[:aliases]}; add a line `clone_roots: [~/src/work]` under it") if roots.empty?
 
-  status = JSON.parse(run("python3", options[:stepper], "status", "--session", options[:session], "--root", options[:root]))
+  status = sitting_status(options)
   items = Array(status.dig("context", "items"))
   active = items.find { |item| item["status"] == "active" }
   stop("no active item in the sitting") unless active

@@ -1271,6 +1271,35 @@ class StepperTests(unittest.TestCase):
         _code, _data, out = self.stop_after("g-brief")
         self.assertEqual(out, "")
 
+    def test_status_with_context_speaks_that_sitting_when_the_session_holds_several(self):
+        self.capture()
+        self.cli("capture", "--session", "cursor:aaa", "--context", "pr-queue", "--item", "PQ-1: review one")
+        _code, unscoped = self.cli("status", "--session", "cursor:aaa")
+        self.assertIsNone(unscoped["context"])
+        code, scoped = self.cli("status", "--session", "cursor:aaa", "--context", "pr-queue")
+        self.assertEqual(code, 0, scoped)
+        self.assertEqual([i["id"] for i in scoped["context"]["items"]], ["PQ-1"])
+        self.assertEqual(scoped["brief"]["left"], ["PQ-1"])
+        code, missing = self.cli("status", "--session", "cursor:aaa", "--context", "nope")
+        self.assertNotEqual(code, 0)
+
+    def test_stop_reminds_once_when_the_turn_left_the_active_item_without_a_brief(self):
+        self.capture()
+        self.register("cursor:aaa", prompt="fix AC-3", generation="g-none")
+        _code, data, _out = self.stop_after("g-none")
+        self.assertIn("AC-3 active", data["followup_message"])
+        _code, _data, out = self.stop_after("g-none")
+        self.assertEqual(out, "")
+
+    def test_stop_is_quiet_when_another_skill_owns_the_turn(self):
+        self.capture()
+        latch = self.root / ".claude" / "turn-owner.json"
+        latch.parent.mkdir()
+        latch.write_text(json.dumps({"session_key": "cursor:aaa", "owner": "pair", "pending_offer": False}))
+        self.register("cursor:aaa", prompt="fix AC-3", generation="g-owned")
+        _code, _data, out = self.stop_after("g-owned")
+        self.assertEqual(out, "")
+
     def test_stop_is_quiet_after_a_turn_that_changed_the_sitting(self):
         self.capture()
         self.register("cursor:aaa", prompt="fix AC-3", generation="g-change")
