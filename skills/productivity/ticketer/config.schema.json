@@ -12,6 +12,25 @@
       "type": "object",
       "additionalProperties": { "type": "array", "items": { "type": "string" } }
     },
+    "required_for": {
+      "type": "object",
+      "additionalProperties": { "type": "array", "items": { "type": "string" }, "minItems": 1 }
+    },
+    "parent_ladder": {
+      "type": "object",
+      "minProperties": 1,
+      "additionalProperties": { "type": "array", "items": { "type": "string" }, "minItems": 1 }
+    },
+    "parent_allow": {
+      "type": "object",
+      "additionalProperties": { "type": "array", "items": { "type": "string" }, "minItems": 1 }
+    },
+    "parent_project": {
+      "type": "object",
+      "additionalProperties": { "type": "array", "items": { "type": "string" }, "minItems": 1 }
+    },
+    "parent_match_field": { "type": "string", "minLength": 1 },
+    "parent_match_type": { "type": "string", "minLength": 1 },
     "forbid_empty": { "type": "array", "items": { "type": "string" } },
     "normalize_labels": { "type": "boolean" },
     "ai_disclosure": { "type": "string" },

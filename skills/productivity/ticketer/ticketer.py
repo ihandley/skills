@@ -53,6 +53,7 @@ CONFIG_KEYS = {
     "tracker",
     "required",
     "required_by_type",
+    "required_for",
     "forbid_empty",
     "normalize_labels",
     "ai_disclosure",
@@ -63,6 +64,11 @@ CONFIG_KEYS = {
     "draft_max_age_hours",
     "defaults",
     "extra",
+    "parent_ladder",
+    "parent_allow",
+    "parent_project",
+    "parent_match_field",
+    "parent_match_type",
 }
 CREATE, UPDATE = "create", "update"
 
@@ -264,6 +270,43 @@ def match_mapping(entries, cwd):
     return best
 
 
+def _string_list_table(value):
+    """A table of names to non-empty lists of non-empty strings. An empty table is valid."""
+    if not isinstance(value, dict):
+        return False
+    for item in value.values():
+        if not (isinstance(item, list) and item and all(isinstance(n, str) and n.strip() for n in item)):
+            return False
+    return True
+
+
+def check_parent_config(data, problems):
+    """Accept a parent ladder, or reject an empty one. Other parent tables are optional."""
+    if "parent_ladder" in data:
+        ladder = data["parent_ladder"]
+        if not isinstance(ladder, dict) or not ladder or not _string_list_table(ladder):
+            problems.append(err(
+                "bad_type",
+                "parent_ladder must be a non-empty table of issue type to a non-empty list of issue types",
+                "parent_ladder",
+            ))
+    for key in ("parent_allow", "parent_project", "required_for"):
+        if key not in data:
+            continue
+        if not _string_list_table(data[key]):
+            problems.append(err(
+                "bad_type",
+                "%s must be a table of issue type to a non-empty list of strings" % key,
+                key,
+            ))
+    for key in ("parent_match_field", "parent_match_type"):
+        if key in data and not (isinstance(data[key], str) and data[key].strip()):
+            problems.append(err("bad_type", "%s must be a non-empty string" % key, key))
+    if ("parent_match_field" in data) != ("parent_match_type" in data):
+        missing = "parent_match_type" if "parent_match_field" in data else "parent_match_field"
+        problems.append(err("bad_type", "%s is required when the other parent match key is set" % missing, missing))
+
+
 def deep_merge_config(data, overrides):
     for key, value in overrides.items():
         if key in ("defaults", "extra") and isinstance(value, dict):
@@ -294,6 +337,7 @@ def load_config(path, overrides=None):
     if not (isinstance(by_type, dict) and all(
             isinstance(v, list) and all(isinstance(n, str) for n in v) for v in by_type.values())):
         problems.append(err("bad_type", "required_by_type must be a table of issue type to a list of strings", "required_by_type"))
+    check_parent_config(data, problems)
     for key in ("normalize_labels", "enforce_templates", "require_metadata"):
         if key in data and not isinstance(data[key], bool):
             problems.append(err("bad_type", "%s must be true or false" % key, key))
@@ -313,6 +357,12 @@ def load_config(path, overrides=None):
                 problems.append(err("bad_default", "[defaults] key %r is not valid for %s" % (key, tracker), key))
         if data.get("extra") and not adapter.SUPPORTS_EXTRA:
             problems.append(err("bad_extra", "[extra] is not supported for %s" % tracker, "extra"))
+        rejected = sorted(k for k in getattr(adapter, "REJECTED_CONFIG_KEYS", ()) if k in data)
+        if rejected:
+            problems.append(err(
+                "unsupported_config",
+                "%s config cannot contain %s" % (tracker, ", ".join(rejected)),
+            ))
         for table in ("defaults", "extra"):
             for key, value in data.get(table, {}).items():
                 if value == PLACEHOLDER:
@@ -321,6 +371,10 @@ def load_config(path, overrides=None):
         raise Fail(EXIT_CONFIG, "config %s is invalid" % path, problems)
     data.setdefault("required", ["summary"])
     data.setdefault("required_by_type", {})
+    data.setdefault("required_for", {})
+    data.setdefault("parent_ladder", {})
+    data.setdefault("parent_allow", {})
+    data.setdefault("parent_project", {})
     data.setdefault("forbid_empty", [])
     data.setdefault("enforce_templates", True)
     data.setdefault("require_metadata", False)

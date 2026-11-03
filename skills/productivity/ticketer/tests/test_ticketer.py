@@ -600,6 +600,49 @@ class UnsupportedMetadataKindTests(Base):
                 self.assertNotIn("Traceback", stderr)
 
 
+LADDER_TOML = JIRA_TOML + """
+[parent_ladder]
+Task = ["Epic"]
+"""
+
+
+class ParentLadderConfigTests(Base):
+    def test_empty_parent_ladder_is_rejected(self):
+        self.write_config(JIRA_TOML + "\n[parent_ladder]\n")
+        code, data, _ = self.draft(jira_payload())
+        self.assertEqual(code, 4)
+        self.assertTrue(any(e["field"] == "parent_ladder" for e in data["errors"]))
+
+    def test_parent_ladder_with_an_empty_list_is_rejected(self):
+        self.write_config(JIRA_TOML + '\n[parent_ladder]\nTask = []\n')
+        code, data, _ = self.draft(jira_payload())
+        self.assertEqual(code, 4)
+        self.assertTrue(any(e["field"] == "parent_ladder" for e in data["errors"]))
+
+    def test_nonempty_parent_ladder_is_accepted(self):
+        self.write_config(LADDER_TOML)
+        code, data, _ = self.draft(jira_payload(issue_type="Feature"))
+        self.assertNotEqual(code, 4, data)
+
+    def test_github_rejects_parent_ladder_keys_and_accepts_required_for(self):
+        forbidden = {
+            "parent_ladder": '[parent_ladder]\nTask = ["Epic"]\n',
+            "parent_allow": '[parent_allow]\nWidget = ["AB-1"]\n',
+            "parent_project": '[parent_project]\nTask = ["JET"]\n',
+            "parent_match_field": 'parent_match_field = "customfield_1"\n',
+            "parent_match_type": 'parent_match_type = "Epic"\n',
+        }
+        for key, body in forbidden.items():
+            with self.subTest(key=key):
+                self.write_config(GITHUB_TOML + "\n" + body, team="oss")
+                code, data, _ = self.draft({"summary": "Fix crash", "description": "Broken.", "labels": ["bug"]})
+                self.assertEqual(code, 4)
+                self.assertTrue(any(key in e["message"] for e in data["errors"]), data)
+        self.write_config(GITHUB_TOML + '\n[required_for]\nBug = ["summary", "description"]\n', team="oss")
+        code, data, _ = self.draft({"summary": "Fix crash", "description": "Broken.", "labels": ["bug"], "issue_type": "Task"})
+        self.assertNotEqual(code, 4, data)
+
+
 class AdapterContractTests(unittest.TestCase):
     """The same checks run against every registered adapter."""
 

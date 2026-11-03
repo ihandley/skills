@@ -16,6 +16,7 @@ METADATA_KINDS = ("labels",)
 IDENT_KEYS = ("repo",)
 SUPPORTS_EXTRA = False
 NORMALIZE_LABELS = False
+REJECTED_CONFIG_KEYS = {"parent_ladder", "parent_allow", "parent_project", "parent_match_field", "parent_match_type"}
 
 REPO_RE = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
 NUMBER_RE = re.compile(r"^[0-9]+$")
