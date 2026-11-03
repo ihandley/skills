@@ -834,6 +834,13 @@ Bucket = ["LPP"]
 Widget = ["LPP"]
 """)
 
+    def test_configured_project_matches_the_type_ignoring_case(self):
+        code, data, _ = self.run_cli("find-parent", "--query", "reset", "--type", "epic")
+        self.assertEqual(code, 0, data)
+        jql = data["descriptor"]["payload"]["jql"]
+        self.assertIn("project = JET", jql)
+        self.assertIn('issuetype = "epic"', jql)
+
     def test_search_limits_project_type_and_done_and_escapes_quotes(self):
         code, data, _ = self.run_cli("find-parent", "--query", 'say "hi"', "--type", "Epic")
         self.assertEqual(code, 0, data)

@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import re
 
+from lookup import lookup_ci
+
 NAME = "jira"
 FIELDS = {
     "operation": "str", "key": "str", "summary": "str", "description": "str", "issue_type": "str",
@@ -322,11 +324,7 @@ def _jql_escape(text):
 
 
 def _projects_for(type_name, config):
-    listed = None
-    for key, value in (config.get("parent_project") or {}).items():
-        if str(key).casefold() == type_name.casefold():
-            listed = value
-            break
+    listed = lookup_ci(config.get("parent_project") or {}, type_name)
     if listed:
         return tuple(listed)
     return (config.get("defaults", {}).get("project_key") or "<project_key>",)

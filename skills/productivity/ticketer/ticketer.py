@@ -35,6 +35,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from adapters import ADAPTERS, get_adapter  # noqa: E402
+from lookup import lookup_ci  # noqa: E402
 
 SKILL_DIR = Path(__file__).resolve().parent
 PLACEHOLDER = "REPLACE_ME"
@@ -501,16 +502,6 @@ def build_draft(raw, adapter, config):
     if operation == CREATE and disclosure and draft.get("description") and not draft["description"].startswith(disclosure):
         draft["description"] = disclosure + "\n\n" + draft["description"]
     return {k: v for k, v in draft.items() if v is not None}, notes
-
-
-def lookup_ci(table, name):
-    if not name or not isinstance(table, dict):
-        return None
-    folded = str(name).casefold()
-    for key, value in table.items():
-        if str(key).casefold() == folded:
-            return value
-    return None
 
 
 def parent_ladder_problems(draft, config, adapter):
