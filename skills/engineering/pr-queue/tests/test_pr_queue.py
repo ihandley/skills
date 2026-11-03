@@ -3,12 +3,13 @@
 
     python3 skills/engineering/pr-queue/tests/test_pr_queue.py
 
-Needs Ruby 2.6 or newer on PATH.
+Needs Python 3.11 or newer.
 """
 
 import os
 import stat
 import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -35,7 +36,7 @@ class PrQueueOutput(unittest.TestCase):
         env = dict(os.environ, TZ="UTC", PATH=f"{self.bin.name}:{os.environ['PATH']}")
         return subprocess.run(
             [
-                "ruby", str(SCRIPT),
+                sys.executable, str(SCRIPT),
                 "--viewer", "ian",
                 "--aliases", str(aliases or FIXTURES / "aliases.yaml"),
                 "--github-fixture", str(FIXTURES / "github.json"),

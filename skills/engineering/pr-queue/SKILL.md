@@ -1,7 +1,7 @@
 ---
 name: pr-queue
 description: List this week's review queue, the open sprint's In Review tickets and the last 7 days of team pull requests, then walk them one at a time.
-compatibility: Requires Ruby 2.6+ and the gh CLI
+compatibility: Requires Python 3.11+ and the gh CLI
 disable-model-invocation: true
 ---
 
@@ -33,7 +33,7 @@ Done when every issue from that JQL is held in rank order. A failed call stops t
 
 ## Open
 
-A list invocation runs `sitting open`, one command. `sitting` is `scripts/sitting` in the directory of this file. Write the issues to its stdin in the format below. Run `ruby` on it as `sitting open --session KEY --root PATH --stepper PATH --viewer LOGIN --started EPOCH`, with `--session` and `--root` from the hook line, `--stepper` the stepper CLI path named in the stepper skill, `--viewer` the login from `get_me`, and `--started` the start time. Add `--all` for an `all` invocation. Do not run stepper commands, apply lease rules, or call `pr-queue` yourself. `open` decides, fetches only when it must, and prints the queue and the four brief parts.
+A list invocation runs `sitting open`, one command. `sitting` is `scripts/sitting` in the directory of this file. Write the issues to its stdin in the format below. Run `python3` on it as `sitting open --session KEY --root PATH --stepper PATH --viewer LOGIN --started EPOCH`, with `--session` and `--root` from the hook line, `--stepper` the stepper CLI path named in the stepper skill, `--viewer` the login from `get_me`, and `--started` the start time. Add `--all` for an `all` invocation. Do not run stepper commands, apply lease rules, or call `pr-queue` yourself. `open` decides, fetches only when it must, and prints the queue and the four brief parts.
 
 Print its stdout. A non-zero exit stops the run. Say its stderr, which names the chat when another chat holds the sitting.
 
@@ -49,7 +49,7 @@ Done when stdout is printed and the brief is spoken, or the run has stopped. Do 
 
 A later message uses the captured list or the printed table. It does not fetch again.
 
-**Start** on a list: qpre needs an interactive terminal, so do not run it. Tell the person to run `ruby <dir of this file>/scripts/sitting walk --session KEY --root PATH --stepper PATH --viewer LOGIN` in their terminal, with the same values as `open`, and stop. The walk briefs the active item, runs qpre on its pull request, speaks the outcome (`posted`, `clean`, `unfinished`, or `missing outcome`) and whether the viewer approved the latest commit, then takes one key: `s` strikes and walks the next item, `k` keeps it active, `q` leaves the walk. Quitting qpre leaves the item active. Something else (a question about the pull request) stays in chat.
+**Start** on a list: qpre needs an interactive terminal, so do not run it. Tell the person to run `python3 <dir of this file>/scripts/sitting walk --session KEY --root PATH --stepper PATH --viewer LOGIN` in their terminal, with the same values as `open`, and stop. The walk briefs the active item, runs qpre on its pull request, speaks the outcome (`posted`, `clean`, `unfinished`, or `missing outcome`) and whether the viewer approved the latest commit, then takes one key: `s` strikes and walks the next item, `k` keeps it active, `q` leaves the walk. Quitting qpre leaves the item active. Something else (a question about the pull request) stays in chat.
 
 A **strike** is the user's decision that the item is finished. Run `sitting strike --session KEY --root PATH --stepper PATH --evidence TEXT`, with the outcome and the user's decision as the evidence. Do not run `stepper verify` yourself. It verifies the active item and prints the next item's four brief parts, which you speak (`done`, `left`, `blocked`, `position`). `sitting brief` with the same `--session`, `--root`, and `--stepper` prints the four parts again without changing anything.
 

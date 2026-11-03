@@ -1,281 +1,410 @@
-#!/usr/bin/env ruby
-# frozen_string_literal: true
+#!/usr/bin/env python3
+"""The sitting commands: open, strike, brief, checkout, and walk.
 
-# The sitting commands. This file builds `open`, `strike`, `brief`,
-# `checkout`, and `walk`.
-#
-#   sitting open --session KEY --root PATH --stepper PATH --viewer LOGIN [--all]
-#                [--started EPOCH] [--aliases PATH] < issues
-#
-# Applies the lease rules to the `pr-queue` context, fetches a fresh queue with
-# `pr-queue` only when none is left in place, then prints the queue and the four
-# brief parts. The In Review issues arrive on stdin in the format `pr-queue`
-# reads; this command does not search Jira.
-#
-#   sitting checkout --session KEY --root PATH --stepper PATH [--aliases PATH]
-#
-#   sitting strike --session KEY --root PATH --stepper PATH --evidence TEXT
-#
-# Verifies the active pr-queue item with the evidence given, then prints the next
-# item's four brief parts (done, left, blocked, position) from stepper's --brief
-# form, never the whole store.
-#
-#   sitting brief --session KEY --root PATH --stepper PATH
-#
-# Prints the four brief parts for this chat's sitting. Changes nothing.
-#
-#   sitting walk --session KEY --root PATH --stepper PATH --viewer LOGIN
-#                [--qpre CMD] [--outcome-dir DIR] [--keys FILE]
-#
-# Walks the sitting in the terminal. For the active item it prints the brief, runs
-# qpre on the item's pull request with the terminal inherited (wait for it to
-# exit), reads the one outcome line qpre wrote, and speaks posted, clean, or
-# unfinished (a missing line is "missing outcome", never clean). It also says
-# whether --viewer approved the latest commit. Then one key: s strikes the item
-# and walks the next, k keeps it active, q or Ctrl-C leaves the walk, anything
-# else asks again. Quitting qpre (non-zero or signal exit) leaves the item active
-# with no strike prompt. --qpre (env SITTING_QPRE, default qpre), --outcome-dir
-# (env SITTING_OUTCOME_DIR, default ~/.qpr/outcomes), and --keys (a file of keys
-# instead of the terminal) are seams for tests.
-#
-# Resolves the active pr-queue item to its local clone, leaves that clone on the
-# pull request head, and prints the clone path and the pull request's base ref.
+    sitting open --session KEY --root PATH --stepper PATH --viewer LOGIN [--all]
+                 [--started EPOCH] [--aliases PATH] < issues
 
-require "json"
-require "open3"
-require "optparse"
-require "yaml"
+Applies the lease rules to the pr-queue context, fetches a fresh queue with
+pr-queue only when none is left in place, then prints the queue and the four
+brief parts. The In Review issues arrive on stdin in the format pr-queue reads.
+This command does not search Jira.
 
-def stop(message)
-  warn message
-  exit 1
-end
+    sitting checkout --session KEY --root PATH --stepper PATH [--aliases PATH]
 
-def run(*args, chdir: nil)
-  out, err, status = Open3.capture3(*args, chdir: chdir || Dir.pwd)
-  stop("#{args.first(3).join(" ")}: #{err.strip.empty? ? out.strip : err.strip}") unless status.success?
-  out
-end
+Resolves the active pr-queue item to its local clone, leaves that clone on the
+pull request head, and prints the clone path and the pull request's base ref.
+
+    sitting strike --session KEY --root PATH --stepper PATH --evidence TEXT
+
+Verifies the active pr-queue item with the evidence given, then prints the next
+item's four brief parts from stepper's --brief form.
+
+    sitting brief --session KEY --root PATH --stepper PATH
+
+Prints the four brief parts for this chat's sitting. Changes nothing.
+
+    sitting walk --session KEY --root PATH --stepper PATH --viewer LOGIN
+                 [--qpre CMD] [--outcome-dir DIR] [--keys FILE]
+
+Walks the sitting in the terminal. For the active item it prints the brief, runs
+qpre on the item's pull request with the terminal inherited, reads the one
+outcome line qpre wrote, and speaks posted, clean, or unfinished (a missing line
+is "missing outcome"). It also says whether --viewer approved the latest commit.
+Then one key: s strikes and walks the next, k keeps it active, q or Ctrl-C
+leaves the walk. Quitting qpre leaves the item active with no strike prompt.
+--qpre (env SITTING_QPRE, default qpre), --outcome-dir (env SITTING_OUTCOME_DIR,
+default ~/.qpr/outcomes), and --keys (a file of keys instead of the terminal)
+are seams for tests.
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import re
+import subprocess
+import sys
+import termios
+import tty
+from pathlib import Path
+
+if sys.version_info < (3, 11):
+    sys.stderr.write(
+        "sitting needs Python 3.11 or newer; found %s at %s.\n"
+        % (sys.version.split()[0], sys.executable)
+    )
+    raise SystemExit(3)
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+import aliases_yaml  # noqa: E402
 
 CONTEXT = "pr-queue"
-
-def stepper(options, *args)
-  JSON.parse(run("python3", options[:stepper], *args))
-end
-
-def scope(options)
-  ["--session", options[:session], "--root", options[:root]]
-end
-
-def sitting_status(options)
-  stepper(options, "status", *scope(options), "--context", CONTEXT)
-end
-
-def open_sitting(options)
-  %i[session root stepper].each { |key| stop("pass --#{key}") unless options[key] }
-
-  listed = stepper(options, "status", "--root", options[:root])
-  found = Array(listed["contexts"]).find { |context| context["id"] == CONTEXT && !context["closed"] }
-  holder = found && found.dig("lease", "session_key")
-  stop("the #{CONTEXT} sitting is held by #{holder}; ask that chat to finish or release it") if holder && holder != options[:session]
-
-  attach = ["attach", *scope(options), "--context", CONTEXT, "--brief"]
-  if found && !found["complete"]
-    stepper(options, *attach) unless holder
-    sitting = sitting_status(options).dig("context", "items")
-    puts Array(sitting).reject { |entry| %w[verified cancelled].include?(entry["status"]) }.map { |entry| entry["description"] }
-  else
-    if found
-      stepper(options, *attach) unless holder
-      stepper(options, "close", *scope(options), "--context", CONTEXT, "--brief")
-    end
-    fetch_queue(options)
-  end
-
-  held = Array(stepper(options, "status", "--root", options[:root])["contexts"]).any? { |context| context["id"] == CONTEXT && !context["closed"] }
-  print_brief(held ? stepper(options, *attach)["brief"] : { "done" => [], "left" => [], "blocked" => [], "position" => "none" })
-end
-
-def print_brief(brief)
-  %w[done left blocked].each { |part| puts "#{part}: #{Array(brief[part]).empty? ? "none" : brief[part].join(", ")}" }
-  puts "position: #{brief["position"]}"
-end
-
-def strike(options)
-  %i[session root stepper].each { |key| stop("pass --#{key}") unless options[key] }
-  stop("pass --evidence") if options[:evidence].to_s.strip.empty?
-
-  items = Array(sitting_status(options).dig("context", "items"))
-  active = items.find { |entry| entry["status"] == "active" }
-  stop("no active item in the sitting") unless active
-
-  print_brief(stepper(options, "verify", *scope(options), "--context", CONTEXT, active["id"], "--evidence", options[:evidence], "--brief")["brief"])
-end
-
-def brief(options)
-  %i[session root stepper].each { |key| stop("pass --#{key}") unless options[key] }
-
-  print_brief(sitting_status(options)["brief"])
-end
-
 PROMPT = "s strike, k keep active, q quit: "
+URL = re.compile(r"https://github\.com/[^/\s]+/[^/\s]+/pull/\d+")
+PARTS = re.compile(r"github\.com/([^/]+)/([^/]+)/pull/(\d+)")
 
-def key_reader(options)
-  if options[:keys]
-    file = File.open(options[:keys])
-    return -> { file.getc }
-  end
-  require "io/console"
-  tty = $stdin.tty? ? $stdin : (IO.console || stop("walk needs a terminal; there is none"))
-  -> { tty.getch }
-end
 
-def outcome_word(path)
-  line = File.file?(path) ? File.read(path).lines.first.to_s.strip : ""
-  case line
-  when /\Aposted\b/ then "posted"
-  when "clean" then "clean"
-  when /\A(partial|unfinished|unposted)\b/ then "unfinished"
-  else "missing outcome"
-  end
-end
+def stop(message: str) -> None:
+    print(message, file=sys.stderr)
+    raise SystemExit(1)
 
-def approved_on_head?(url, viewer)
-  _, org, repo, number = url.match(%r{github\.com/([^/]+)/([^/]+)/pull/(\d+)}).to_a
-  pr = JSON.parse(run("gh", "pr", "view", number, "--repo", "#{org}/#{repo}", "--json", "headRefOid,reviews"))
-  Array(pr["reviews"]).any? do |review|
-    review["state"] == "APPROVED" && review.dig("author", "login") == viewer && review.dig("commit", "oid") == pr["headRefOid"]
-  end
-end
 
-def active_item(options)
-  Array(sitting_status(options).dig("context", "items")).find { |entry| entry["status"] == "active" }
-end
+def expand(path: str) -> str:
+    candidate = Path(path).expanduser()
+    if not candidate.is_absolute():
+        candidate = Path.cwd() / candidate
+    return os.path.normpath(str(candidate))
 
-def walk(options)
-  %i[session root stepper viewer].each { |key| stop("pass --#{key}") unless options[key] }
 
-  next_key = key_reader(options)
-  qpre = options[:qpre] || ENV["SITTING_QPRE"] || "qpre"
-  outcomes = File.expand_path(options[:outcome_dir] || ENV["SITTING_OUTCOME_DIR"] || "~/.qpr/outcomes")
-  active = active_item(options) || stop("no active item in the sitting")
-  print_brief(sitting_status(options)["brief"])
+def as_list(value):
+    if value is None:
+        return []
+    if isinstance(value, list):
+        return value
+    return [value]
 
-  while active
-    url = active["completion_criteria"].to_s[%r{https://github\.com/[^/\s]+/[^/\s]+/pull/\d+}]
-    stop("active item #{active["id"]} names no pull request url") unless url
-    _, org, repo, number = url.match(%r{github\.com/([^/]+)/([^/]+)/pull/(\d+)}).to_a
-    path = File.join(outcomes, "#{org}-#{repo}-#{number}")
-    File.delete(path) if File.file?(path)
 
-    $stdout.flush
-    ran = system(qpre, url)
-    unless ran && $?.success?
-      puts "qpre quit; #{active["id"]} stays active"
-      return
-    end
+def dig(obj, *keys):
+    for key in keys:
+        if not isinstance(obj, dict):
+            return None
+        obj = obj.get(key)
+    return obj
 
-    outcome = outcome_word(path)
-    approved = approved_on_head?(url, options[:viewer])
-    puts "outcome: #{outcome}"
-    puts "approved: #{approved ? "yes" : "no"}"
 
-    choice = nil
-    until choice
-      print PROMPT
-      $stdout.flush
-      key = next_key.call
-      puts
-      case key
-      when "s", "k" then choice = key
-      when nil, "q", "\u0003" then choice = "q"
-      end
-    end
-    if choice != "s"
-      puts "#{active["id"]} stays active"
-      return
-    end
+def run(args: list, cwd: str | None = None) -> str:
+    proc = subprocess.run(args, cwd=cwd, text=True, capture_output=True, encoding="utf-8")
+    if proc.returncode != 0:
+        detail = proc.stderr.strip() or proc.stdout.strip()
+        stop(f"{' '.join(args[:3])}: {detail}")
+    return proc.stdout
 
-    options[:evidence] = "#{outcome}; #{approved ? "approved" : "not approved"} on latest commit; struck in walk"
-    strike(options)
+
+def stepper(options, *args):
+    return json.loads(run(["python3", options.stepper, *args]))
+
+
+def scope(options) -> list:
+    return ["--session", options.session, "--root", options.root]
+
+
+def require(options, *keys: str) -> None:
+    for key in keys:
+        if not getattr(options, key):
+            stop(f"pass --{key}")
+
+
+def sitting_status(options):
+    return stepper(options, "status", *scope(options), "--context", CONTEXT)
+
+
+def print_brief(brief) -> None:
+    brief = brief or {}
+    for part in ("done", "left", "blocked"):
+        values = as_list(brief.get(part))
+        print(f"{part}: {', '.join(values) if values else 'none'}")
+    position = brief.get("position")
+    print(f"position: {'' if position is None else position}")
+
+
+def open_sitting(options) -> None:
+    require(options, "session", "root", "stepper")
+    listed = stepper(options, "status", "--root", options.root)
+    found = next(
+        (context for context in as_list(listed.get("contexts")) if context.get("id") == CONTEXT and not context.get("closed")),
+        None,
+    )
+    holder = dig(found, "lease", "session_key") if found else None
+    if holder and holder != options.session:
+        stop(f"the {CONTEXT} sitting is held by {holder}; ask that chat to finish or release it")
+
+    attach = ["attach", *scope(options), "--context", CONTEXT, "--brief"]
+    if found and not found.get("complete"):
+        if not holder:
+            stepper(options, *attach)
+        sitting = dig(sitting_status(options), "context", "items")
+        for entry in as_list(sitting):
+            if entry.get("status") not in ("verified", "cancelled"):
+                print(entry.get("description"))
+    else:
+        if found:
+            if not holder:
+                stepper(options, *attach)
+            stepper(options, "close", *scope(options), "--context", CONTEXT, "--brief")
+        fetch_queue(options)
+
+    held = any(
+        context.get("id") == CONTEXT and not context.get("closed")
+        for context in as_list(stepper(options, "status", "--root", options.root).get("contexts"))
+    )
+    if held:
+        print_brief(stepper(options, *attach).get("brief"))
+    else:
+        print_brief({"done": [], "left": [], "blocked": [], "position": "none"})
+
+
+def strike(options) -> None:
+    require(options, "session", "root", "stepper")
+    if not str(options.evidence or "").strip():
+        stop("pass --evidence")
+    items = as_list(dig(sitting_status(options), "context", "items"))
+    active = next((entry for entry in items if entry.get("status") == "active"), None)
+    if active is None:
+        stop("no active item in the sitting")
+    print_brief(stepper(
+        options, "verify", *scope(options), "--context", CONTEXT, active["id"],
+        "--evidence", options.evidence, "--brief",
+    ).get("brief"))
+
+
+def brief(options) -> None:
+    require(options, "session", "root", "stepper")
+    print_brief(sitting_status(options).get("brief"))
+
+
+def key_reader(options):
+    if options.keys:
+        handle = open(options.keys, encoding="utf-8")
+
+        def read_file():
+            char = handle.read(1)
+            return char or None
+
+        return read_file
+
+    if sys.stdin.isatty():
+        stream = sys.stdin
+    else:
+        try:
+            stream = open("/dev/tty", encoding="utf-8")
+        except OSError:
+            stop("walk needs a terminal; there is none")
+
+    def read_tty():
+        fd = stream.fileno()
+        old = termios.tcgetattr(fd)
+        try:
+            tty.setraw(fd)
+            char = stream.read(1)
+        finally:
+            termios.tcsetattr(fd, termios.TCSADRAIN, old)
+        return char or None
+
+    return read_tty
+
+
+def outcome_word(path: Path) -> str:
+    if path.is_file():
+        text = path.read_text(encoding="utf-8")
+        line = text.splitlines()[0].strip() if text else ""
+    else:
+        line = ""
+    if re.match(r"posted\b", line):
+        return "posted"
+    if line == "clean":
+        return "clean"
+    if re.match(r"(partial|unfinished|unposted)\b", line):
+        return "unfinished"
+    return "missing outcome"
+
+
+def approved_on_head(url: str, viewer: str) -> bool:
+    org, repo, number = PARTS.search(url).groups()
+    pr = json.loads(run(["gh", "pr", "view", number, "--repo", f"{org}/{repo}", "--json", "headRefOid,reviews"]))
+    return any(
+        review.get("state") == "APPROVED"
+        and dig(review, "author", "login") == viewer
+        and dig(review, "commit", "oid") == pr.get("headRefOid")
+        for review in as_list(pr.get("reviews"))
+    )
+
+
+def active_item(options):
+    return next(
+        (entry for entry in as_list(dig(sitting_status(options), "context", "items")) if entry.get("status") == "active"),
+        None,
+    )
+
+
+def walk(options) -> None:
+    require(options, "session", "root", "stepper", "viewer")
+    next_key = key_reader(options)
+    qpre = options.qpre or os.environ.get("SITTING_QPRE") or "qpre"
+    outcomes = Path(options.outcome_dir or os.environ.get("SITTING_OUTCOME_DIR") or "~/.qpr/outcomes").expanduser()
     active = active_item(options)
-  end
-  puts "no active item; the walk is done"
-end
+    if active is None:
+        stop("no active item in the sitting")
+    print_brief(sitting_status(options).get("brief"))
 
-def fetch_queue(options)
-  stop("pass --viewer") unless options[:viewer]
+    while active:
+        url = URL.search(str(active.get("completion_criteria") or ""))
+        if not url:
+            stop(f"active item {active['id']} names no pull request url")
+        url = url.group(0)
+        org, repo, number = PARTS.search(url).groups()
+        path = outcomes / f"{org}-{repo}-{number}"
+        if path.is_file():
+            path.unlink()
 
-  command = ["ruby", File.join(__dir__, "pr-queue"), "--viewer", options[:viewer], *scope(options),
-             "--stepper", options[:stepper], "--aliases", options[:aliases]]
-  command.push("--all") if options[:all]
-  command.push("--started", options[:started]) if options[:started]
-  command.push("--github-fixture", options[:fixture]) if options[:fixture]
-  command.push("--today", options[:today]) if options[:today]
-  out, err, status = Open3.capture3(*command, stdin_data: $stdin.tty? ? "" : $stdin.read)
-  stop(err.strip) unless status.success?
-  warn err.lines.reject { |line| line.start_with?("pr-queue brief") }.join
-  print out
-end
+        sys.stdout.flush()
+        try:
+            ran = subprocess.run([qpre, url])
+            ok = ran.returncode == 0
+        except OSError:
+            ok = False
+        if not ok:
+            print(f"qpre quit; {active['id']} stays active")
+            return
 
-def checkout(options)
-  %i[session root stepper].each { |key| stop("pass --#{key}") unless options[key] }
+        outcome = outcome_word(path)
+        approved = approved_on_head(url, options.viewer)
+        print(f"outcome: {outcome}")
+        print(f"approved: {'yes' if approved else 'no'}")
 
-  data = YAML.load_file(options[:aliases])
-  team = data.values.find { |value| value.is_a?(Hash) && value["type"] == "team" && Array(value["aliases"]).include?("my team") }
-  stop("missing team aliased my team in #{options[:aliases]}") unless team
-  roots = Array(team["clone_roots"]).map { |path| File.expand_path(path) }
-  stop("missing clone_roots on the team record in #{options[:aliases]}; add a line `clone_roots: [~/src/work]` under it") if roots.empty?
+        choice = None
+        while not choice:
+            print(PROMPT, end="")
+            sys.stdout.flush()
+            key = next_key()
+            print()
+            if key in ("s", "k"):
+                choice = key
+            elif key in (None, "q", "\u0003"):
+                choice = "q"
+        if choice != "s":
+            print(f"{active['id']} stays active")
+            return
 
-  status = sitting_status(options)
-  items = Array(status.dig("context", "items"))
-  active = items.find { |item| item["status"] == "active" }
-  stop("no active item in the sitting") unless active
+        options.evidence = f"{outcome}; {'approved' if approved else 'not approved'} on latest commit; struck in walk"
+        strike(options)
+        active = active_item(options)
+    print("no active item; the walk is done")
 
-  url = active["completion_criteria"].to_s[%r{https://github\.com/([^/\s]+)/([^/\s]+)/pull/(\d+)}]
-  stop("active item #{active["id"]} names no pull request url") unless url
-  _, org, repo, number = url.match(%r{github\.com/([^/]+)/([^/]+)/pull/(\d+)}).to_a
 
-  clone = roots.map { |root| File.join(root, repo) }.find { |path| File.directory?(File.join(path, ".git")) }
-  stop("no clone of #{repo} under #{roots.join(", ")}") unless clone
+def fetch_queue(options) -> None:
+    if not options.viewer:
+        stop("pass --viewer")
+    command = [
+        sys.executable, str(Path(__file__).resolve().parent / "pr-queue"),
+        "--viewer", options.viewer, *scope(options),
+        "--stepper", options.stepper, "--aliases", options.aliases,
+    ]
+    if options.all:
+        command.append("--all")
+    if options.started:
+        command.extend(["--started", options.started])
+    if options.fixture:
+        command.extend(["--github-fixture", options.fixture])
+    if options.today:
+        command.extend(["--today", options.today])
+    incoming = "" if sys.stdin.isatty() else sys.stdin.read()
+    proc = subprocess.run(command, input=incoming, text=True, capture_output=True, encoding="utf-8")
+    if proc.returncode != 0:
+        stop(proc.stderr.strip())
+    kept = "".join(line for line in proc.stderr.splitlines(keepends=True) if not line.startswith("pr-queue brief"))
+    if not kept.endswith("\n"):
+        kept += "\n"
+    sys.stderr.write(kept)
+    sys.stdout.write(proc.stdout)
 
-  dirty = run("git", "status", "--porcelain", chdir: clone)
-  stop("#{clone} has uncommitted changes; commit or stash them first") unless dirty.strip.empty?
 
-  pr = JSON.parse(run("gh", "pr", "view", number, "--repo", "#{org}/#{repo}", "--json", "headRefName,headRefOid,baseRefName"))
-  run("git", "fetch", "origin", "refs/pull/#{number}/head", chdir: clone)
-  fetched = run("git", "rev-parse", "FETCH_HEAD", chdir: clone).strip
-  stop("fetched #{fetched} but the pull request head is #{pr["headRefOid"]}") unless fetched == pr["headRefOid"]
-  run("git", "checkout", "-B", pr["headRefName"], fetched, chdir: clone)
+def checkout(options) -> None:
+    require(options, "session", "root", "stepper")
+    try:
+        data = aliases_yaml.load(options.aliases)
+    except OSError as error:
+        stop(str(error))
+    team = next(
+        (
+            value for value in data.values()
+            if isinstance(value, dict) and value.get("type") == "team" and "my team" in as_list(value.get("aliases"))
+        ),
+        None,
+    )
+    if team is None:
+        stop(f"missing team aliased my team in {options.aliases}")
+    roots = [expand(path) for path in as_list(team.get("clone_roots"))]
+    if not roots:
+        stop(f"missing clone_roots on the team record in {options.aliases}; add a line `clone_roots: [~/src/work]` under it")
 
-  puts "clone: #{clone}"
-  puts "base: #{pr["baseRefName"]}"
-end
+    items = as_list(dig(sitting_status(options), "context", "items"))
+    active = next((item for item in items if item.get("status") == "active"), None)
+    if active is None:
+        stop("no active item in the sitting")
+    found = URL.search(str(active.get("completion_criteria") or ""))
+    if not found:
+        stop(f"active item {active['id']} names no pull request url")
+    org, repo, number = PARTS.search(found.group(0)).groups()
 
-options = { aliases: File.expand_path("~/.claude/aliases.yaml") }
-parser = OptionParser.new do |opts|
-  opts.on("--session KEY") { |value| options[:session] = value }
-  opts.on("--root PATH") { |value| options[:root] = value }
-  opts.on("--stepper PATH") { |value| options[:stepper] = value }
-  opts.on("--aliases PATH") { |value| options[:aliases] = value }
-  opts.on("--evidence TEXT") { |value| options[:evidence] = value }
-  opts.on("--viewer LOGIN") { |value| options[:viewer] = value }
-  opts.on("--qpre CMD") { |value| options[:qpre] = value }
-  opts.on("--outcome-dir DIR") { |value| options[:outcome_dir] = value }
-  opts.on("--keys FILE") { |value| options[:keys] = value }
-  opts.on("--all") { options[:all] = true }
-  opts.on("--started EPOCH") { |value| options[:started] = value }
-  opts.on("--github-fixture PATH") { |value| options[:fixture] = value }
-  opts.on("--today DATE") { |value| options[:today] = value }
-end
-command = ARGV.shift
-parser.parse!
+    clone = next((str(Path(root) / repo) for root in roots if (Path(root) / repo / ".git").is_dir()), None)
+    if clone is None:
+        stop(f"no clone of {repo} under {', '.join(roots)}")
+    dirty = run(["git", "status", "--porcelain"], cwd=clone)
+    if dirty.strip():
+        stop(f"{clone} has uncommitted changes; commit or stash them first")
 
-case command
-when "open" then open_sitting(options)
-when "strike" then strike(options)
-when "brief" then brief(options)
-when "checkout" then checkout(options)
-when "walk" then walk(options)
-else stop("usage: sitting open|strike|brief|checkout|walk --session KEY --root PATH --stepper PATH")
-end
+    pr = json.loads(run(["gh", "pr", "view", number, "--repo", f"{org}/{repo}", "--json", "headRefName,headRefOid,baseRefName"]))
+    run(["git", "fetch", "origin", f"refs/pull/{number}/head"], cwd=clone)
+    fetched = run(["git", "rev-parse", "FETCH_HEAD"], cwd=clone).strip()
+    if fetched != pr.get("headRefOid"):
+        stop(f"fetched {fetched} but the pull request head is {pr.get('headRefOid')}")
+    run(["git", "checkout", "-B", pr["headRefName"], fetched], cwd=clone)
+    print(f"clone: {clone}")
+    print(f"base: {pr.get('baseRefName')}")
+
+
+def main() -> None:
+    if len(sys.argv) < 2 or sys.argv[1].startswith("-"):
+        stop("usage: sitting open|strike|brief|checkout|walk --session KEY --root PATH --stepper PATH")
+    command = sys.argv[1]
+    parser = argparse.ArgumentParser(add_help=False)
+    parser.add_argument("--session")
+    parser.add_argument("--root")
+    parser.add_argument("--stepper")
+    parser.add_argument("--aliases", default=str(Path.home() / ".claude" / "aliases.yaml"))
+    parser.add_argument("--evidence")
+    parser.add_argument("--viewer")
+    parser.add_argument("--qpre")
+    parser.add_argument("--outcome-dir")
+    parser.add_argument("--keys")
+    parser.add_argument("--all", action="store_true")
+    parser.add_argument("--started")
+    parser.add_argument("--github-fixture", dest="fixture")
+    parser.add_argument("--today")
+    options = parser.parse_args(sys.argv[2:])
+    commands = {
+        "open": open_sitting,
+        "strike": strike,
+        "brief": brief,
+        "checkout": checkout,
+        "walk": walk,
+    }
+    if command not in commands:
+        stop("usage: sitting open|strike|brief|checkout|walk --session KEY --root PATH --stepper PATH")
+    commands[command](options)
+
+
+if __name__ == "__main__":
+    main()
