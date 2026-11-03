@@ -49,16 +49,12 @@ Done when stdout is printed and the brief is spoken, or the run has stopped. Do 
 
 A later message uses the captured list or the printed table. It does not fetch again.
 
-**Start** on a list runs `qpre` with the active item's pull request URL and waits for it to exit. Quitting qpre leaves the item active.
+**Start** on a list: qpre needs an interactive terminal, so do not run it. Tell the person to run `ruby <dir of this file>/scripts/sitting walk --session KEY --root PATH --stepper PATH --viewer LOGIN` in their terminal, with the same values as `open`, and stop. The walk briefs the active item, runs qpre on its pull request, speaks the outcome (`posted`, `clean`, `unfinished`, or `missing outcome`) and whether the viewer approved the latest commit, then takes one key: `s` strikes and walks the next item, `k` keeps it active, `q` leaves the walk. Quitting qpre leaves the item active. Something else (a question about the pull request) stays in chat.
 
-After qpre exits, read the one outcome line qpre wrote for that pull request, and speak `posted`, `clean`, or `unfinished`. Read nothing else qpre wrote. The findings stay on the terminal. A missing outcome line is a missing outcome: say so, and prompt the same way.
-
-Then ask the user to strike the item or do something else. Something else is handled, then the same question comes back. An unfinished walk still offers a strike.
-
-A **strike** is the user's decision that the item is finished. Run `sitting strike --session KEY --root PATH --stepper PATH --evidence TEXT`, with the outcome and the user's decision as the evidence. Do not run `stepper verify` yourself. It verifies the active item and prints the next item's four brief parts, which you speak (`done`, `left`, `blocked`, `position`). Do not start qpre until the user says start. `sitting brief` with the same `--session`, `--root`, and `--stepper` prints the four parts again without changing anything.
+A **strike** is the user's decision that the item is finished. Run `sitting strike --session KEY --root PATH --stepper PATH --evidence TEXT`, with the outcome and the user's decision as the evidence. Do not run `stepper verify` yourself. It verifies the active item and prints the next item's four brief parts, which you speak (`done`, `left`, `blocked`, `position`). `sitting brief` with the same `--session`, `--root`, and `--stepper` prints the four parts again without changing anything.
 
 A **row number** on the backlog table runs `qpre` with that row's URL, rebuilt as `https://github.com/<github_org>/<repo>/pull/<number>`. It captures no list.
 
 `skip` only when the user asks to skip.
 
-Done when qpre has been started for the active item, or a backlog row was named, or `sitting strike` ran and the next item was briefed.
+Done when the person has been told the `sitting walk` command, or a backlog row was named, or `sitting strike` ran and the next item was briefed.
