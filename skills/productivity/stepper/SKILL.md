@@ -14,7 +14,7 @@ metadata:
 
 A session may hold several contexts. Each context is one ordered list with one active item. The CLI in this directory is the source of truth. Leave files in the home store untouched; report the CLI error. Record evidence only for a criterion you have actually established, and pass that sentence to `verify`.
 
-**Reminder.** The one sentence a hook shows for the active item. A turn whose new input is that sentence adds nothing.
+**Reminder.** The one sentence a hook shows for the active item. A stop hook ends that sentence with "Add nothing." A turn whose new input is that sentence adds nothing.
 
 **Brief.** The four-part account spoken when an item becomes active, and again when the user moves to start something else: what is done, what is left, what is blocked, and where this item sits.
 
@@ -36,7 +36,7 @@ Done when every state change in this turn passed `--session` and `--root` from t
 
 Read `brief` from `status`. Speak all four parts: `done`, `left`, `blocked`, and `position`. An empty list is the part with nothing in it. `position` `none` means no item is held.
 
-Do this when an item becomes active, and again before any new start. "Brief before any new start" in a reminder names that later start. Receiving the reminder is not one.
+Do this when an item becomes active, and again before any new start. "Brief before any new start" in a session reminder names that later start. A stop reminder does not ask for a brief. Receiving either reminder is not a new start.
 
 Done when all four parts were spoken and match `status`.
 
