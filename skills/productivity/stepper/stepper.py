@@ -15,6 +15,7 @@ import os
 import re
 import subprocess
 import sys
+import uuid
 from contextlib import contextmanager, nullcontext
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -756,6 +757,22 @@ def reminder(ctx: dict) -> str:
         + "; ".join(bits)
         + ". Stick to the active item. Brief before any new start."
     )
+
+
+_BRIEF_SUFFIXES = (
+    " Brief before any new start: done, left, blocked, and where this item sits.",
+    " Brief before any new start.",
+)
+
+
+def stop_line(text: str) -> str:
+    """Stop injects this as the next turn's only input, and "Brief" is carried out."""
+    rewritten = text
+    for suffix in _BRIEF_SUFFIXES:
+        rewritten = rewritten.replace(suffix, " Add nothing.")
+    if rewritten == text:
+        return text + " Add nothing."
+    return rewritten
 
 
 def teaching_owner(root: Path, session_key: str) -> str | None:
@@ -1646,6 +1663,22 @@ def generation_of(payload: dict) -> str | None:
     return str(value) if value else None
 
 
+def mint_generation() -> str:
+    return uuid.uuid4().hex
+
+
+def turn_token(sess: dict | None, generation: str | None) -> str:
+    """The id of the prompt this stop belongs to.
+
+    Cursor sends the same id on the prompt and on stop. Claude's Stop input
+    has neither `generation_id` nor `prompt_id`, so the id stored when the
+    prompt was submitted is the one that marks the turn.
+    """
+    if sess and sess.get("generation_id"):
+        return sess["generation_id"]
+    return generation or "none"
+
+
 def consider_candidate(root: Path, sess: dict, candidate: dict | None, _ctx: dict | None, generation: str | None) -> None:
     if not candidate:
         return
@@ -1684,7 +1717,7 @@ def handle_hook(inv: Invocation, payload: dict) -> dict | None:
             return None
         sess = load_session(root, key) or fresh_session(key, platform)
         sess["prompt_class"] = classify(prompt, ctx)
-        sess["generation_id"] = generation
+        sess["generation_id"] = generation or mint_generation()
         text = None
         if is_stepper_prompt(prompt):
             if platform == "cursor":
@@ -1702,7 +1735,8 @@ def handle_hook(inv: Invocation, payload: dict) -> dict | None:
             return None
         sess = sess or fresh_session(key, platform)
         sess["last_assistant_text"] = text
-        sess["generation_id"] = generation
+        if generation:
+            sess["generation_id"] = generation
         consider_candidate(root, sess, candidate, ctx, generation)
         save_session(root, sess)
         return None
@@ -1783,10 +1817,10 @@ def handle_hook(inv: Invocation, payload: dict) -> dict | None:
             ):
                 return None
             sess = fresh_session(key, platform)
-        token = generation or "none"
+        token = turn_token(sess, generation)
         if sess.get("followup_generation") == token:
             return None
-        briefed = generation is not None and sess.get("briefed_generation") == generation
+        briefed = sess.get("briefed_generation") == token and token != "none"
         if assistant:
             sess["last_assistant_text"] = assistant
             consider_candidate(root, sess, parse_candidates(assistant), ctx, generation)
@@ -1800,7 +1834,7 @@ def handle_hook(inv: Invocation, payload: dict) -> dict | None:
             and not briefed
             and not teaching_owner(root, key)
         ):
-            parts.append(active_reminder(shown))
+            parts.append(stop_line(active_reminder(shown)))
             sess["reminded_generation"] = token
         candidate = sess.get("candidate") or sess.get("parked")
         if candidate and suggestion_status(root, candidate["hash"]) not in (
@@ -1952,9 +1986,11 @@ def note_briefed(root: Path, session_key: str | None) -> None:
     The stop hook reads the mark and sends no second brief for the turn.
     """
     sess = load_session(root, session_key) if session_key else None
-    if sess is None or sess.get("generation_id") is None:
+    if sess is None:
         return
-    sess["briefed_generation"] = sess["generation_id"]
+    token = sess.get("generation_id") or mint_generation()
+    sess["generation_id"] = token
+    sess["briefed_generation"] = token
     save_session(root, sess)
 
 

@@ -1240,6 +1240,8 @@ class StepperTests(unittest.TestCase):
         )
         self.assertIn("AC-3 active", data["followup_message"])
         self.assertIn("AC-4 pending", data["followup_message"])
+        self.assertIn("Add nothing.", data["followup_message"])
+        self.assertNotIn("Brief", data["followup_message"])
         code, _data, out = self.hook(
             "cursor",
             {
@@ -1270,6 +1272,85 @@ class StepperTests(unittest.TestCase):
         self.cli("status", "--session", "cursor:aaa")
         _code, _data, out = self.stop_after("g-brief")
         self.assertEqual(out, "")
+
+    def test_session_start_reminder_still_names_the_later_brief(self):
+        self.capture()
+        _code, data, _out = self.hook(
+            "cursor",
+            {"hook_event_name": "sessionStart", "conversation_id": "aaa"},
+        )
+        self.assertIn("Brief before any new start.", data["additional_context"])
+        self.assertNotIn("Add nothing.", data["additional_context"])
+
+    def test_blocked_stop_reminder_does_not_ask_for_a_brief(self):
+        self.capture()
+        self.cli("block", "--session", "cursor:aaa", "AC-3", "--reason", "needs provider")
+        self.register("cursor:aaa", prompt="fix AC-3", generation="g-block")
+        _code, data, _out = self.stop_after("g-block")
+        text = data["followup_message"]
+        self.assertIn("AC-3 blocked", text)
+        self.assertIn("Hold", text)
+        self.assertIn("Add nothing.", text)
+        self.assertNotIn("Brief", text)
+
+    def test_claude_stop_is_quiet_after_a_command_when_the_host_sends_no_generation(self):
+        self.capture("claude:sess")
+        self.hook(
+            "claude",
+            {
+                "hook_event_name": "UserPromptSubmit",
+                "session_id": "sess",
+                "prompt": "fix AC-3",
+            },
+        )
+        self.cli("status", "--session", "claude:sess")
+        _code, _data, out = self.hook(
+            "claude",
+            {
+                "hook_event_name": "Stop",
+                "session_id": "sess",
+                "stop_hook_active": False,
+                "last_assistant_message": "Done: AC-3 is still open.",
+            },
+        )
+        self.assertEqual(out, "")
+
+    def test_claude_stop_reminds_each_prompt_and_adds_nothing(self):
+        self.capture("claude:sess")
+
+        def submit():
+            self.hook(
+                "claude",
+                {
+                    "hook_event_name": "UserPromptSubmit",
+                    "session_id": "sess",
+                    "prompt": "fix AC-3",
+                },
+            )
+
+        def stop(**extra):
+            body = {
+                "hook_event_name": "Stop",
+                "session_id": "sess",
+                "stop_hook_active": False,
+                "last_assistant_message": "still working",
+            }
+            body.update(extra)
+            return self.hook("claude", body)
+
+        submit()
+        _code, first, _out = stop()
+        text = first["hookSpecificOutput"]["additionalContext"]
+        self.assertIn("AC-3 active", text)
+        self.assertIn("Add nothing.", text)
+        self.assertNotIn("Brief", text)
+        _code, _data, out = stop(stop_hook_active=True)
+        self.assertEqual(out, "")
+        submit()
+        _code, second, _out = stop()
+        again = second["hookSpecificOutput"]["additionalContext"]
+        self.assertIn("Add nothing.", again)
+        self.assertNotIn("Brief", again)
 
     def test_status_with_context_speaks_that_sitting_when_the_session_holds_several(self):
         self.capture()

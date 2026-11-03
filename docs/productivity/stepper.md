@@ -25,10 +25,10 @@ Stepper recommends waiting, and says why. You can skip to the next item when tha
 Yes, when you say so. Dropping archives it without marking the leftovers done. Replacing swaps the outstanding items in one step. Another chat's list stays put.
 
 **Will I hear the brief twice?**
-No. A turn that already briefed or changed the list gets no reminder. The reminder is one sentence, and the agent adds nothing under it.
+No. A turn that already briefed or changed the list gets no reminder. When a reminder does follow a reply, its sentence ends with "Add nothing," and the agent adds nothing under it.
 
 **What follows an ordinary reply?**
-The reminder. It names the active item, the top-level count, the rule to stick, and to brief before any new start. The agent adds nothing under it. Done, left, blocked, and position show up when you ask for status, when the list changes, or before you start something else.
+The reminder. It names the active item, the top-level count, and the rule to stick, and it tells the agent to add nothing. Done, left, blocked, and position show up when you ask for status, when the list changes, or before you start something else.
 
 **Does "verified" mean the tests passed?**
 It means the agent stored a non-empty note. You still have to trust, or check, that the note is true.
@@ -49,7 +49,7 @@ Yes. The offer names a free list and never uses `pr-queue`. Saying yes tracks th
 
 - After you accept a list, the agent starts at the first item and stays there.
 - A blocked item comes back as "wait" before any offer to skip.
-- An ordinary reply is followed by the reminder: the active item, the top-level count, the rule to stick, and to brief before any new start. The four parts wait for a status request, a list change, or a new start.
+- An ordinary reply is followed by the reminder: the active item, the top-level count, the rule to stick, and "Add nothing." Nothing follows that line. The four parts wait for a status request, a list change, or a new start.
 - Starting something new gets a status first: done, left, blocked, and where you are.
 - Asking for status shows each item on its own row.
 - Saying the list is wrong archives it or replaces it, and the next status matches that.
