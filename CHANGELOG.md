@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.5.0](https://github.com/ihandley/skills/compare/ihandley-skills-v0.4.1...ihandley-skills-v0.5.0) (2026-11-03)
+
+
+### Features
+
+* **sitting:** a sitting is one command, and the walk runs in the terminal ([#107](https://github.com/ihandley/skills/issues/107)) ([08dca6e](https://github.com/ihandley/skills/commit/08dca6e73467f2c7d0b688665e0d8ddebef2d548))
+
 ## [0.4.1](https://github.com/ihandley/skills/compare/ihandley-skills-v0.4.0...ihandley-skills-v0.4.1) (2026-11-02)
 
 
