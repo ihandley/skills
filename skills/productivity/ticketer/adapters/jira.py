@@ -226,6 +226,20 @@ def build(draft, body_path):
             "note": "labels and components replace the whole list; description and summary replace the old value"}
 
 
+def parent_read(draft, key):
+    cloud = draft.get("cloud_id") or "<cloud_id>"
+    return {
+        "kind": "parent",
+        "operation": "jira.get_issue",
+        "payload": {
+            "cloudId": cloud,
+            "issueIdOrKey": key,
+            "fields": ["summary", "issuetype", "status", "parent"],
+        },
+        "then": "ticketer.py metadata store --tracker jira --scope %s --kind parent --input -" % key,
+    }
+
+
 def readback(draft):
     key = draft.get("key") or "<KEY returned by create>"
     return {"operation": "jira.get_issue",

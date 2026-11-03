@@ -513,20 +513,26 @@ def lookup_ci(table, name):
     return None
 
 
-def parent_ladder_problems(draft, config):
-    """A type on the parent ladder needs a parent. Types off the ladder are unchanged."""
+def parent_ladder_problems(draft, config, adapter):
+    """A type on the parent ladder needs a parent that has been read. Types off the ladder are unchanged."""
     ladder = config.get("parent_ladder") or {}
-    if not ladder:
-        return []
-    if draft["operation"] == UPDATE and "parent" not in draft:
-        return []
+    if not ladder or (draft["operation"] == UPDATE and "parent" not in draft):
+        return [], [], None
     allowed = lookup_ci(ladder, draft.get("issue_type") or "")
     if allowed is None:
-        return []
-    if draft.get("parent"):
-        return []
-    label = draft.get("issue_type") or "ticket"
-    return [err("required_missing", "%s needs a parent" % label, "parent")]
+        return [], [], None
+    parent = draft.get("parent")
+    if not parent:
+        label = draft.get("issue_type") or "ticket"
+        return [err("required_missing", "%s needs a parent" % label, "parent")], [], None
+    key_re = getattr(adapter, "KEY_RE", None)
+    if key_re and not key_re.match(parent):
+        return [], [], None
+    record = load_parent_record(adapter.NAME, parent, config)
+    if record is None:
+        need = adapter.parent_read(draft, parent) if hasattr(adapter, "parent_read") else None
+        return [err("parent_unread", "parent %s has not been read" % parent, "parent")], ([need] if need else []), None
+    return [], [], record
 
 
 def validate_draft(draft, config, adapter, metadata):
@@ -561,16 +567,22 @@ def validate_draft(draft, config, adapter, metadata):
         else:
             warnings.append("tracker metadata not checked (none cached)")
     problems += adapter.validate(draft, config, metadata)
-    problems += parent_ladder_problems(draft, config)
-    return problems, warnings, needs
+    ladder_problems, ladder_needs, parent_read = parent_ladder_problems(draft, config, adapter)
+    problems += ladder_problems
+    needs = list(needs) + ladder_needs
+    return problems, warnings, needs, parent_read
 
 
-def render(draft, draft_id, adapter):
+def render(draft, draft_id, adapter, parent_read=None):
     lines = ["TICKET DRAFT %s  (%s on %s)" % (draft_id, draft["operation"], adapter.NAME)]
     for key in adapter.DISPLAY_ORDER:
         if key in draft:
             value = draft[key]
-            lines.append("%s: %s" % (key, ", ".join(value) if isinstance(value, list) else value))
+            if key == "parent" and parent_read and not parent_read.get("error"):
+                lines.append("parent: %s | %s | %s | %s" % (
+                    parent_read["key"], parent_read["issue_type"], parent_read["summary"], parent_read["status"]))
+            else:
+                lines.append("%s: %s" % (key, ", ".join(value) if isinstance(value, list) else value))
     for key, value in sorted(draft.get("fields", {}).items()):
         lines.append("%s: %s" % (key, json.dumps(value, ensure_ascii=False)))
     if draft.get("description"):
@@ -611,6 +623,15 @@ def load_metadata(tracker, scope, config):
     data = json.loads(path.read_text(encoding="utf-8"))
     age_hours = (time.time() - data.get("fetched_at", 0)) / 3600
     return data if age_hours <= config["metadata_max_age_hours"] else None
+
+
+def load_parent_record(tracker, key, config):
+    data = load_metadata(tracker, key, config)
+    if not data:
+        return None
+    if data.get("parent_error"):
+        return {"error": data["parent_error"]}
+    return data.get("parent_read")
 
 
 # ---------------------------------------------------------------- commands
@@ -745,7 +766,7 @@ def cmd_draft(args):
     raw = read_json_input("-")
     draft, notes = build_draft(raw, adapter, config)
     metadata = load_metadata(adapter.NAME, adapter.scope(draft), config)
-    problems, warnings, needs = validate_draft(draft, config, adapter, metadata)
+    problems, warnings, needs, parent_read = validate_draft(draft, config, adapter, metadata)
     if problems:
         return {"ok": False, "error": "draft is invalid; fix the errors and run draft again",
                 "errors": problems, "needs": needs, "notes": notes}, EXIT_REFUSED
@@ -761,7 +782,7 @@ def cmd_draft(args):
                  "config_path": config["_path"], "resolve": {"cwd": info["cwd"], "team": getattr(args, "team", None), "config": getattr(args, "config", None)},
                  "config_sha": config["_sha"], "draft": draft})
     return {
-        "ok": True, "id": draft_id, "render": render(draft, draft_id, adapter),
+        "ok": True, "id": draft_id, "render": render(draft, draft_id, adapter, parent_read),
         "warnings": warnings, "notes": notes, "needs": needs,
         "ask": "Show 'render' to the user verbatim, then ask: Proceed? (yes / no / edit). "
                "Only on 'yes': ticketer.py submit --draft %s --confirm %s" % (draft_id, draft_id),
@@ -785,7 +806,7 @@ def cmd_submit(args):
     adapter = get_adapter(record["tracker"])
     draft = record["draft"]
     metadata = load_metadata(adapter.NAME, adapter.scope(draft), config)
-    problems, warnings, needs = validate_draft(draft, config, adapter, metadata)
+    problems, warnings, needs, _parent_read = validate_draft(draft, config, adapter, metadata)
     if problems:
         return {"ok": False, "error": "draft no longer validates", "errors": problems, "needs": needs}, EXIT_REFUSED
     body_path = None

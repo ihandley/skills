@@ -658,6 +658,18 @@ class ParentLadderDraftTests(Base):
         self.assertEqual(code, 0, data)
         self.assertFalse(any(e.get("field") == "parent" for e in data.get("errors") or []))
 
+    def test_unread_parent_is_refused_and_names_the_read(self):
+        code, data, _ = self.draft(jira_payload(issue_type="Task", parent="AB-1"))
+        self.assertEqual(code, 2)
+        self.assertTrue(any(e["code"] == "parent_unread" and e["field"] == "parent" for e in data["errors"]))
+        need = next(n for n in data["needs"] if n.get("kind") == "parent")
+        self.assertEqual(need["operation"], "jira.get_issue")
+        self.assertEqual(need["payload"]["issueIdOrKey"], "AB-1")
+        self.assertEqual(need["payload"]["cloudId"], "acme.atlassian.net")
+        self.assertIn("--kind parent", need["then"])
+        self.assertIn("--scope AB-1", need["then"])
+        self.assertNotIn("mcp__", json.dumps(need))
+
     def test_malformed_parent_is_refused_before_a_lookup(self):
         code, data, _ = self.draft(jira_payload(issue_type="Task", parent="not-a-key"))
         self.assertEqual(code, 2)
