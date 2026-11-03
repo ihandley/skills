@@ -75,3 +75,11 @@ _Avoid_: Empty, approved
 **Unfinished**:
 A walk left before it was posted or clean.
 _Avoid_: Pending, paused
+
+**Parent ladder**:
+The issue types allowed as the parent of a given issue type.
+_Avoid_: Hierarchy, parent rules
+
+**Parent allow-list**:
+The only issue keys that satisfy a parent type.
+_Avoid_: Catalog, enabler list
