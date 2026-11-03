@@ -1,0 +1,75 @@
+#!/usr/bin/env ruby
+# frozen_string_literal: true
+
+# The sitting commands. This file builds `checkout`; open, strike, brief, and
+# walk join it as their tickets land.
+#
+#   sitting checkout --session KEY --root PATH --stepper PATH [--aliases PATH]
+#
+# Resolves the active pr-queue item to its local clone, leaves that clone on the
+# pull request head, and prints the clone path and the pull request's base ref.
+
+require "json"
+require "open3"
+require "optparse"
+require "yaml"
+
+def stop(message)
+  warn message
+  exit 1
+end
+
+def run(*args, chdir: nil)
+  out, err, status = Open3.capture3(*args, chdir: chdir || Dir.pwd)
+  stop("#{args.first(3).join(" ")}: #{err.strip.empty? ? out.strip : err.strip}") unless status.success?
+  out
+end
+
+def checkout(options)
+  %i[session root stepper].each { |key| stop("pass --#{key}") unless options[key] }
+
+  data = YAML.load_file(options[:aliases])
+  team = data.values.find { |value| value.is_a?(Hash) && value["type"] == "team" && Array(value["aliases"]).include?("my team") }
+  stop("missing team aliased my team in #{options[:aliases]}") unless team
+  roots = Array(team["clone_roots"]).map { |path| File.expand_path(path) }
+  stop("missing clone_roots on the team record in #{options[:aliases]}; add a line `clone_roots: [~/src/work]` under it") if roots.empty?
+
+  status = JSON.parse(run("python3", options[:stepper], "status", "--session", options[:session], "--root", options[:root]))
+  items = Array(status.dig("context", "items"))
+  active = items.find { |item| item["status"] == "active" }
+  stop("no active item in the sitting") unless active
+
+  url = active["completion_criteria"].to_s[%r{https://github\.com/([^/\s]+)/([^/\s]+)/pull/(\d+)}]
+  stop("active item #{active["id"]} names no pull request url") unless url
+  _, org, repo, number = url.match(%r{github\.com/([^/]+)/([^/]+)/pull/(\d+)}).to_a
+
+  clone = roots.map { |root| File.join(root, repo) }.find { |path| File.directory?(File.join(path, ".git")) }
+  stop("no clone of #{repo} under #{roots.join(", ")}") unless clone
+
+  dirty = run("git", "status", "--porcelain", chdir: clone)
+  stop("#{clone} has uncommitted changes; commit or stash them first") unless dirty.strip.empty?
+
+  pr = JSON.parse(run("gh", "pr", "view", number, "--repo", "#{org}/#{repo}", "--json", "headRefName,headRefOid,baseRefName"))
+  run("git", "fetch", "origin", "refs/pull/#{number}/head", chdir: clone)
+  fetched = run("git", "rev-parse", "FETCH_HEAD", chdir: clone).strip
+  stop("fetched #{fetched} but the pull request head is #{pr["headRefOid"]}") unless fetched == pr["headRefOid"]
+  run("git", "checkout", "-B", pr["headRefName"], fetched, chdir: clone)
+
+  puts "clone: #{clone}"
+  puts "base: #{pr["baseRefName"]}"
+end
+
+options = { aliases: File.expand_path("~/.claude/aliases.yaml") }
+parser = OptionParser.new do |opts|
+  opts.on("--session KEY") { |value| options[:session] = value }
+  opts.on("--root PATH") { |value| options[:root] = value }
+  opts.on("--stepper PATH") { |value| options[:stepper] = value }
+  opts.on("--aliases PATH") { |value| options[:aliases] = value }
+end
+command = ARGV.shift
+parser.parse!
+
+case command
+when "checkout" then checkout(options)
+else stop("usage: sitting checkout --session KEY --root PATH --stepper PATH")
+end
