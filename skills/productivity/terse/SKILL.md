@@ -3,7 +3,7 @@ name: terse
 description: >-
   Rewrites or drafts Slack, email, Jira, Confluence, and pull-request text to
   minimize length and maximize signal. Use when rewriting pasted text or
-  drafting those media.
+  drafting those media. Not an existing file; that is compressor's job.
 compatibility: Requires Python 3
 metadata:
   author: ian.handley

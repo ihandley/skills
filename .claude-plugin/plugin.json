@@ -17,7 +17,6 @@
     "./skills/engineering/understand",
     "./skills/engineering/deslop",
     "./skills/engineering/pair",
-    "./skills/engineering/skill-compress",
     "./skills/engineering/pr-review",
     "./skills/engineering/dependabot-review",
     "./skills/engineering/friction",
@@ -26,6 +25,7 @@
     "./skills/productivity/stepper",
     "./skills/productivity/ticketer",
     "./skills/productivity/tidy",
-    "./skills/productivity/alias"
+    "./skills/productivity/alias",
+    "./skills/engineering/compressor"
   ]
 }
