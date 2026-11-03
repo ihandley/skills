@@ -518,6 +518,8 @@ def parent_ladder_problems(draft, config, adapter):
     ladder = config.get("parent_ladder") or {}
     if not ladder or (draft["operation"] == UPDATE and "parent" not in draft):
         return [], [], None
+    if draft["operation"] == UPDATE and "parent" in draft and not (draft.get("issue_type") or "").strip():
+        return [err("required_missing", "setting a parent needs the issue type", "issue_type")], [], None
     allowed = lookup_ci(ladder, draft.get("issue_type") or "")
     if allowed is None:
         return [], [], None

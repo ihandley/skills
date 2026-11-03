@@ -768,6 +768,38 @@ Widget = ["EN-1"]
         self.assertFalse(any(n.get("kind") == "parent" for n in data.get("needs") or []))
 
 
+class ParentLadderUpdateTests(Base):
+    def setUp(self):
+        super().setUp()
+        self.write_config(LADDER_TOML)
+
+    def test_update_that_leaves_the_parent_alone_skips_the_ladder(self):
+        code, data, _ = self.draft({"operation": "update", "key": "PROJ-5", "labels": ["Needs Triage"]})
+        self.assertEqual(code, 0, data)
+        self.assertNotIn("parent:", data["render"])
+        self.assertFalse(any(n.get("kind") == "parent" for n in data.get("needs") or []))
+
+    def test_update_that_sets_a_parent_needs_the_issue_type(self):
+        code, data, _ = self.draft({"operation": "update", "key": "PROJ-5", "parent": "AB-1"})
+        self.assertEqual(code, 2)
+        self.assertTrue(any(e["field"] == "issue_type" for e in data["errors"]))
+
+    def test_update_that_sets_a_parent_uses_the_same_checks(self):
+        payload = {"operation": "update", "key": "PROJ-5", "issue_type": "Task", "parent": "AB-1"}
+        code, data, _ = self.draft(payload)
+        self.assertEqual(code, 2)
+        self.assertTrue(any(e["code"] == "parent_unread" for e in data["errors"]))
+        self.run_cli("metadata", "store", "--tracker", "jira", "--scope", "AB-1", "--kind", "parent",
+                     stdin=parent_issue(issue_type="Widget"))
+        code, data, _ = self.draft(payload)
+        self.assertTrue(any(e["code"] == "bad_parent" for e in data["errors"]))
+        self.run_cli("metadata", "store", "--tracker", "jira", "--scope", "AB-1", "--kind", "parent",
+                     stdin=parent_issue())
+        code, data, _ = self.draft(payload)
+        self.assertEqual(code, 0, data)
+        self.assertIn("parent: AB-1 | Epic | Reset email | In Progress", data["render"])
+
+
 class AdapterContractTests(unittest.TestCase):
     """The same checks run against every registered adapter."""
 
