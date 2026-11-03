@@ -643,6 +643,28 @@ class ParentLadderConfigTests(Base):
         self.assertNotEqual(code, 4, data)
 
 
+class ParentLadderDraftTests(Base):
+    def setUp(self):
+        super().setUp()
+        self.write_config(LADDER_TOML)
+
+    def test_ladder_type_without_a_parent_is_refused(self):
+        code, data, _ = self.draft(jira_payload(issue_type="Task"))
+        self.assertEqual(code, 2)
+        self.assertTrue(any(e["field"] == "parent" and e["code"] == "required_missing" for e in data["errors"]))
+
+    def test_type_off_the_ladder_keeps_today_behavior(self):
+        code, data, _ = self.draft(jira_payload(issue_type="Feature"))
+        self.assertEqual(code, 0, data)
+        self.assertFalse(any(e.get("field") == "parent" for e in data.get("errors") or []))
+
+    def test_malformed_parent_is_refused_before_a_lookup(self):
+        code, data, _ = self.draft(jira_payload(issue_type="Task", parent="not-a-key"))
+        self.assertEqual(code, 2)
+        self.assertTrue(any(e["code"] == "bad_format" and e["field"] == "parent" for e in data["errors"]))
+        self.assertFalse(any(n.get("kind") == "parent" for n in data.get("needs") or []))
+
+
 class AdapterContractTests(unittest.TestCase):
     """The same checks run against every registered adapter."""
 

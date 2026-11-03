@@ -503,6 +503,32 @@ def build_draft(raw, adapter, config):
     return {k: v for k, v in draft.items() if v is not None}, notes
 
 
+def lookup_ci(table, name):
+    if not name or not isinstance(table, dict):
+        return None
+    folded = str(name).casefold()
+    for key, value in table.items():
+        if str(key).casefold() == folded:
+            return value
+    return None
+
+
+def parent_ladder_problems(draft, config):
+    """A type on the parent ladder needs a parent. Types off the ladder are unchanged."""
+    ladder = config.get("parent_ladder") or {}
+    if not ladder:
+        return []
+    if draft["operation"] == UPDATE and "parent" not in draft:
+        return []
+    allowed = lookup_ci(ladder, draft.get("issue_type") or "")
+    if allowed is None:
+        return []
+    if draft.get("parent"):
+        return []
+    label = draft.get("issue_type") or "ticket"
+    return [err("required_missing", "%s needs a parent" % label, "parent")]
+
+
 def validate_draft(draft, config, adapter, metadata):
     problems, warnings, needs = [], [], []
     operation = draft["operation"]
@@ -535,6 +561,7 @@ def validate_draft(draft, config, adapter, metadata):
         else:
             warnings.append("tracker metadata not checked (none cached)")
     problems += adapter.validate(draft, config, metadata)
+    problems += parent_ladder_problems(draft, config)
     return problems, warnings, needs
 
 
