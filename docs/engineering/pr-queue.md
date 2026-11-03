@@ -25,7 +25,7 @@ One stepper list, not a table. In Review tickets stay in Jira rank, at any age. 
 It is a count beside the quiet count ("2 without a pull request"), not a row. The same goes for a ticket whose only pull requests are drafts, merged, closed, or already approved by you.
 
 **Who captures the list?**
-The script. It builds the lines, writes them into the stepper under the `pr-queue` context, and orders them free in one run. The agent only passes the Jira issues in and prints what comes back. A hand-written capture cost minutes in the first timed run, so the agent no longer writes one.
+`sitting open`. It applies the lease rules, calls `pr-queue` only when a fresh fetch is due, and `pr-queue` builds the lines, writes them into the stepper under the `pr-queue` context, and orders them free in one run. The agent only passes the Jira issues in and prints what comes back. A hand-written capture cost minutes in the first timed run, so the agent no longer writes one.
 
 **What does start do?**
 It runs `qpre` with the active item's pull request URL. Leaving `qpre` halfway leaves the item active.
@@ -43,7 +43,7 @@ It verifies the item with the outcome and your decision, then briefs the next it
 A table of those older pull requests you have not approved on the latest commit, newest update first. A row number runs `qpre` and captures nothing.
 
 **What does a second `/pr-queue` do?**
-An unfinished sitting in this chat stays as it is, and nothing is fetched. An unfinished sitting nobody holds is attached to this chat. A finished sitting this chat holds, or that nobody holds, is closed and captured again from a fresh fetch. A sitting another chat holds stops the run and names that chat. A blocked or deferred item keeps the sitting.
+`sitting open --session KEY --root PATH --stepper PATH --viewer LOGIN` (the In Review issues on stdin, as `pr-queue` reads them) decides it, so you apply none of these rules. It then prints the queue and the four brief parts (`done`, `left`, `blocked`, `position`) from stepper's `--brief` form, not the whole store. An unfinished sitting in this chat stays as it is, and nothing is fetched. An unfinished sitting nobody holds is attached to this chat. A finished sitting this chat holds, or that nobody holds, is closed and captured again from a fresh fetch. A sitting another chat holds stops the run and names that chat. A blocked or deferred item keeps the sitting. A finished context with any other name, and your other contexts, stay leased.
 
 **Where does the Jira query come from?**
 `pr-queue --print-jql` builds it from `jira_project` and `jira_tech_domains` on the team record, and prints the Atlassian cloud id and site URL stored there as `atlassian_cloud_id` and `atlassian_site`. The agent runs that command, searches Jira once with the printed id, and never reads the alias file or looks the site up. A missing key stops the run and names the key.
@@ -64,5 +64,5 @@ The Atlassian connection or the GitHub connection is missing, or the stepper hoo
 - The quiet count arrives without those older pull requests being downloaded.
 - The list is printed from searches that return pull requests. A search that comes back empty stops the run and names the query.
 - The run prints its total time from the prompt to the list, and it stays under five minutes.
-- `python3 skills/engineering/pr-queue/tests/test_pr_queue.py` and `test_sitting_checkout.py` pass with no network.
+- `python3 skills/engineering/pr-queue/tests/test_pr_queue.py` and `test_sitting_open.py`, and `test_sitting_checkout.py` pass with no network.
 - The run makes one Jira search with the stored cloud id and no site lookup.
