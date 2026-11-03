@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.7.0](https://github.com/ihandley/skills/compare/ihandley-skills-v0.6.1...ihandley-skills-v0.7.0) (2026-11-03)
+
+
+### Features
+
+* **compressor:** write a document only when the candidate is defended ([#125](https://github.com/ihandley/skills/issues/125)) ([959e30e](https://github.com/ihandley/skills/commit/959e30ec7ec3ec7eb5a2e5e0fd6768b612b00e08))
+* **terse:** open in reading order and ask for the action ([#124](https://github.com/ihandley/skills/issues/124)) ([538a97d](https://github.com/ihandley/skills/commit/538a97df3c2be4931f87959a77f8bf473214f5c8))
+* **terse:** show the shape of a change in the PR body ([#121](https://github.com/ihandley/skills/issues/121)) ([b112a64](https://github.com/ihandley/skills/commit/b112a640c21edb864254a3ca80dcb2fa6a9f548d))
+
+
+### Bug Fixes
+
+* **stepper:** a stop reminder says to add nothing ([#123](https://github.com/ihandley/skills/issues/123)) ([59e9cbc](https://github.com/ihandley/skills/commit/59e9cbc30239648c653cb46da5c5f8e5f2a97d2f))
+
 ## [0.6.1](https://github.com/ihandley/skills/compare/ihandley-skills-v0.6.0...ihandley-skills-v0.6.1) (2026-11-03)
 
 
