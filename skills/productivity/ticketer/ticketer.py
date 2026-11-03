@@ -541,6 +541,13 @@ def parent_ladder_problems(draft, config, adapter):
             "parent %s is a %s; %s allows %s" % (parent, record.get("issue_type"), draft.get("issue_type"), ", ".join(allowed)),
             "parent",
         )], [], record
+    allow = lookup_ci(config.get("parent_allow") or {}, record.get("issue_type"))
+    if allow is not None and parent not in allow and str(record.get("key")) not in allow:
+        return [err(
+            "parent_not_allowed",
+            "parent %s is not on the parent allow-list for %s" % (parent, record.get("issue_type")),
+            "parent",
+        )], [], record
     return [], [], record
 
 

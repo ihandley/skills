@@ -678,6 +678,67 @@ class ParentLadderDraftTests(Base):
         self.assertEqual(code, 2)
         self.assertTrue(any(e["code"] == "bad_parent" and e["field"] == "parent" for e in data["errors"]))
 
+    def test_parent_allow_list_accepts_only_a_listed_key(self):
+        self.write_config(JIRA_TOML + """
+[parent_ladder]
+Task = ["Widget"]
+[parent_allow]
+Widget = ["AB-1"]
+""")
+        self.store_parent(parent_issue(issue_type="Widget"))
+        code, data, _ = self.draft(jira_payload(issue_type="Task", parent="AB-1"))
+        self.assertEqual(code, 0, data)
+        self.store_parent(parent_issue(key="AB-2", issue_type="Widget"), key="AB-2")
+        code, data, _ = self.draft(jira_payload(issue_type="Task", parent="AB-2"))
+        self.assertEqual(code, 2)
+        self.assertTrue(any(e["code"] == "parent_not_allowed" and e["field"] == "parent" for e in data["errors"]))
+
+    def test_a_done_parent_of_a_legal_type_is_accepted(self):
+        self.store_parent(parent_issue(status="Launched", category="Done"))
+        code, data, _ = self.draft(jira_payload(issue_type="Task", parent="AB-1"))
+        self.assertEqual(code, 0, data)
+        self.assertIn("parent: AB-1 | Epic | Reset email | Launched", data["render"])
+
+    def test_grandparent_is_not_rechecked(self):
+        self.write_config(JIRA_TOML + """
+[parent_ladder]
+Task = ["Epic"]
+[parent_allow]
+Widget = ["EN-1"]
+""")
+        self.store_parent(parent_issue(parent="ZZ-9"))
+        code, data, _ = self.draft(jira_payload(issue_type="Task", parent="AB-1"))
+        self.assertEqual(code, 0, data)
+
+    def test_type_match_ignores_case(self):
+        self.write_config(JIRA_TOML + '\n[parent_ladder]\ntask = ["epic"]\n[parent_allow]\nepic = ["AB-1"]\n')
+        self.store_parent(parent_issue(issue_type="Epic"))
+        code, data, _ = self.draft(jira_payload(issue_type="Task", parent="AB-1"))
+        self.assertEqual(code, 0, data)
+
+    def test_named_parent_is_not_filtered_by_the_match_field(self):
+        self.write_config(
+            JIRA_TOML
+            + 'parent_match_field = "customfield_10691"\nparent_match_type = "Epic"\n'
+            + '[parent_ladder]\nTask = ["Epic"]\n'
+        )
+        issue = parent_issue()
+        issue["fields"]["customfield_10691"] = {"value": "Somewhere Else"}
+        self.store_parent(issue)
+        code, data, _ = self.draft(jira_payload(issue_type="Task", parent="AB-1"))
+        self.assertEqual(code, 0, data)
+
+    def test_unreadable_parent_is_refused_with_the_failure(self):
+        code, stored, _ = self.store_parent({
+            "errorMessages": ["Issue does not exist or you do not have permission to see it."],
+        })
+        self.assertEqual(code, 0, stored)
+        code, data, _ = self.draft(jira_payload(issue_type="Task", parent="AB-1"))
+        self.assertEqual(code, 2)
+        error = next(e for e in data["errors"] if e["code"] == "parent_unreadable")
+        self.assertIn("do not have permission", error["message"])
+        self.assertFalse(any(n.get("kind") == "parent" for n in data.get("needs") or []))
+
     def test_ladder_type_without_a_parent_is_refused(self):
         code, data, _ = self.draft(jira_payload(issue_type="Task"))
         self.assertEqual(code, 2)
