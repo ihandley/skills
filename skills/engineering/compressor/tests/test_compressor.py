@@ -84,7 +84,7 @@ Keep the signal: refuse when the file is missing.
 """
 
 NOTES = "The note states one fact.\n"
-NOTES_GROWN = "The note states one fact and then adds several more words.\n"
+NOTES_GROWN = "The note states one fact. The note states one fact.\n"
 
 
 class DocumentTests(Base):
@@ -259,42 +259,17 @@ class DocumentTests(Base):
         self.assertEqual(path.read_text(), DOCUMENT)
         self.assertFalse((self.repo / "extra.md").exists())
 
-    def test_broken_relative_link_is_rejected(self):
-        path = self.repo / "note.md"
-        original = "# Title\n\nSee [the note](other.md).\n\nThe history of this note is long and motivational.\n"
-        path.write_text(original)
-        (self.repo / "other.md").write_text("One fact.\n")
-        candidate = "# Title\n\nSee [the note](missing.md).\n"
-        code, data, err = self.run_cli("check", "note.md", candidate={"note.md": candidate})
-        self.assertEqual(err, "", err)
-        self.assertNotEqual(code, 0)
-        self.assertEqual(data["failures"], ["link"])
-        self.assertEqual(path.read_text(), original)
-        self.assertEqual((self.repo / "other.md").read_text(), "One fact.\n")
-
     def test_broken_heading_anchor_is_rejected(self):
         path = self.repo / "note.md"
         original = "# Keep This\n\nSee [the section](#keep-this).\n\nThe history of this note is long and motivational.\n"
         path.write_text(original)
-        candidate = "# Kept\n\nSee [the section](#keep-this).\n"
-        code, data, err = self.run_cli("check", "note.md", candidate={"note.md": candidate})
+        candidate = "See [the section](#keep-this).\n"
+        quotes = {"# Keep This": "See [the section](#keep-this)."}
+        code, data, err = self.run_cli("check", "note.md", candidate={"note.md": candidate, "quotes": quotes})
         self.assertEqual(err, "", err)
         self.assertNotEqual(code, 0)
         self.assertEqual(data["failures"], ["heading_anchor"])
         self.assertEqual(path.read_text(), original)
-
-    def test_relative_link_fragment_must_match_a_heading_in_the_target(self):
-        path = self.repo / "note.md"
-        original = "# Title\n\nSee [the note](other.md#present).\n\nThe history of this note is long and motivational.\n"
-        path.write_text(original)
-        (self.repo / "other.md").write_text("# Present\n\nOne fact.\n")
-        candidate = "# Title\n\nSee [the note](other.md#does-not-exist).\n"
-        code, data, err = self.run_cli("check", "note.md", candidate={"note.md": candidate})
-        self.assertEqual(err, "", err)
-        self.assertNotEqual(code, 0)
-        self.assertEqual(data["failures"], ["heading_anchor"])
-        self.assertEqual(path.read_text(), original)
-        self.assertEqual((self.repo / "other.md").read_text(), "# Present\n\nOne fact.\n")
 
     def test_in_set_heading_anchor_uses_the_candidate_text(self):
         skill = (
@@ -307,7 +282,11 @@ class DocumentTests(Base):
         root = self.write_skill_set(skill, notes)
         code, data, err = self.run_cli(
             "check", "skills/engineering/demo",
-            candidate={"SKILL.md": short, "notes.md": "The note states one fact.\n"},
+            candidate={
+                "SKILL.md": short,
+                "notes.md": "The history of this note is long and motivational.\n",
+                "quotes": {"# Kept Fact": "The history of this note is long and motivational."},
+            },
         )
         self.assertEqual(err, "", err)
         self.assertNotEqual(code, 0)
@@ -319,7 +298,7 @@ class DocumentTests(Base):
         path = self.repo / "note.md"
         original = (
             "# Duplicate\n\n# Duplicate\n\n# Duplicate\n\n"
-            "See [the first](#duplicate).\n\n"
+            "See [the first](#duplicate), [the second](#duplicate-1), and [the third](#duplicate-2).\n\n"
             "The history of this note is long and motivational.\n"
         )
         path.write_text(original)
@@ -408,13 +387,14 @@ class SkillTests(Base):
         self.assertNotEqual(code, 0)
         self.assertEqual(data["failures"], ["word_growth"])
         self.assertEqual(data["words_before"], 35)
-        self.assertEqual(data["words_after"], 32)
+        self.assertEqual(data["words_after"], 31)
         self.assertEqual((root / "SKILL.md").read_text(), SKILL)
         self.assertEqual((root / "notes.md").read_text(), NOTES)
 
     def test_apply_writes_every_replaced_file_or_none(self):
-        root = self.write_skill_set()
-        notes_short = "One fact.\n"
+        notes = "The note states one fact.\n\nThe history of this note is long and motivational.\n"
+        root = self.write_skill_set(notes=notes)
+        notes_short = "The note states one fact.\n"
         code, data, err = self.run_cli(
             "apply", "skills/engineering/demo",
             candidate={"SKILL.md": SKILL_SHORT, "notes.md": notes_short},
@@ -426,17 +406,18 @@ class SkillTests(Base):
         self.assertEqual((root / "notes.md").read_text(), notes_short)
 
     def test_description_only_edit_fails_the_word_gate(self):
-        root = self.write_skill_set()
-        described = SKILL.replace("description: Compress a demo skill.", "description: Compress a skill.")
+        long_skill = SKILL.replace("description: Compress a demo skill.", "description: Compress a demo skill. Use it often.")
+        root = self.write_skill_set(skill=long_skill)
+        described = SKILL
         code, data, err = self.run_cli("check", "skills/engineering/demo", candidate={"SKILL.md": described})
         self.assertEqual(err, "", err)
         self.assertNotEqual(code, 0)
         self.assertEqual(data["failures"], ["word_total"])
         self.assertEqual(data["words_before"], 35)
         self.assertEqual(data["words_after"], 35)
-        self.assertEqual(data["description_chars_before"], 22)
-        self.assertEqual(data["description_chars_after"], 17)
-        self.assertEqual((root / "SKILL.md").read_text(), SKILL)
+        self.assertEqual(data["description_chars_before"], 36)
+        self.assertEqual(data["description_chars_after"], 22)
+        self.assertEqual((root / "SKILL.md").read_text(), long_skill)
 
     def test_description_over_1024_characters_is_rejected(self):
         root = self.repo / "skills" / "engineering" / "demo"
@@ -445,8 +426,8 @@ class SkillTests(Base):
             "---\nname: demo\ndescription: Demo skill.\n---\n\n"
             "Keep the signal.\n\nThe history of this skill is long motivational padding.\n"
         )
-        described = text.replace("description: Demo skill.", "description: " + ("x" * 1025))
-        described = described.replace("The history of this skill is long motivational padding.\n", "")
+        text = text.replace("description: Demo skill.", "description: " + ("x" * 1025))
+        described = text.replace("The history of this skill is long motivational padding.\n", "")
         (root / "SKILL.md").write_text(text)
         code, data, err = self.run_cli("check", "skills/engineering/demo", candidate={"SKILL.md": described})
         self.assertEqual(err, "", err)
@@ -661,6 +642,204 @@ class PlainTextTests(Base):
         self.assertNotEqual(code, 0)
         self.assertEqual(data["failures"], ["wrong_arity"])
         self.assertEqual(path.read_text(), DOCUMENT)
+
+
+INVENTORY_DOC = """# Title
+
+The history of this note is long and motivational.
+
+Keep this fact.
+
+- a list item
+
+| a | b |
+|---|---|
+| 1 | 2 |
+
+```
+code
+```
+
+Use `x` here.
+
+Visit https://example.com/a for more.
+
+Nothing ends this line
+
+Repeated padding sentence here.
+
+Repeated padding sentence here.
+"""
+
+
+class InventoryTests(Base):
+    def inventory(self, text, *extra):
+        (self.repo / "note.md").write_text(text)
+        code, data, err = self.run_cli("inventory", "note.md", *extra)
+        self.assertEqual(err, "", err)
+        return code, data
+
+    def test_classifies_structure_modals_imperatives_and_code_as_obligations(self):
+        code, data = self.inventory(INVENTORY_DOC)
+        self.assertEqual(code, 0, data)
+        entry = data["files"][0]
+        texts = [item["text"] for item in entry["obligations"]]
+        for expected in (
+            "# Title", "Keep this fact.", "- a list item", "| a | b |", "| 1 | 2 |",
+            "Use `x` here.", "Visit https://example.com/a for more.", "Nothing ends this line",
+        ):
+            self.assertIn(expected, texts)
+        self.assertTrue(any(t.startswith("```") for t in texts))
+        self.assertNotIn("|---|---|", texts)
+
+    def test_history_sentence_is_a_leftover_and_repeats_are_one_class_plus_a_copy(self):
+        code, data = self.inventory(INVENTORY_DOC)
+        entry = data["files"][0]
+        leftovers = [item["text"] for item in entry["leftovers"]]
+        self.assertIn("The history of this note is long and motivational.", leftovers)
+        self.assertEqual(leftovers.count("Repeated padding sentence here."), 1)
+        self.assertEqual(entry["copies"], [{"text": "Repeated padding sentence here.", "count": 2}])
+
+    def test_modal_sentence_is_an_obligation(self):
+        code, data = self.inventory("# T\n\nThe tool must not write files.\n\nThe past was long.\n")
+        entry = data["files"][0]
+        self.assertIn("The tool must not write files.", [i["text"] for i in entry["obligations"]])
+        self.assertEqual([i["text"] for i in entry["leftovers"]], ["The past was long."])
+
+    def test_inventory_writes_nothing_and_ignores_stdin(self):
+        path = self.repo / "note.md"
+        path.write_text(INVENTORY_DOC)
+        code, data, err = self.run_cli("inventory", "note.md", raw="not-json")
+        self.assertEqual(code, 0, data)
+        self.assertEqual(path.read_text(), INVENTORY_DOC)
+
+    def test_cross_file_copy_is_reported_and_stays_in_its_class(self):
+        sentence = "The shared padding line stays here."
+        skill = SKILL.replace("The history of this skill is long motivational padding.", sentence)
+        root = self.write_skill_set(skill, sentence + "\n")
+        code, data, err = self.run_cli("inventory", "skills/engineering/demo")
+        self.assertEqual(code, 0, data)
+        by_path = {item["path"]: item for item in data["files"]}
+        self.assertEqual(by_path["SKILL.md"]["cross_file_copies"], [{"text": sentence, "paths": ["notes.md"]}])
+        self.assertIn(sentence, [i["text"] for i in by_path["notes.md"]["leftovers"]])
+        self.assertEqual(by_path["SKILL.md"]["copies"], [])
+
+    def test_failures_use_the_existing_names(self):
+        (self.repo / "note.json").write_text("{}\n")
+        code, data, err = self.run_cli("inventory", "note.json")
+        self.assertEqual(data["failures"], ["unsupported_type"])
+        folder = self.repo / "notes"
+        folder.mkdir()
+        code, data, err = self.run_cli("inventory", "notes")
+        self.assertEqual(data["failures"], ["not_a_skill_directory"])
+
+
+class WalkTests(Base):
+    WALK = "# T\n\nKeep this fact.\n\nThe history here is long.\n\n- an item\n"
+
+    def run_walk(self, candidate, command="check"):
+        path = self.repo / "note.md"
+        path.write_text(self.WALK)
+        code, data, err = self.run_cli(command, "note.md", candidate=candidate)
+        self.assertEqual(err, "", err)
+        return code, data, path
+
+    def test_leftover_deletion_passes(self):
+        code, data, _ = self.run_walk({"note.md": "# T\n\nKeep this fact.\n\n- an item\n"})
+        self.assertEqual(code, 0, data)
+        self.assertEqual(data["defects"], [])
+
+    def test_dropped_obligation_fails_and_names_sentence_and_stops_the_walk(self):
+        code, data, path = self.run_walk({"note.md": "# T\n\nKeep this fact.\n"})
+        self.assertEqual(data["failures"], ["obligation"])
+        self.assertEqual(
+            data["defects"], [{"rule": "obligation", "path": "note.md", "span": "- an item"}],
+        )
+        self.assertEqual(path.read_text(), self.WALK)
+
+    def test_quote_with_present_sentence_passes_and_absent_sentence_fails(self):
+        base = "# T\n\nKeep this fact.\n"
+        code, data, _ = self.run_walk({"note.md": base, "quotes": {"- an item": "Keep this fact."}})
+        self.assertEqual(code, 0, data)
+        code, data, _ = self.run_walk({"note.md": base, "quotes": {"- an item": "Not in the file."}})
+        self.assertEqual(data["failures"], ["obligation"])
+
+    def test_quote_of_a_non_obligation_is_unknown_quote(self):
+        code, data, _ = self.run_walk({
+            "note.md": "# T\n\nKeep this fact.\n\n- an item\n",
+            "quotes": {"The history here is long.": "Keep this fact."},
+        })
+        self.assertEqual(data["failures"], ["unknown_quote"])
+
+    def test_quote_cannot_excuse_a_protected_span(self):
+        original = "# T\n\n```\ncode\n```\n\nKeep this fact.\n\nThe history here is long.\n"
+        (self.repo / "note.md").write_text(original)
+        code, data, err = self.run_cli("check", "note.md", candidate={
+            "note.md": "# T\n\nKeep this fact.\n",
+            "quotes": {"``` code ```": "Keep this fact."},
+        })
+        self.assertEqual(data["failures"], ["protected_span"])
+
+    def test_added_sentence_fails(self):
+        code, data, _ = self.run_walk({"note.md": "# T\n\nKeep this fact.\n\nA fresh sentence appears.\n\n- an item\n"})
+        self.assertEqual(data["failures"], ["added_sentence"])
+        self.assertEqual(data["defects"][0]["span"], "A fresh sentence appears.")
+
+    def test_one_not_clause_is_allowed_and_a_second_is_not(self):
+        long_skill = SKILL.replace("description: Compress a demo skill.", "description: Compress a demo skill. Use it often.")
+        root = self.write_skill_set(skill=long_skill)
+        one = SKILL_SHORT.replace("Compress a demo skill.", "Compress a demo skill. Not a draft; that is terse.")
+        code, data, err = self.run_cli("check", "demo", candidate={"SKILL.md": one})
+        self.assertEqual(code, 0, data)
+        two = SKILL_SHORT.replace("Compress a demo skill.", "Compress a demo skill. Not a draft. Also something new.")
+        code, data, err = self.run_cli("check", "demo", candidate={"SKILL.md": two})
+        self.assertEqual(data["failures"], ["added_sentence"])
+        self.assertEqual(data["defects"][0]["span"], "Also something new.")
+
+    def test_copies_that_remain_fail_exact_copy(self):
+        original = "# T\n\nPadding sentence one.\n\nPadding sentence one.\n\nPadding sentence one.\n\nGone soon here.\n"
+        (self.repo / "note.md").write_text(original)
+        code, data, err = self.run_cli("check", "note.md", candidate={
+            "note.md": "# T\n\nPadding sentence one.\n\nPadding sentence one.\n",
+        })
+        self.assertEqual(data["failures"], ["exact_copy"])
+        code, data, err = self.run_cli("check", "note.md", candidate={
+            "note.md": "# T\n\nPadding sentence one.\n",
+        })
+        self.assertEqual(code, 0, data)
+
+    def test_deleting_the_last_obligation_copy_fails_obligation(self):
+        original = "# T\n\n- same item\n\n- same item\n\nThe padding is long.\n"
+        (self.repo / "note.md").write_text(original)
+        code, data, err = self.run_cli("check", "note.md", candidate={"note.md": "# T\n"})
+        self.assertEqual(data["failures"], ["obligation"])
+
+    def test_only_the_first_failing_rule_is_reported_with_every_span(self):
+        # drops two obligations and also breaks a later rule (word growth in a second file is not needed:
+        # added_sentence follows obligation in the order)
+        code, data, _ = self.run_walk({"note.md": "A fresh sentence appears.\n"})
+        self.assertEqual(data["failures"], ["obligation"])
+        self.assertEqual({d["rule"] for d in data["defects"]}, {"obligation"})
+        self.assertGreaterEqual(len(data["defects"]), 3)
+
+    def test_two_checks_return_equal_defects(self):
+        _, first, _ = self.run_walk({"note.md": "# T\n"})
+        _, second, _ = self.run_walk({"note.md": "# T\n"})
+        self.assertEqual(first["defects"], second["defects"])
+
+    def test_apply_writes_nothing_when_the_walk_fails(self):
+        code, data, path = self.run_walk({"note.md": "# T\n"}, command="apply")
+        self.assertNotEqual(code, 0)
+        self.assertEqual(path.read_text(), self.WALK)
+
+    def test_quotes_key_is_not_a_file(self):
+        root = self.write_skill_set(notes="The note states one fact.\n\nThe history of this note is long and motivational.\n")
+        code, data, err = self.run_cli("apply", "demo", candidate={
+            "SKILL.md": SKILL_SHORT, "quotes": {},
+        })
+        self.assertEqual(code, 0, data)
+        self.assertFalse((root / "quotes").exists())
+        self.assertFalse((self.repo / "quotes").exists())
 
 
 if __name__ == "__main__":

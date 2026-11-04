@@ -8,52 +8,44 @@ description: >-
 argument-hint: <path or skill name>
 ---
 
-The script is the only writer. A candidate stays off disk until it is accepted. Apply writes every file in the set, or it writes none. Leave git history untouched.
+The script is the only writer and the only judge of acceptance. A candidate stays off disk until a full walk returns no defects. Apply writes every file in the set, or it writes none. Leave git history untouched.
 
-## Refuse the wrong artifact
+An outward draft (Slack, email, Jira, Confluence, or pull-request text) is terse's, and source code is deslop's. Pick that skill before this one runs.
 
-The target is a document. An outward draft (Slack, email, Jira, Confluence, or pull-request text) goes to terse. Source code goes to deslop.
+## Inventory
 
-Done when the target is one document, or you have named the other skill and stopped.
+Run `python3 <this skill's directory>/compressor.py inventory <one path or skill name>`. It writes nothing. A skill is the entry file plus the Markdown and plain-text files it links.
 
-## Read the pre-image
+When `failures` is not empty, stop on that name. Do not name another skill.
 
-Read the document. A skill is a document whose set is the entry file plus the Markdown and plain-text files it links, including the files under a linked directory.
+The report lists, per file, `obligations`, `leftovers`, and `copies`, plus `cross_file_copies`. An obligation is a unit whose text must survive or be quoted. A leftover is a sentence the script could not classify as an obligation. You decide which leftovers are padding.
 
-Padding is history, motive, restatement, or transition whose removal leaves the signal in place. Signal is a fact, decision, condition, obligation, or instruction the next reader would get wrong without. A trigger phrase in a skill description is signal too.
+When `leftovers` and `copies` are empty in every file, stop. Tell the person the document is already dense. The files stay as they are.
 
-Done when you can name the padding, or you can say there is none.
+## Propose one candidate
 
-## Stop when there is no padding
+The candidate is one JSON object: relative path to full text, plus an optional `quotes` object. Omit a file to leave it unchanged.
 
-When you cannot name padding, stop. Tell the person the document is already dense. The files stay as they are.
-
-## Compose the candidate
-
-Remove the padding you named. The signal stays. Add nothing, except a Not clause on a skill description that names the sibling which would take the invoke.
-
-On a `SKILL.md`:
-
-- A hard constraint stays one bullet.
+- Delete the leftovers you judge to be padding.
+- Delete extra in-file copies, leaving one occurrence. Leave cross-file copies in place.
+- Keep each obligation verbatim. To drop one, put `"obligation text": "surviving sentence"` in `quotes`.
 - Copy a payload the skill must reproduce verbatim.
-- Judge the description for trigger recall. Shape it as What, then When, then Not. Collapse synonyms to one phrase. Aim no higher than `sibling_median` when the report includes one, unless a unique trigger phrase would be lost.
+- Add nothing, except one Not clause on a skill description that names the sibling which would take the invoke.
 
-The candidate is one JSON object. Each key is a relative path and each value is the full proposed text. Skill paths are relative to the skill directory. A document path is the file's name, relative to that file's directory. Omit a file to leave it unchanged.
+## Walk
 
-Done when every path you changed is in that object.
+Run `check` with the candidate on stdin. It writes nothing. The walk stops at the first failing rule and returns every defect of that rule, each with `rule`, `path`, and `span`.
 
-## Check
+When `ok` is true, run `apply` with the same candidate.
 
-Run `python3 <this skill's directory>/compressor.py check <one path or skill name>` with the candidate on stdin. Stdout is one JSON object. Check writes nothing.
+When it is not:
 
-Done when you have the report: `ok`, `failures`, `diffs`, `words_before`, `words_after`, and, for a skill, `description_chars_before`, `description_chars_after`, `description_cap`, and `sibling_median`.
+- Stop if `defects` equals the previous check's `defects`.
+- Stop if this is a second answer to the same rule.
+- Otherwise submit one candidate that clears every defect of that rule, then `check` again.
 
-## Apply only a defended candidate
+A stop leaves the files as they were. Report the rule and its spans.
 
-Apply when `ok` is true and you can name the padding removed, the signal that survived, and that nothing was added beyond the allowed Not clause. Run the same command with `apply` and the same candidate. A non-zero exit leaves every file as it was.
+## What a pass proves
 
-Done when apply exits 0, or you have named the defect and the files are unchanged.
-
-## The next candidate answers one named defect
-
-A later candidate answers one name in `failures`, or one signal loss you can point at in the diff. When you cannot name either, stop and report the defect.
+A quote proves the surviving sentence exists. It does not prove the obligation moved there. Do not read an ok report as proof that signal survived.
