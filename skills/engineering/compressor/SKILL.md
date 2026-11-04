@@ -29,6 +29,7 @@ The candidate is one JSON object: relative path to full text, plus an optional `
 - Delete the leftovers you judge to be padding.
 - Delete extra in-file copies, leaving one occurrence. Leave cross-file copies in place.
 - Keep each obligation verbatim. To drop one, put `"obligation text": "surviving sentence"` in `quotes`.
+- Copy a payload the skill must reproduce verbatim.
 - Add nothing, except one Not clause on a skill description that names the sibling which would take the invoke.
 
 ## Walk
