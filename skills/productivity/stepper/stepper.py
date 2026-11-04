@@ -941,6 +941,68 @@ def _status_rows(ctx: dict, parent_id: str | None = None) -> list[dict]:
     return rows
 
 
+def local_day(stamp: str) -> str:
+    moment = datetime.fromisoformat(stamp.replace("Z", "+00:00"))
+    if moment.tzinfo is None:
+        moment = moment.replace(tzinfo=timezone.utc)
+    return moment.astimezone().strftime("%Y-%m-%d")
+
+
+def list_progress(ctx: dict) -> str:
+    counts = _progress(ctx)["top_level"]
+    return f"{counts['resolved']}/{counts['total']}"
+
+
+def list_line(ctx: dict) -> str:
+    if is_complete(ctx):
+        return "complete"
+    active = next((item for item in ctx["items"] if item["status"] == "active"), None)
+    if active is not None:
+        return f"{active['id']} {active['description']}"
+    for item in _status_rows(ctx):
+        if item["status"] == "blocked":
+            return f"{item['id']} {item['description']}"
+    remaining = [item for item in ctx["items"] if item["status"] not in ("verified", "cancelled")]
+    if remaining and all(item["status"] == "deferred" for item in remaining):
+        return "deferred"
+    return ""
+
+
+def lease_word(ctx: dict, session_key: str | None) -> str:
+    lease = ctx.get("lease")
+    if lease and session_key and lease.get("session_key") == session_key:
+        word = "here"
+    elif lease:
+        word = "elsewhere"
+    else:
+        word = "free"
+    if ctx.get("paused"):
+        word += ", paused"
+    return word
+
+
+def list_table(contexts: list[dict], session_key: str | None) -> str:
+    if not contexts:
+        return ""
+    ordered = sorted(contexts, key=lambda ctx: ctx["id"])
+    ordered.sort(key=lambda ctx: local_day(ctx["updated_at"]), reverse=True)
+    headers = ["Name", "Updated", "Progress", "Lease", "Line"]
+    lines = [
+        "| " + " | ".join(headers) + " |",
+        "| " + " | ".join("---" for _ in headers) + " |",
+    ]
+    for ctx in ordered:
+        cells = [
+            ctx["id"],
+            local_day(ctx["updated_at"]),
+            list_progress(ctx),
+            lease_word(ctx, session_key),
+            list_line(ctx),
+        ]
+        lines.append("| " + " | ".join(_status_cell(cell) for cell in cells) + " |")
+    return "\n".join(lines)
+
+
 def status_table(ctx: dict | None) -> str:
     if ctx is None or not ctx["items"]:
         return ""
@@ -1511,37 +1573,30 @@ def cmd_decline(root: Path, session_key: str, digest: str) -> dict:
     return {"ok": True, "suggestion": digest, "status": "declined"}
 
 
-def cmd_status(root: Path, session_key: str | None, tree: bool = False, context_id: str | None = None) -> dict:
+def cmd_list(root: Path, session_key: str | None) -> dict:
     ensure_store(root)
     contexts, corrupt = read_contexts(root)
-    if session_key is None:
-        return {
-            "ok": True,
-            "contexts": [
-                {
-                    "id": ctx["id"],
-                    "closed": ctx["closed"],
-                    "paused": ctx["paused"],
-                    "lease": ctx["lease"],
-                    "repo": ctx.get("repo"),
-                    "complete": is_complete(ctx),
-                    "reminder": reminder(ctx),
-                    "progress": {"top_level": _progress(ctx)["top_level"]},
-                    **({"tree": [_tree_node(ctx, item) for item in _children(ctx, None)]} if tree else {}),
-                }
-                for ctx in contexts
-                if not ctx["closed"]
-            ],
-            "corrupt_files": corrupt,
-        }
-    session = load_session(root, session_key)
-    held = held_by(root, session_key)
-    ctx = held[0] if len(held) == 1 else None
-    if context_id is not None:
-        ctx = next((item for item in held if item["id"] == context_id), None)
-        if ctx is None:
-            raise StepperError(f"session {session_key} holds no context {context_id}")
-    return {
+    open_contexts = [ctx for ctx in contexts if not ctx["closed"]]
+    body = {
+        "ok": True,
+        "table": list_table(open_contexts, session_key),
+        "corrupt_files": corrupt,
+    }
+    if not open_contexts:
+        body["message"] = "the home store has no open context"
+    return body
+
+
+def _status_payload(
+    root: Path,
+    session_key: str | None,
+    ctx: dict | None,
+    held: list[dict],
+    corrupt: list[str],
+    tree: bool,
+) -> dict:
+    session = load_session(root, session_key) if session_key else None
+    body = {
         "ok": True,
         "session": None
         if session is None
@@ -1552,19 +1607,49 @@ def cmd_status(root: Path, session_key: str | None, tree: bool = False, context_
         "brief": brief_of(ctx),
         "held": [
             {"id": item["id"], "paused": item["paused"], "brief": brief_of(item)}
-            for item in held_by(root, session_key)
+            for item in held
         ],
         "table": status_table(ctx),
-        **({"tree": [_tree_node(ctx, item) for item in _children(ctx, None)]} if tree and ctx is not None else {}),
         "corrupt_files": corrupt,
     }
+    if tree and ctx is not None:
+        body["tree"] = [_tree_node(ctx, item) for item in _children(ctx, None)]
+    return body
+
+
+def _named_context(root: Path, context_id: str, session_key: str | None) -> dict:
+    seen = context_ids(root).inspect(context_id, session_key or "")
+    if seen.state is lifecycle.State.CORRUPT:
+        raise seen.error
+    if seen.state is lifecycle.State.FREE:
+        raise StepperError(f"no context {context_id}")
+    if seen.state in (lifecycle.State.ARCHIVED, lifecycle.State.CLOSED):
+        raise StepperError(f"context {context_id} is closed")
+    return seen.ctx
+
+
+def cmd_status(root: Path, session_key: str | None, tree: bool = False, context_id: str | None = None) -> dict:
+    ensure_store(root)
+    _contexts, corrupt = read_contexts(root)
+    held = held_by(root, session_key) if session_key else []
+    if context_id is not None:
+        return _status_payload(root, session_key, _named_context(root, context_id, session_key), held, corrupt, tree)
+    if session_key is None:
+        return {"ok": True, "table": "", "message": "use list", "corrupt_files": corrupt}
+    if not held:
+        body = _status_payload(root, session_key, None, [], corrupt, tree)
+        body["message"] = "this session holds no context"
+        return body
+    if len(held) > 1:
+        return _status_payload(root, session_key, None, held, corrupt, tree)
+    return _status_payload(root, session_key, held[0], held, corrupt, tree)
 
 
 def session_line(key: str, root: Path) -> str:
     return (
         f"Stepper session: {key}. Project root: {root}. "
         f"Pass --session {key} --root {root} on every command that changes state. "
-        f"For status, run status with no --session."
+        f"For the index, run list. For the item table, run status with --session {key}, or status with a name."
     )
 
 
@@ -1933,6 +2018,8 @@ def run_command(args: argparse.Namespace) -> dict:
             body = cmd_capture(root, args.session, args.context, args.item or [], args.suggestion, repo)
         elif args.cmd == "add":
             body = cmd_add(root, args.session, context_id, args.item or [], args.parent)
+        elif args.cmd == "list":
+            body = cmd_list(root, args.session)
         elif args.cmd == "status":
             body = cmd_status(root, args.session, args.tree, args.context)
         elif args.cmd == "focus":
@@ -1976,7 +2063,8 @@ def run_command(args: argparse.Namespace) -> dict:
             raise StepperError(f"unknown command {args.cmd}")
         if hasattr(args, "full") and not args.full and body.get("ok") and "brief" in body:
             body = {"ok": True, "brief": body["brief"]}
-        note_briefed(root, getattr(args, "session", None))
+        if args.cmd != "list":
+            note_briefed(root, getattr(args, "session", None))
         return attach_leftovers(root, body)
 
 
@@ -2022,6 +2110,10 @@ def build_parser() -> argparse.ArgumentParser:
     context(add)
     add.add_argument("--item", action="append")
     add.add_argument("--parent")
+
+    listing = sub.add_parser("list")
+    root(listing)
+    session(listing, required=False)
 
     status = sub.add_parser("status")
     root(status)

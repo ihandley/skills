@@ -3,8 +3,9 @@ name: stepper
 description: >-
   Track one ordered list of work and stick to the active item. Use when a
   concrete list of remaining work should be tracked, when a Stepper reminder
-  is in context, when the user asks what is left, or when the user says to
-  drop or replace the list. Change list state only through the stepper CLI.
+  is in context, when the user asks what is left, when the user asks what
+  is open, or when the user says to drop or replace the list. Change list
+  state only through the stepper CLI.
 compatibility: Requires Python 3
 metadata:
   author: ian.handley
@@ -34,11 +35,13 @@ Done when every state change in this turn passed `--session` and `--root` from t
 
 ## Brief
 
-Read `brief` from `status`. Speak all four parts: `done`, `left`, `blocked`, and `position`. An empty list is the part with nothing in it. `position` `none` means no item is held.
+When the user asks what is left and names no context, run `status --session <key>`. Read `brief` for the one context this session holds. When `held` names several, ask once which name and wait. A bare invocation is this brief.
+
+Speak all four parts: `done`, `left`, `blocked`, and `position`. An empty list is the part with nothing in it. `position` `none` means no item is held.
 
 Do this when an item becomes active, and again before any new start. "Brief before any new start" in a session reminder names that later start. A stop reminder does not ask for a brief. Receiving either reminder is not a new start.
 
-Done when all four parts were spoken and match `status`.
+Done when all four parts were spoken and match `brief` for that one context, or the user was asked which name.
 
 ## Which context
 
@@ -46,13 +49,25 @@ A state change names one context. The user's words select it when they name the 
 
 A brief spoken after a change is the `brief` on that command's result. It covers the context that changed. A state change prints only `ok` and the `brief` by default. Add `--full` to get the whole store; `--brief` is still accepted and changes nothing. `attach` takes `--session`, `--root`, and `--context` like the rest.
 
-## Status
+## Index
 
-When the user asks for status, run `status` with no `--session`. List every open context in `contexts`. For each one, name the session in `lease.session_key`, or that nobody holds it when `lease` is null. When `contexts` is empty, say the home store has no open list.
+When the user asks what is open, run `list`. Pass `--session` when the hook line gave one. Speak `table`. The columns are Name, Updated, Progress, Lease, and Line. Lease is `here`, `elsewhere`, or `free`. A paused context adds `paused` in that cell. When `message` says the home store has no open context, say that. Report `corrupt_files` and `checkout_leftovers` when they are present.
 
-When this session holds one of those contexts, also run `status --session <key>` and speak that context's `table`. When it holds several, name each context in `held` and speak its brief.
+Done when the reply matches `table`, or says the home store has no open context.
 
-Done when the reply names every context in `contexts` and who holds it, speaks the `table` when this session holds one context, and speaks each brief when this session holds several.
+## Item table
+
+When the user asks for the items in a context, run `status`. With no name, pass `--session` and speak `table` for the one context this session holds. When `message` says this session holds no context, say that. When `held` names several, ask once which name and wait.
+
+With a name, run `status --context <name>` and speak that context's `table`. Leave the lease where it is. When the result says the context is closed, say that and show no table. When the result says there is no context by that name, say the name is missing.
+
+Done when the reply speaks that one `table`, asks which name, or reports that this session holds no context, that the context is closed, or that the name is missing.
+
+## Help
+
+When the user asks for help, speak these commands: track, add, focus, verify, block, unblock, skip, defer, cancel, pause, resume, replace, drop, attach, list, and status.
+
+Done when the reply lists those commands.
 
 ## Stick
 
