@@ -124,6 +124,14 @@ _Avoid_: Meaning, content, behavior
 History, motive, restatement, or transition whose removal leaves the signal in place.
 _Avoid_: Noise, fluff, prose
 
+**Obligation**:
+A listed unit whose text must survive or be quoted: a fenced block, list item, table row, heading, or a sentence that gives an order, holds inline code or an absolute URL, or that the script cannot classify.
+_Avoid_: Meaning, content
+
+**Quote**:
+The surviving sentence a dropped obligation points at. It proves the sentence exists, not that the obligation moved.
+_Avoid_: Meaning, content
+
 **Candidate**:
 A proposed replacement for a document, held until it is accepted.
 _Avoid_: Draft, rewrite

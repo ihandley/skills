@@ -1,7 +1,9 @@
 #!/usr/bin/env python3
-"""Check a candidate against one document, and apply it when every check passes.
+"""Walk a candidate against one document, and apply it when the walk is clean.
 
-The script is the only writer. It does not commit.
+`inventory` lists what the pre-image holds. `check` walks the rules in
+FAILURE_ORDER and stops at the first rule with a defect. `apply` writes the set
+only when that walk is clean. The script is the only writer. It does not commit.
 """
 
 from __future__ import annotations
@@ -15,26 +17,44 @@ import tempfile
 from pathlib import Path
 
 FAILURE_ORDER = [
-    "not_utf8",
-    "unsupported_type",
     "wrong_arity",
     "bad_command",
     "bad_json",
+    "not_utf8",
     "skill_not_found",
     "ambiguous_skill",
     "not_a_skill_directory",
+    "unsupported_type",
     "escaping_key",
     "unknown_key",
+    "unknown_quote",
     "parse",
     "frontmatter_keys",
     "frontmatter_value",
     "protected_span",
+    "obligation",
+    "added_sentence",
+    "exact_copy",
     "link",
     "heading_anchor",
     "word_total",
     "word_growth",
     "description_cap",
 ]
+IMPERATIVES = {
+    word.lower()
+    for word in (
+        "Read Run Keep Drop Leave Apply Stop Write Omit Preserve Use Return Pass Fail Reject Accept Avoid "
+        "Prefer Name Delete Remove Add Include Exclude Open Close Ask Tell Report Copy Move"
+    ).split()
+}
+MODAL_RE = re.compile(r"\b(?:must not|must|do not|don['\u2019]t|never|always)\b", re.IGNORECASE)
+LIST_ITEM_RE = re.compile(r"^\s*(?:[-*+]|\d+[.)])\s+")
+RULE_RE = re.compile(r"([-*_]\s*){3,}")
+TABLE_SEPARATOR_RE = re.compile(r"\|?[\s:|-]*-[\s:|-]*\|?")
+SPLIT_RE = re.compile(r"[.?!][\"')\]*_]*(\s+)(?=[^\sa-z])")
+TERMINATOR_RE = re.compile(r"[.?!][\"')\]*_]*$")
+ABBREVIATIONS = {"e.g", "i.e", "etc", "vs", "cf"}
 TEXT_SUFFIXES = {".md", ".txt"}
 LINK_RE = re.compile(r"!?\[[^\]\n]*\]\(([^)\n]+)\)")
 URL_RE = re.compile(r"https?://[^\s<>)\]]+")
@@ -71,38 +91,51 @@ def main(argv: list[str] | None = None) -> int:
         emit(empty_report(["wrong_arity"]))
         return 1
     command, arg = argv
-    if command not in ("check", "apply"):
+    if command not in ("inventory", "check", "apply"):
         emit(empty_report(["bad_command"]))
         return 1
-    candidate, failure = load_candidate()
-    if failure:
-        emit(empty_report([failure]))
-        return 1
+    candidate, quotes = {}, {}
+    if command != "inventory":
+        candidate, quotes, failure = load_candidate()
+        if failure:
+            emit(empty_report([failure]))
+            return 1
 
     located = locate(arg, Path.cwd())
     if isinstance(located, str):
         emit(empty_report([located]))
         return 1
-    report, replacements = evaluate(located, candidate)
+    if command == "inventory":
+        report = take_inventory(located)
+        emit(report)
+        return 0 if report["ok"] else 1
+    report, replacements = evaluate(located, candidate, quotes)
     if command == "apply" and report["ok"]:
         replace_staged_files(replacements)
     emit(report)
     return 0 if report["ok"] else 1
 
 
-def load_candidate() -> tuple[dict | None, str | None]:
+def load_candidate() -> tuple[dict | None, dict | None, str | None]:
     raw = sys.stdin.buffer.read()
     try:
         text = raw.decode("utf-8")
     except UnicodeDecodeError:
-        return None, "not_utf8"
+        return None, None, "not_utf8"
     try:
         value = json.loads(text) if text.strip() else None
     except json.JSONDecodeError:
-        return None, "bad_json"
-    if not isinstance(value, dict) or any(not isinstance(item, str) for item in value.values()):
-        return None, "bad_json"
-    return value, None
+        return None, None, "bad_json"
+    if not isinstance(value, dict):
+        return None, None, "bad_json"
+    quotes = value.pop("quotes", {})
+    if not isinstance(quotes, dict) or any(
+        not isinstance(key, str) or not isinstance(item, str) for key, item in quotes.items()
+    ):
+        return None, None, "bad_json"
+    if any(not isinstance(item, str) for item in value.values()):
+        return None, None, "bad_json"
+    return value, quotes, None
 
 
 def locate(arg: str, cwd: Path) -> Located | str:
@@ -274,15 +307,227 @@ def contained(root: Path, ref: str) -> Path | None:
     return candidate
 
 
-def evaluate(loc: Located, candidate: dict) -> tuple[dict, list[tuple[Path, str]]]:
+class Unit:
+    def __init__(self, kind: str, cls: str, text: str, line: int):
+        self.kind = kind
+        self.cls = cls
+        self.text = text
+        self.line = line
+        self.copy = False
+
+
+def norm(text: str) -> str:
+    return " ".join(text.split())
+
+
+def short(text: str) -> str:
+    text = norm(text)
+    return text if len(text) <= 120 else text[:117] + "..."
+
+
+def body_lines(text: str, markdown: bool) -> tuple[list[str], int]:
+    lines = text.splitlines()
+    if markdown and text.startswith("---\n") and parse_frontmatter(text).ok:
+        close = next((i for i in range(1, len(lines)) if lines[i].strip() == "---"), None)
+        if close is not None:
+            return lines[close + 1:], close + 1
+    return lines, 0
+
+
+def split_sentences(text: str) -> list[str]:
+    spans = inline_codes_in(text)
+    masked = text
+    for index, span in enumerate(spans):
+        masked = masked.replace(span, "\x00%d\x00" % index, 1)
+    pieces = []
+    start = 0
+    for match in SPLIT_RE.finditer(masked):
+        token = masked[start:match.start() + 1].split()[-1].lower().rstrip(".")
+        if token in ABBREVIATIONS:
+            continue
+        pieces.append(masked[start:match.start(1)])
+        start = match.end(1)
+    pieces.append(masked[start:])
+    restored = [re.sub("\x00(\\d+)\x00", lambda m: spans[int(m.group(1))], piece) for piece in pieces]
+    return [norm(piece) for piece in restored if piece.strip()]
+
+
+def classify_sentence(sentence: str) -> str:
+    if inline_codes_in(sentence) or URL_RE.search(sentence):
+        return "obligation"
+    if MODAL_RE.search(sentence):
+        return "obligation"
+    first = re.match(r"[\W_]*([A-Za-z]+)", sentence)
+    if first and first.group(1).lower() in IMPERATIVES:
+        return "obligation"
+    if not TERMINATOR_RE.search(sentence):
+        return "obligation"
+    return "leftover"
+
+
+def is_table_separator(stripped: str) -> bool:
+    return "|" in stripped and "-" in stripped and set(stripped) <= set("|:- ")
+
+
+def extract_units(text: str, markdown: bool) -> list[Unit]:
+    lines, offset = body_lines(text, markdown)
+    fences = {start: end for start, end, _closed in walk_fences(lines)}
+    units: list[Unit] = []
+    para: list[str] = []
+    para_line = 0
+    open_list: Unit | None = None
+
+    def flush() -> None:
+        nonlocal para
+        if para:
+            for sentence in split_sentences(" ".join(item.strip() for item in para)):
+                units.append(Unit("prose", classify_sentence(sentence), sentence, para_line))
+        para = []
+
+    index = 0
+    while index < len(lines):
+        line = lines[index]
+        stripped = line.strip()
+        number = index + 1 + offset
+        if index in fences:
+            flush()
+            open_list = None
+            end = fences[index]
+            units.append(Unit("fence", "obligation", norm("\n".join(lines[index:end])), number))
+            index = end
+            continue
+        if not stripped:
+            flush()
+            open_list = None
+        elif RULE_RE.fullmatch(stripped):
+            flush()
+            open_list = None
+        elif HEADING_RE.match(stripped):
+            flush()
+            open_list = None
+            units.append(Unit("heading", "obligation", norm(stripped), number))
+        elif LIST_ITEM_RE.match(line):
+            flush()
+            open_list = Unit("list", "obligation", norm(stripped), number)
+            units.append(open_list)
+        elif stripped.startswith("|"):
+            flush()
+            open_list = None
+            if not is_table_separator(stripped):
+                units.append(Unit("table", "obligation", norm(stripped), number))
+        elif open_list is not None and line[0] in " \t":
+            open_list.text = norm(open_list.text + " " + stripped)
+        else:
+            open_list = None
+            if not para:
+                para_line = number
+            para.append(line)
+        index += 1
+    flush()
+    seen: set[str] = set()
+    for unit in units:
+        if unit.kind != "prose":
+            continue
+        if unit.text in seen:
+            unit.copy = True
+        seen.add(unit.text)
+    return units
+
+
+def is_markdown(rel: str) -> bool:
+    return rel.lower().endswith(".md")
+
+
+def take_inventory(loc: Located) -> dict:
+    if loc.kind == "document" and Path(loc.members[0]).suffix.lower() not in TEXT_SUFFIXES:
+        return empty_report(["unsupported_type"])
+    texts: dict[str, str] = {}
+    for rel in loc.members:
+        try:
+            texts[rel] = (loc.root / rel).read_bytes().decode("utf-8")
+        except UnicodeDecodeError:
+            return empty_report(["not_utf8"], rel)
+    all_units = {rel: extract_units(texts[rel], is_markdown(rel)) for rel in loc.members}
+    files = []
+    for rel in loc.members:
+        units = all_units[rel]
+        counts: dict[str, int] = {}
+        for unit in units:
+            if unit.kind == "prose":
+                counts[unit.text] = counts.get(unit.text, 0) + 1
+        cross = []
+        for unit in units:
+            if unit.kind != "prose" or unit.copy:
+                continue
+            others = [
+                other for other in loc.members
+                if other != rel and any(item.kind == "prose" and item.text == unit.text for item in all_units[other])
+            ]
+            if others:
+                cross.append({"text": unit.text, "paths": others})
+        files.append({
+            "path": rel,
+            "obligations": [
+                {"text": u.text, "line": u.line} for u in units if u.cls == "obligation" and not u.copy
+            ],
+            "leftovers": [{"text": u.text, "line": u.line} for u in units if u.cls == "leftover" and not u.copy],
+            "copies": [{"text": text, "count": count} for text, count in counts.items() if count > 1],
+            "cross_file_copies": cross,
+        })
+    report = empty_report([])
+    report["files"] = files
+    report["skipped"] = list(loc.skipped)
+    report["unresolved"] = list(loc.unresolved)
+    return report
+
+
+def protected_defects(original: str, proposed: str) -> list[str]:
+    spans = []
+    for before, after in zip(protected_sequences(original), protected_sequences(proposed)):
+        matcher = difflib.SequenceMatcher(a=list(before), b=list(after), autojunk=False)
+        for tag, i1, i2, j1, j2 in matcher.get_opcodes():
+            if tag == "equal":
+                continue
+            spans.extend(short(item) for item in before[i1:i2])
+            spans.extend(short(item) for item in after[j1:j2])
+    return spans
+
+
+def description_sentences(text: str) -> list[str]:
+    matter = parse_frontmatter(text)
+    if not matter.ok:
+        return []
+    return split_sentences(matter.values.get("description", ""))
+
+
+def evaluate(loc: Located, candidate: dict, quotes: dict) -> tuple[dict, list[tuple[Path, str]]]:
     if loc.kind == "document" and Path(loc.members[0]).suffix.lower() not in TEXT_SUFFIXES:
         return empty_report(["unsupported_type"]), []
-    failures: list[str] = []
+    defects: list[dict] = []
+
+    def add(rule: str, path: str | None, span: str = "") -> None:
+        defects.append({"rule": rule, "path": path, "span": span})
+
     for key in candidate:
         if escapes(key):
-            failures.append("escaping_key")
+            add("escaping_key", key, key)
         elif key not in loc.members:
-            failures.append("unknown_key")
+            add("unknown_key", key, key)
+    originals: dict[str, str] = {}
+    proposeds: dict[str, str] = {}
+    for rel in loc.members:
+        try:
+            originals[rel] = (loc.root / rel).read_bytes().decode("utf-8")
+        except UnicodeDecodeError:
+            return empty_report(["not_utf8"], rel), []
+        proposeds[rel] = candidate.get(rel, originals[rel])
+    before_units = {rel: extract_units(originals[rel], is_markdown(rel)) for rel in loc.members}
+    after_units = {rel: extract_units(proposeds[rel], is_markdown(rel)) for rel in loc.members}
+    obligation_texts = {u.text for units in before_units.values() for u in units if u.cls == "obligation"}
+    for key in quotes:
+        if key not in obligation_texts:
+            add("unknown_quote", None, key)
+
     files = []
     diffs = {}
     replacements = []
@@ -290,18 +535,7 @@ def evaluate(loc: Located, candidate: dict) -> tuple[dict, list[tuple[Path, str]
     words_after = 0
     entry_before = None
     entry_after = None
-    originals: dict[str, str] = {}
-    proposeds: dict[str, str] = {}
     for rel in loc.members:
-        try:
-            originals[rel] = (loc.root / rel).read_bytes().decode("utf-8")
-        except UnicodeDecodeError:
-            failures.append("not_utf8")
-        else:
-            proposeds[rel] = candidate.get(rel, originals[rel])
-    for rel in loc.members:
-        if rel not in originals:
-            continue
         path = loc.root / rel
         original = originals[rel]
         proposed = proposeds[rel]
@@ -312,19 +546,27 @@ def evaluate(loc: Located, candidate: dict) -> tuple[dict, list[tuple[Path, str]
         words_after += after
         changed = proposed != original
         if changed and after > before:
-            failures.append("word_growth")
-        if protected_sequences(original) != protected_sequences(proposed):
-            failures.append("protected_span")
-        if rel.lower().endswith(".md"):
+            add("word_growth", rel, "%d -> %d words" % (before, after))
+        for span in protected_defects(original, proposed):
+            add("protected_span", rel, span)
+        if is_markdown(rel):
             if unclosed_fence(original) or unclosed_fence(proposed):
-                failures.append("parse")
-            failures.extend(frontmatter_failures(original, proposed, exclude_description_from_word_count))
-            if broken_links(loc.root, rel, proposed, set(loc.members)) - broken_links(
-                loc.root, rel, original, set(loc.members)
+                add("parse", rel, "unclosed fence")
+            for name in frontmatter_failures(original, proposed, exclude_description_from_word_count):
+                add(name, rel, "frontmatter")
+            for ref in sorted(
+                broken_links(loc.root, rel, proposed, set(loc.members))
+                - broken_links(loc.root, rel, original, set(loc.members))
             ):
-                failures.append("link")
-            if broken_anchors(proposed, loc.root, rel, proposeds) - broken_anchors(original, loc.root, rel, originals):
-                failures.append("heading_anchor")
+                add("link", rel, ref)
+            for ref in sorted(
+                broken_anchors(proposed, loc.root, rel, proposeds) - broken_anchors(original, loc.root, rel, originals)
+            ):
+                add("heading_anchor", rel, ref)
+        if changed:
+            check_changed(rel, original, proposed, before_units[rel], after_units[rel], quotes, add)
+            if exclude_description_from_word_count:
+                check_description(original, proposed, add)
         files.append({
             "path": rel,
             "disposition": "replaced" if changed else "unchanged",
@@ -345,10 +587,11 @@ def evaluate(loc: Located, candidate: dict) -> tuple[dict, list[tuple[Path, str]
             "words_after": 0,
         })
     if loc.kind == "skill" and entry_after is not None and entry_after > 1024:
-        failures.append("description_cap")
-    if "not_utf8" not in failures and words_after >= words_before:
-        failures.append("word_total")
-    report = empty_report(ordered(failures))
+        add("description_cap", "SKILL.md", "%d characters" % entry_after)
+    if words_after >= words_before:
+        add("word_total", None, "%d -> %d words" % (words_before, words_after))
+    report = empty_report([])
+    report.update(walk_result(defects))
     report["words_before"] = words_before
     report["words_after"] = words_after
     report["files"] = files
@@ -361,6 +604,54 @@ def evaluate(loc: Located, candidate: dict) -> tuple[dict, list[tuple[Path, str]
         report["description_cap"] = 1024
         report["sibling_median"] = sibling_median(loc.root)
     return report, replacements
+
+
+def check_changed(rel, original, proposed, before_units, after_units, quotes, add) -> None:
+    present = {u.text for u in after_units}
+    seen: set[str] = set()
+    for unit in before_units:
+        if unit.cls != "obligation" or unit.text in seen:
+            continue
+        seen.add(unit.text)
+        if unit.text in present:
+            continue
+        survivor = quotes.get(unit.text)
+        if survivor is not None and norm(survivor) in present:
+            continue
+        add("obligation", rel, unit.text)
+    original_text = norm(original)
+    for unit in after_units:
+        if unit.text not in original_text:
+            add("added_sentence", rel, unit.text)
+    before_counts = prose_counts(before_units)
+    for text, count in prose_counts(after_units).items():
+        if count >= 2 and before_counts.get(text, 0) >= 2:
+            add("exact_copy", rel, text)
+
+
+def prose_counts(units: list[Unit]) -> dict[str, int]:
+    counts: dict[str, int] = {}
+    for unit in units:
+        if unit.kind == "prose":
+            counts[unit.text] = counts.get(unit.text, 0) + 1
+    return counts
+
+
+def check_description(original: str, proposed: str, add) -> None:
+    original_text = norm(original)
+    fresh = [sentence for sentence in description_sentences(proposed) if sentence not in original_text]
+    if fresh and fresh[0].startswith("Not "):
+        fresh = fresh[1:]
+    for sentence in fresh:
+        add("added_sentence", "SKILL.md", sentence)
+
+
+def walk_result(defects: list[dict]) -> dict:
+    rank = {name: index for index, name in enumerate(FAILURE_ORDER)}
+    if not defects:
+        return {"ok": True, "failures": [], "defects": []}
+    first = min((item["rule"] for item in defects), key=lambda name: rank.get(name, len(FAILURE_ORDER)))
+    return {"ok": False, "failures": [first], "defects": [item for item in defects if item["rule"] == first]}
 
 
 def broken_anchors(text: str, root: Path | None = None, source_rel: str | None = None, texts: dict[str, str] | None = None) -> set[str]:
@@ -1039,15 +1330,11 @@ def unified(name: str, before: str, after: str) -> str:
     ))
 
 
-def ordered(names: list[str]) -> list[str]:
-    rank = {name: index for index, name in enumerate(FAILURE_ORDER)}
-    return sorted(set(names), key=lambda item: rank.get(item, len(FAILURE_ORDER)))
-
-
-def empty_report(failures: list[str]) -> dict:
+def empty_report(failures: list[str], path: str | None = None) -> dict:
     return {
         "ok": not failures,
         "failures": failures,
+        "defects": [{"rule": name, "path": path, "span": ""} for name in failures],
         "words_before": 0,
         "words_after": 0,
         "files": [],

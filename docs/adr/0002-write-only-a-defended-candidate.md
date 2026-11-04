@@ -1,5 +1,9 @@
-# Write the files only when the candidate is defended
+# Accept a candidate by a rule walk
 
-A candidate stays off disk until `compressor` accepts it. The script checks that candidate against the pre-image and is the only writer. It writes every file in the set, or it writes none. The agent may accept only by naming the padding removed, the signal that survived, and that the candidate added nothing. If it cannot name a script failure or a signal loss to answer, the run stops and the files stay as they were.
+A candidate stays off disk until `compressor` accepts it. The script inventories the pre-image, then walks a fixed list of rules against the candidate. Each rule returns pass or its defects. The walk stops at the first failing rule and returns every defect of that rule. Apply writes the set only when a full walk returns no defects, and it writes every file or none. The agent proposes which leftover sentences are padding. It does not decide that the candidate is acceptable.
 
-The old behavior was to always write a shorter file and put back anything an inventory said was lost. That was rejected because a shorter file can still be worse. Letting the agent edit the files directly was rejected because the script's checks would no longer be the gate.
+This replaces the earlier decision that the agent accepts by naming the padding removed and the signal that survived. That judgment had no control behind it: the script checked structure, and a passing check said nothing about a deleted obligation. A quote proves the surviving sentence exists and does not prove the obligation moved, so a pass is not proof that signal survived.
+
+The loop stays in the procedure. The script calls no model, stores no report, and counts no tries. An identical defect list, or a second answer to the same rule, ends the run with the files untouched.
+
+Letting the agent edit the files directly was rejected because the script's walk would no longer be the gate.
