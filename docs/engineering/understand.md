@@ -1,3 +1,5 @@
+> **Archived.** Removed after version 0.7.0. Replaced by [pair](./pair.md).
+
 ## What it does
 
 `understand` builds a mental model of an existing subject in arrival order, one portion at a time, then stops. A portion is one or two instructions. The first line of each turn names the layer: Ticket, Rows, Code, Theory, or Decision. A learning journal in the project keeps the thread so a later session can resume it.
@@ -37,7 +39,7 @@ No. A direct question gets a direct answer inside the current layer. It asks you
 Each claim names a source that was actually opened, or says it is the model's account.
 
 **Do I have to install the hook?**
-No. `/understand` still owns the turn for the turns where the skill is loaded. The hook keeps the latch across later messages and asks before entering on an explanation phrase. From the `pair` skill's directory: `python3 turn.py hooks install claude` or `python3 turn.py hooks install cursor`. Claude injects the standing order on each prompt and after compaction. Cursor records the latch so stepper stays quiet. Cursor cannot inject that order on prompt submit.
+No. `/understand` still owns the turn for the turns where the skill is loaded. The hook keeps the latch across later messages and asks before entering on an explanation phrase. From this skill's directory: `python3 turn.py hooks install claude` or `python3 turn.py hooks install cursor`. Claude injects the standing order on each prompt and after compaction. Cursor records the latch so stepper stays quiet. Cursor cannot inject that order on prompt submit.
 
 ## It's working if
 

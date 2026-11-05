@@ -8,7 +8,7 @@ The list is temporary working memory for one stretch of delivery. The agent hold
 
 Type `/stepper`, or the agent reaches for it when a reply contains a concrete list of remaining work, when you ask what is left, when you ask what is open (the index), or when you say to drop or replace the list.
 
-Reach for it when you want to walk one feature through to the end without losing the thread. It is the wrong tool for learning a subject (`understand`) or for a ticket backlog.
+Reach for it when you want to walk one feature through to the end without losing the thread. It is the wrong tool for learning a subject (`pair`) or for a ticket backlog.
 
 ## Common questions
 

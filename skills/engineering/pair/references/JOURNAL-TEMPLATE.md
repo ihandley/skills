@@ -7,11 +7,9 @@ setup_done: false
 
 ## Focus & Goals
 
-<!-- Updated during Interest Discovery. Keep current. Do not accumulate versions. -->
+<!-- Updated when the driver names the subject. Keep current. Do not accumulate versions. -->
+- **Subject**: [The change or the question we are working on]
 - **Primary goal**: [What you want to be able to do with this subject]
-- **Interested in**: [What actually pulled you here]
-- **Background**: [Experience that should change the scaffolding]
-- **Learning style**: [What works: tracing a path, reading tests, a worked example]
 
 ## Current Mental Model
 
@@ -26,7 +24,8 @@ _Not established yet._
 
 ## Concept Mastery Map
 
-<!-- How much scaffolding this concept currently requires.
+<!-- Repo concepts only. The heading is the concept's level: how much scaffolding it currently requires.
+     A repo concept that is not listed is Explore. Tooling lives in ~/.claude/pair-notes.md, not here.
      Do not copy 🟡 Learning entries into Concepts to Reinforce. -->
 
 ### 🟢 Familiar
@@ -56,10 +55,10 @@ _Not established yet._
 ## Aha Moments
 
 <!-- Never invent an Aha Moment.
-     Record one only when the learner expresses it.
-     Keep the learner's wording. -->
+     Record one only when the driver expresses it.
+     Keep the driver's wording. -->
 <!-- Format: ### YYYY-MM-DD: Brief title -->
-<!--         Insight in the learner's own words -->
+<!--         Insight in the driver's own words -->
 
 ## Session Log
 
@@ -84,7 +83,7 @@ _Not established yet._
 
 Do not copy every 🟡 Learning concept into Concepts to Reinforce.
 
-### Mastery Levels → Scaffolding
+### Levels → Scaffolding
 
 | Level | Meaning | Scaffolding next time |
 |-------|---------|------------------------|
