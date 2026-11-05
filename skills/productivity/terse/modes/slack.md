@@ -1,9 +1,6 @@
 # Slack
 
-- Hedge observations and diagnoses. A completed result the source already states stays direct, such as "Deployment failed" or "Approved." Hedge the author's read, such as "this failed" or "X is the problem." The request stays the finished action in [../SKILL.md](../SKILL.md) §3.
-- Opening order is [../SKILL.md](../SKILL.md) §3.
 - One idea per message. If one paste contains multiple ideas, separate them with a blank line.
-- Use short paragraphs for context that belongs to one idea.
 - Use fragments and contractions.
 - A routine message is 1-3 sentences. Use more when the reader needs that context to understand the issue or take action.
 
@@ -11,7 +8,6 @@
 
 When the source contains more than one of these, keep them in separate paragraphs: requirement, implementation conflict, documentation gap, decision request.
 
-- Do not collapse that message into one paragraph to reduce its length.
 - Preserve the writer's technical vocabulary.
 
 ## Platform features

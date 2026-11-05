@@ -1,7 +1,6 @@
 # Confluence
 
 - Start with the document's purpose or decision.
-- State verified facts and decisions directly. Do not hedge them.
 - Record decisions, rationale, constraints, owners, and consequences that are in the source.
 - Include implementation details only when the source needs them for someone to operate or change the system.
 - Do not repeat the introduction in a closing summary.

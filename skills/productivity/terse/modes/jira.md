@@ -11,11 +11,7 @@ Include only sections that have content in the source:
 - Acceptance criteria
 - Decision, owner, and next step
 
-Use short paragraphs for explanation and bullets for independent facts or criteria. Remove chronology unless the sequence explains the cause or the reproduction steps. The issue body states verified facts and decisions directly.
-
-## Comments
-
-Hedge observations and diagnoses. A completed result the source already states stays direct, such as "Deployment failed" or "Approved." Hedge the author's read, such as "this failed" or "X is the problem." The request stays the finished action in [../SKILL.md](../SKILL.md) §3.
+Use short paragraphs for explanation and bullets for independent facts or criteria. Remove chronology unless the sequence explains the cause or the reproduction steps.
 
 ## Platform features
 
