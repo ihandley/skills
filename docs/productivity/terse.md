@@ -33,6 +33,6 @@ A referral or an open question gives the reader a way to do nothing. The request
 
 - The opening is understandable on a first read. One sentence of situation comes before a result that would otherwise name something the reader does not have yet.
 - The request asks the reader to do one finished action. Two or more ids sit in a block after that request.
-- No em dash or en dash appears, and `scripts/check-dashes` exits 0.
+- `scripts/check-dashes` exits 0. It rejects a dash, a filler adverb, a mid-sentence parenthesis, a repeated address, two or more inline ids, and a referral or stock phrase.
 - Facts, uncertainty, and requests match the source.
 - No praise remains.

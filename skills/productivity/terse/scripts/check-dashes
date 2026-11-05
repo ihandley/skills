@@ -1,9 +1,61 @@
 #!/usr/bin/env python3
-"""Exit 1 if the text contains an em dash (U+2014) or en dash (U+2013)."""
+"""Exit 1 when a terse draft breaks a mechanical rule.
 
+Checks the whole text for an em dash, an en dash, a filler adverb, a repeated
+heavy token, a referral ask, and a stock praise or chatbot phrase. Checks
+prose outside fenced blocks for a mid-sentence parenthesis and for two or
+more bare ids.
+"""
+
+from __future__ import annotations
+
+import re
 import sys
 
-BANNED = {"\u2014": "em dash", "\u2013": "en dash"}
+DASHES = {"\u2014": "em dash", "\u2013": "en dash"}
+ADVERBS = (
+    "simply",
+    "basically",
+    "essentially",
+    "actually",
+    "clearly",
+    "obviously",
+    "really",
+    "very",
+    "quite",
+)
+PHRASES = (
+    "who owns",
+    "any ideas",
+    "point me to",
+    "who should i",
+    "looks good",
+    "nice work",
+    "solid fix",
+    "great question",
+    "you're absolutely right",
+    "i hope this helps",
+    "happy to help",
+    "let me know if you have questions",
+    "let's dive in",
+    "here's the thing",
+    "to be clear",
+    "don't get me wrong",
+    "at its core",
+    "what really matters",
+    "as of my last update",
+    "based on available information",
+)
+ADVERB_RE = re.compile(r"\b(?:" + "|".join(ADVERBS) + r")\b", re.IGNORECASE)
+PHRASE_RE = re.compile("|".join(re.escape(item) for item in PHRASES), re.IGNORECASE)
+CIDR_RE = re.compile(r"\b(?:\d{1,3}\.){3}\d{1,3}/\d{1,2}\b")
+ENDPOINT_RE = re.compile(r"\b(?:\d{1,3}\.){3}\d{1,3}:\d+(?:/\d+)?\b")
+IP_RE = re.compile(r"\b(?:\d{1,3}\.){3}\d{1,3}\b")
+ARN_RE = re.compile(r"\barn:[^\s`]+")
+VPC_RE = re.compile(r"\bvpc-[0-9a-f]{8,}\b", re.IGNORECASE)
+ID_RE = re.compile(r"\b(?!19\d{2}\b)(?!20\d{2}\b)\d{4,}\b")
+INLINE_CODE_RE = re.compile(r"`[^`\n]*`")
+FENCE_RE = re.compile(r"^\s*(```|~~~)")
 
 
 def main() -> None:
@@ -12,14 +64,97 @@ def main() -> None:
             text = handle.read()
     else:
         text = sys.stdin.read()
-    hits = []
-    for number, line in enumerate(text.splitlines(), 1):
-        found = [name for char, name in BANNED.items() if char in line]
-        if found:
-            hits.append(f"{number}: {', '.join(found)}")
+    hits = list(check(text))
     if hits:
         print("\n".join(hits), file=sys.stderr)
         sys.exit(1)
+
+
+def check(text: str) -> list[str]:
+    lines = text.splitlines()
+    fenced = fence_lines(lines)
+    hits = []
+    for number, line in enumerate(lines, 1):
+        hits.extend(f"{number}: {name}" for name in dash_names(line))
+        for match in ADVERB_RE.finditer(line):
+            hits.append(f"{number}: adverb {match.group(0)}")
+        for match in PHRASE_RE.finditer(line):
+            hits.append(f"{number}: phrase {match.group(0)}")
+        if number - 1 not in fenced:
+            prose = INLINE_CODE_RE.sub(" ", line)
+            if mid_sentence_paren(prose):
+                hits.append(f"{number}: mid-sentence parenthesis")
+    hits.extend(repeated_heavy_tokens(text))
+    ids = inline_ids(lines, fenced)
+    if len(ids) >= 2:
+        shown = ", ".join(ids)
+        hits.append(f"inline ids: {shown}")
+    return hits
+
+
+def fence_lines(lines: list[str]) -> set[int]:
+    inside = False
+    marker = ""
+    indexes = set()
+    for index, line in enumerate(lines):
+        match = FENCE_RE.match(line)
+        if not inside and match:
+            inside = True
+            marker = match.group(1)
+            indexes.add(index)
+            continue
+        if inside:
+            indexes.add(index)
+            if line.strip().startswith(marker):
+                inside = False
+    return indexes
+
+
+def dash_names(line: str) -> list[str]:
+    return [name for char, name in DASHES.items() if char in line]
+
+
+def mid_sentence_paren(line: str) -> bool:
+    for index, char in enumerate(line):
+        if char == "(" and any(item.isalnum() for item in line[:index]):
+            return True
+    return False
+
+
+def repeated_heavy_tokens(text: str) -> list[str]:
+    covered = [False] * len(text)
+    counts: dict[str, list[int]] = {}
+
+    def take(pattern: re.Pattern[str], label: str) -> None:
+        for match in pattern.finditer(text):
+            if any(covered[match.start() : match.end()]):
+                continue
+            for index in range(match.start(), match.end()):
+                covered[index] = True
+            line = text.count("\n", 0, match.start()) + 1
+            counts.setdefault(f"{label} {match.group(0)}", []).append(line)
+
+    take(CIDR_RE, "cidr")
+    take(ENDPOINT_RE, "endpoint")
+    take(ARN_RE, "arn")
+    take(VPC_RE, "vpc")
+    take(IP_RE, "ip")
+    hits = []
+    for name, lines in counts.items():
+        if len(lines) > 1:
+            shown = ", ".join(str(number) for number in lines)
+            hits.append(f"{name} repeated on lines {shown}")
+    return hits
+
+
+def inline_ids(lines: list[str], fenced: set[int]) -> list[str]:
+    found = []
+    for index, line in enumerate(lines):
+        if index in fenced:
+            continue
+        prose = INLINE_CODE_RE.sub(" ", line)
+        found.extend(ID_RE.findall(prose))
+    return found
 
 
 if __name__ == "__main__":

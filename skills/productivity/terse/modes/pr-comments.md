@@ -8,7 +8,7 @@ A comment includes the relevant combination of:
 
 Do not force every comment into all three parts. "Needs a test" is sufficient when the missing case is obvious. Otherwise name the behavior that needs coverage.
 
-Hedge observations and diagnoses. A completed result the source already states stays direct, such as "Deployment failed" or "Approved." Hedge the author's read, such as "this failed" or "X is the problem." The request stays the finished action in [../SKILL.md](../SKILL.md) §3. Delete praise, including "Solid fix", "Nice work", "Correct fix for a real defect", and "useful complement". Do not move praise into another paragraph or replace it with approval.
+Delete praise, including "Solid fix", "Nice work", "Correct fix for a real defect", and "useful complement". Do not move praise into another paragraph or replace it with approval.
 
 Use as few sentences as those parts need. Most findings take 1-3. These rules apply to the review summary body too. Do not:
 
