@@ -95,7 +95,7 @@ class PromotionCheckTests(RepoCopy):
         self.assert_reports("chad-learn.md: removed skill has no archived page")
 
     def test_a_host_module_copy_that_differs(self):
-        self.edit("skills/engineering/understand/hooks_host.py", lambda t: t + "# drift\n")
+        self.edit("skills/engineering/pair/hooks_host.py", lambda t: t + "# drift\n")
         self.assert_reports("hooks_host.py: differs from")
 
     def test_a_skill_missing_its_host_module(self):

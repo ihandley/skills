@@ -48,7 +48,7 @@ YES = re.compile(
     re.IGNORECASE,
 )
 
-SKILL = Path(__file__).resolve().parent / "SKILL.md"
+SKILL = Path(__file__).resolve().parent.parent / "understand" / "SKILL.md"
 
 
 def home() -> Path:

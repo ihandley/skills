@@ -26,7 +26,7 @@ from pathlib import Path
 BUCKETS = ("engineering", "productivity")
 SECTIONS = ["What it does", "When to reach for it", "Common questions", "It's working if"]
 HOST_MODULE = "hooks_host.py"
-HOST_MODULE_SKILLS = ("productivity/alias", "engineering/understand", "productivity/stepper")
+HOST_MODULE_SKILLS = ("productivity/alias", "engineering/pair", "productivity/stepper")
 INSTALL_BLOCKS = ("claude-code", "skills-sh-whole-set", "skills-sh-one-skill")
 ENTRY = re.compile(r"^- \*\*\[([^\]]+)\]\(([^)]+)\)\*\*")
 INSTALL_LINE = re.compile(r"^\s*(claude plugin |npx skills@latest add |/plugin )")
