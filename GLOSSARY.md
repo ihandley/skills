@@ -145,3 +145,43 @@ _Avoid_: Meaning, content
 **Candidate**:
 A proposed replacement for a document, held until it is accepted.
 _Avoid_: Draft, rewrite
+
+**Chunk**:
+One step of a confirmed plan that the driver writes.
+_Avoid_: Sub-step, task
+
+**Portion**:
+One explanation of the immediate gap in understanding, ending in a stop.
+_Avoid_: Lesson, chunk
+
+**Building**:
+The chunk loop: a numbered plan, the confirm, then one chunk at a time.
+_Avoid_: Implementing, coding mode
+
+**Level**:
+How much scaffolding a concept gets: Familiar, Learning, or Explore. Nudge, Pointer, and Full answer are escalation steps, not levels.
+_Avoid_: Mastery, grade, escalation level
+
+**Gap**:
+A turn on a concept that took more than a nudge. Not a level.
+_Avoid_: Miss, failure
+
+**Solid**:
+A turn on a concept the driver got right unassisted. Not a level.
+_Avoid_: Pass, mastered
+
+**Tooling**:
+A language or a tool. Its level is read from the driver's event history.
+_Avoid_: Stack, tech
+
+**Repo concept**:
+Something the system in front of you does. Its level lives in that repo's journal.
+_Avoid_: Domain concept, feature
+
+**Fade**:
+How a repo concept's level moves after a chunk.
+_Avoid_: Promote, decay
+
+**Thread**:
+The subject the journal is in the middle of.
+_Avoid_: Topic, context
