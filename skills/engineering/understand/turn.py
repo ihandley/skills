@@ -23,11 +23,11 @@ import hooks_host  # noqa: E402
 OWNERS = ("understand", "pair")
 
 UNDERSTAND_CMD = re.compile(
-    r"(?:^|\s)/understand\b|<command-name>/understand</command-name>",
+    r"^\s*/understand\b|<command-name>/understand</command-name>",
     re.IGNORECASE,
 )
 PAIR_CMD = re.compile(
-    r"(?:^|\s)/pair\b|<command-name>/pair</command-name>",
+    r"^\s*/pair\b|<command-name>/pair</command-name>",
     re.IGNORECASE,
 )
 EXPLAIN = re.compile(

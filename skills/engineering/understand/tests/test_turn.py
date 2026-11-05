@@ -47,6 +47,12 @@ class TurnTests(unittest.TestCase):
     def state(self):
         return json.loads((self.root / ".claude" / "turn-owner.json").read_text())
 
+    def latch(self):
+        path = self.root / ".claude" / "turn-owner.json"
+        if not path.exists():
+            return {"session_key": "", "owner": "", "pending_offer": False}
+        return json.loads(path.read_text())
+
     def text(self, data):
         return data["hookSpecificOutput"]["additionalContext"]
 
@@ -59,9 +65,53 @@ class TurnTests(unittest.TestCase):
         self.assertFalse(self.state()["pending_offer"])
         self.assertEqual(self.state()["session_key"], "claude:abc")
 
-    def test_inline_command_latches(self):
-        self.claude("Put a bookmark here. /understand why two boxes")
+    def test_a_mention_later_in_the_sentence_leaves_the_turn_unowned(self):
+        code, data, _out = self.claude("Put a bookmark here. /understand why two boxes")
+        self.assertEqual(code, 0)
+        self.assertIsNone(data)
+        self.assertEqual(self.latch()["owner"], "")
+        self.assertFalse(self.latch()["pending_offer"])
+
+    def test_a_mention_of_pair_later_in_the_sentence_leaves_the_turn_unowned(self):
+        code, data, _out = self.claude("Put a bookmark here. /pair the cutover")
+        self.assertEqual(code, 0)
+        self.assertIsNone(data)
+        self.assertEqual(self.latch()["owner"], "")
+        self.assertFalse(self.latch()["pending_offer"])
+
+    def test_leading_whitespace_still_counts_as_the_start(self):
+        code, data, _out = self.claude("   /understand why two boxes")
+        self.assertEqual(code, 0)
+        self.assertIn("Turn owner: understand", self.text(data))
         self.assertEqual(self.state()["owner"], "understand")
+        self.assertFalse(self.state()["pending_offer"])
+
+    def test_leading_whitespace_before_pair_takes_the_turn(self):
+        code, data, _out = self.claude("   /pair the cutover")
+        self.assertEqual(code, 0)
+        self.assertIn("Turn owner: pair", self.text(data))
+        self.assertEqual(self.state()["owner"], "pair")
+        self.assertFalse(self.state()["pending_offer"])
+
+    def test_a_harness_command_name_takes_the_turn(self):
+        code, data, _out = self.claude(
+            "<command-name>/understand</command-name>\n"
+            "<command-args>why two boxes</command-args>"
+        )
+        self.assertEqual(code, 0)
+        self.assertIn("Turn owner: understand", self.text(data))
+        self.assertEqual(self.state()["owner"], "understand")
+        self.assertFalse(self.state()["pending_offer"])
+
+    def test_a_harness_pair_command_name_takes_the_turn(self):
+        code, data, _out = self.claude(
+            "<command-name>/pair</command-name>\n"
+            "<command-args>the cutover</command-args>"
+        )
+        self.assertEqual(code, 0)
+        self.assertIn("Turn owner: pair", self.text(data))
+        self.assertEqual(self.state()["owner"], "pair")
+        self.assertFalse(self.state()["pending_offer"])
 
     def test_explanation_offers_once_then_yes_latches(self):
         code, data, _out = self.claude("I still don't understand what you're asking")
