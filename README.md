@@ -77,6 +77,10 @@ None yet.
 - **[tidy](./skills/productivity/tidy/SKILL.md)**: Reconcile local branches with pull requests and the tracker in `~/.claude/tidy.yaml`, then delete branches the pull request already took.
 - **[alias](./skills/productivity/alias/SKILL.md)**: Cache names, ids, and pronouns, and skip a lookup when the id is already stored.
 
+## Articles
+
+- **[Terse: Stop Making People Read Your AI Slop](./docs/articles/terse.md)**: Why AI-generated workplace writing costs readers time, and how Terse keeps the signal.
+
 ## Releasing
 
 PR titles must be Conventional Commits (`feat:`, `fix:`, `chore:`, `feat!:` for breaking). Squash merges make the title the commit, and release-please reads those commits to open a release PR. Merging that PR bumps `.claude-plugin/plugin.json` and tags the release, and `/plugin` then picks up the update.
