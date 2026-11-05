@@ -10,7 +10,7 @@ Group the change into concerns. Couple tightly linked pieces (a type and its one
 
 Present the plan numbered, each chunk tagged with its `file:line`.
 
-**Confirm.** The driver confirms the plan before chunk 1. The confirm is a control. A request to skip it means this task is not a pairing session: leave the skill. The plan step ends when the driver confirms.
+**Confirm.** The driver confirms the plan before chunk 1. The confirm is a control. A request to skip it means this task is not a pairing session: the confirm stays, and `SKILL.md` Switch applies (name `stop pairing` once). The plan step ends when the driver confirms.
 
 ## Chunk loop
 

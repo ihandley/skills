@@ -39,7 +39,7 @@ The driver can flip the loop in one line at any time.
 - A question about the current chunk → one portion, then back to the same chunk.
 - "Let's build" with a confirmed plan → back to the same chunk. With no confirmed plan → the route plan, and the confirm is a control.
 - "Just write it" during a portion → a request to build. It goes through the route plan, not straight to code.
-- A request to skip the confirm → the confirm stays. That request means this task is not a pairing session: stop applying the controls, and name `stop pairing` once. Those words are what clear the turn.
+- A request to skip the confirm → the confirm stays. Name `stop pairing` once. Only the driver saying those words drops the controls.
 - "I get it" during a portion → `references/PORTION.md` End. During building → back to the current chunk.
 
 ## Level
