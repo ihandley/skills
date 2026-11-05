@@ -2,7 +2,7 @@
 
 `pair` is the one way into teach-as-you-go work. You say what you are working on, and the same session either builds or explains. A change is building: a numbered plan you confirm, then one chunk at a time, and you write each chunk. A question is the portion loop: one explanation of the immediate gap, then a stop. The opening line says which loop this is, and one line flips it.
 
-The agent does not edit a file until you ask for the full answer on the current chunk. Asking to skip the plan confirm means leave the skill, not skip the confirm.
+The agent does not edit a file until you ask for the full answer on the current chunk. Asking to skip the plan confirm does not skip it. The skill says `stop pairing` once and drops the controls only when you say those words.
 
 ## When to reach for it
 
