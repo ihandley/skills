@@ -4,6 +4,8 @@
 
 The constraint is that it keeps your facts, certainty, and the force of any request. It never uses an em dash or en dash, and it checks that with a bundled script before it returns text. Each medium has its own rules under `modes/`, and a voice file controls tone.
 
+For the reasoning and before-and-after examples, read [Terse: Stop Making People Read Your AI Slop](../articles/terse.md).
+
 ## When to reach for it
 
 Type `/terse`, or the agent reaches for it when you ask to rewrite pasted text or draft one of those media.
