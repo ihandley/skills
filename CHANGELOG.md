@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.8.0](https://github.com/ihandley/skills/compare/ihandley-skills-v0.7.0...ihandley-skills-v0.8.0) (2026-11-05)
+
+
+### Features
+
+* **compressor:** accept a candidate by a rule walk ([#127](https://github.com/ihandley/skills/issues/127)) ([5659224](https://github.com/ihandley/skills/commit/5659224b4059cf4d07643af5af728b5cec3bde93))
+* **pair:** replace understand so pair is the only entry ([#134](https://github.com/ihandley/skills/issues/134)) ([13450ad](https://github.com/ihandley/skills/commit/13450adc4458ef94e20e867b14755f663478c219))
+* **stepper:** list is the index and status is the item table ([#129](https://github.com/ihandley/skills/issues/129)) ([162d10c](https://github.com/ihandley/skills/commit/162d10c1066d093d7f915f43b984e26e1d68de56))
+
+
+### Bug Fixes
+
+* **pair:** one rule for skipping the confirm ([#135](https://github.com/ihandley/skills/issues/135)) ([9498dff](https://github.com/ihandley/skills/commit/9498dff488a570bcfb03857d182b75a9202e5514))
+
 ## [0.7.0](https://github.com/ihandley/skills/compare/ihandley-skills-v0.6.1...ihandley-skills-v0.7.0) (2026-11-03)
 
 
