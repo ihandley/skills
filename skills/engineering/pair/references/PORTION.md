@@ -6,7 +6,7 @@ A portion is one explanation of the immediate gap, then STOP. Portioning wins ov
 
 ## Layers
 
-The first line of a portion turn is `Portion · <Layer>`. One layer for the turn:
+The first line of a portion turn is `Portion · <Layer>. Say "let's build" to plan the change.` One layer for the turn:
 
 - **Ticket.** The ticket text and what a line in it does.
 - **Rows.** Database state: what is enabled, what is routed.

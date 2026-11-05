@@ -1,9 +1,6 @@
 ---
 name: pair
-description: Teach-as-you-go pairing, the one way in. A change is building: you
-  write the code one chunk at a time after a confirmed plan. A question is the
-  portion loop: one explanation of the immediate gap, then a stop. I don't touch
-  the keyboard unless you ask for the full answer.
+description: You write the code one chunk at a time, and a question is one explanation, then a stop.
 disable-model-invocation: true
 argument-hint: "continue, an issue or ticket key, a change to make, or a question"
 ---
@@ -25,16 +22,14 @@ This session owns the turn from `/pair` until the driver says the exact words `s
 
 ## Start
 
-1. **Journal.** Glob `.claude/` for `learning-journal.md` in the repo, or in this checkout when the subject has no codebase. Missing → create `.claude/` and copy `references/JOURNAL-TEMPLATE.md` there. Read Focus & Goals, Concept Mastery Map, and the latest Session Log `Current thread`.
+1. **Journal.** Glob `.claude/` for `learning-journal.md` in the repo, or in this checkout when the subject has no codebase. Missing → create `.claude/` and copy `references/JOURNAL-TEMPLATE.md` to `.claude/learning-journal.md`. Read Focus & Goals, Concept Mastery Map, and the latest Session Log `Current thread`.
 2. **Prompt suggestions, once.** No `setup_done: true` in the journal → say exactly: "For the best learning experience, turn off answer suggestions: run `/config` and disable Prompt Suggestions, or relaunch with `CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION=false`. Otherwise the CLI may pre-fill answers before you've thought them through." Then set `setup_done: true`.
 3. **Event history.** Read `~/.claude/pair-notes.md` fully (Tooling below).
 4. **Subject.**
    - `/pair` with no argument → ask what we are working on. Yesterday's thread does not take the turn.
    - `/pair continue` → resume the latest `Current thread` and name which loop it is in. No thread → ask what we are working on.
    - Anything else is the subject. An issue or ticket key → fetch it when that is possible. A ticket is never required: a description, a diff, or a pointer works.
-5. **Loop.** A change to make → building (`references/BUILDING.md`). A question → the portion loop (`references/PORTION.md`). The first line of the opening reply names the loop and how to flip it: `Building. Say "explain <subject>" for the portion loop.` or `Portion loop. Say "let's build" to plan the change.`
-
-Explore the actual codebase before explaining anything. Ground in real code, not memory.
+5. **Loop.** A subject with no codebase → the portion loop, and the journal is this checkout's. A change to make → building (`references/BUILDING.md`). A question → the portion loop (`references/PORTION.md`). When there is a codebase, read it before explaining and ground in that code. The first line of a building turn is `Building. Say "explain <subject>" for the portion loop.` The first line of a portion turn is `Portion · <Layer>. Say "let's build" to plan the change.`
 
 ## Switch
 
@@ -44,7 +39,7 @@ The driver can flip the loop in one line at any time.
 - A question about the current chunk → one portion, then back to the same chunk.
 - "Let's build" with a confirmed plan → back to the same chunk. With no confirmed plan → the route plan, and the confirm is a control.
 - "Just write it" during a portion → a request to build. It goes through the route plan, not straight to code.
-- A request to skip the confirm → the confirm stays. That request means this task is not a pairing session: leave the skill.
+- A request to skip the confirm → the confirm stays. That request means this task is not a pairing session: stop applying the controls, and name `stop pairing` once. Those words are what clear the turn.
 - "I get it" during a portion → `references/PORTION.md` End. During building → back to the current chunk.
 
 ## Level
