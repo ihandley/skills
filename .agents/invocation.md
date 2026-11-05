@@ -22,5 +22,4 @@ One skill owns the turn. The harness still routes. A latch file, `.claude/turn-o
 - Stepper owns the list. While the owner is understand or pair, stepper leaves the list leased and does not inject its reminder.
 - Terse owns the outward draft: Slack, email, Jira, Confluence, or a pull request. It stops when that draft is delivered.
 - Ticketer owns the ticket payload.
-- Understand owns the voice, the topic, and what may be written while it owns the turn. The learning journal is the only write.
-- Pair owns the turn the same way while that is the session the human started. The understand offer stays quiet.
+- Pair owns the turn for a change and for a question. A stored owner of understand gets that same order. The journal and the driver's event history are the writes, and a file is edited only after a full answer is requested on the current chunk. While the turn is owned, the explain offer stays quiet.

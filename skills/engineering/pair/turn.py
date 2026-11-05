@@ -1,10 +1,12 @@
 #!/usr/bin/env python3
-"""Turn-owner latch for understand and pair.
+"""Turn-owner latch for pair.
 
 The file `.claude/turn-owner.json` records who owns the turn for one session.
-Stepper reads it and stays quiet. This script writes it from Claude and Cursor
-hooks. Claude UserPromptSubmit and SessionStart can inject a standing order.
-Cursor beforeSubmitPrompt can record the latch and cannot inject model context.
+Stepper reads it and stays quiet. Claude UserPromptSubmit and SessionStart
+record the latch and inject the pair order. A stored owner of understand, from
+before pair was the only entry, is owned the same way. A Cursor event handed to
+this script records the latch and injects nothing. Install registers no Cursor
+hook. Only "stop pairing" clears the owner.
 """
 
 from __future__ import annotations
@@ -22,24 +24,14 @@ import hooks_host  # noqa: E402
 
 OWNERS = ("understand", "pair")
 
-UNDERSTAND_CMD = re.compile(
-    r"(?:^|\s)/understand\b|<command-name>/understand</command-name>",
-    re.IGNORECASE,
-)
 PAIR_CMD = re.compile(
-    r"(?:^|\s)/pair\b|<command-name>/pair</command-name>",
+    r"^\s*/pair\b|<command-name>/pair</command-name>",
     re.IGNORECASE,
 )
 EXPLAIN = re.compile(
     r"\bdon't understand\b|\bdo not understand\b|\bexplain\b|"
     r"\bwhat do you mean\b|\bi'm confused\b|\bi am confused\b|"
     r"\bhelp me understand\b|\bwalk me through\b",
-    re.IGNORECASE,
-)
-RELEASE = re.compile(
-    r"\bback to the task\b|\bback to the bookmark\b|\bi get it\b|"
-    r"\bi've got it\b|\bive got it\b|\bi understand now\b|"
-    r"\bdrop understand\b|\bnormal mode\b|\bdone understanding\b",
     re.IGNORECASE,
 )
 STOP_PAIR = re.compile(r"\bstop pairing\b", re.IGNORECASE)
@@ -52,7 +44,7 @@ SKILL = Path(__file__).resolve().parent / "SKILL.md"
 
 
 def home() -> Path:
-    override = os.environ.get("UNDERSTAND_HOME")
+    override = os.environ.get("PAIR_HOME")
     return Path(override).expanduser() if override else Path.home()
 
 
@@ -100,20 +92,11 @@ def session_key_from(payload: dict, platform: str) -> str | None:
     return f"claude:{ident}" if ident else None
 
 
-def standing_order() -> str:
-    return (
-        "Turn owner: understand. The subject is the thread. "
-        "First line of the reply: Understand · <Layer>, one of Ticket, Rows, Code, Theory, Decision. "
-        "Stay on that layer. Parked work stays parked. The learning journal is the only write. "
-        f"Follow {SKILL}."
-    )
-
-
 def offer_order() -> str:
     return (
         "The user may want to stay on this until it makes sense. "
         "Ask once: stay on this until it makes sense, or answer in place? "
-        "Do not enter understand until they say yes."
+        "Do not take the turn as pair until they say yes."
     )
 
 
@@ -127,16 +110,13 @@ def in_place_order() -> str:
 def pair_order() -> str:
     return (
         "Turn owner: pair. This session owns the turn until the user says stop pairing. "
-        "The understand offer stays quiet."
+        "A change is building, a question is the portion loop. The offer stays quiet. "
+        f"Follow {SKILL}."
     )
 
 
 def emit_context(platform: str, event: str, text: str | None) -> dict | None:
-    if not text:
-        return None
-    if platform == "cursor":
-        if event == "sessionStart":
-            return {"additional_context": text}
+    if not text or platform == "cursor":
         return None
     if event in ("UserPromptSubmit", "SessionStart"):
         return {
@@ -159,20 +139,14 @@ def current(state: dict, key: str) -> tuple[str, bool]:
 
 def decide(owner: str, pending: bool, prompt: str) -> tuple[str, bool, str | None]:
     """Return the next owner, pending flag, and text to inject."""
-    if UNDERSTAND_CMD.search(prompt):
-        return "understand", False, standing_order()
     if PAIR_CMD.search(prompt):
         return "pair", False, pair_order()
-    if owner == "understand" and RELEASE.search(prompt):
+    if owner and STOP_PAIR.search(prompt):
         return "", False, None
-    if owner == "pair" and STOP_PAIR.search(prompt):
-        return "", False, None
-    if owner == "pair":
-        return "pair", False, None
-    if owner == "understand":
-        return "understand", False, standing_order()
+    if owner:
+        return owner, False, pair_order()
     if pending and YES.search(prompt.strip()):
-        return "understand", False, standing_order()
+        return "pair", False, pair_order() + " Start a portion on what they did not understand."
     if pending:
         return "", False, in_place_order()
     if EXPLAIN.search(prompt):
@@ -192,11 +166,7 @@ def handle_hook(root: Path, platform: str, payload: dict) -> dict | None:
     state = load_state(root)
     owner, pending = current(state, key)
     if session_event:
-        if owner == "understand":
-            return emit_context(platform, event, standing_order())
-        if owner == "pair":
-            return emit_context(platform, event, pair_order())
-        return None
+        return emit_context(platform, event, pair_order() if owner else None)
     next_owner, next_pending, text = decide(owner, pending, payload.get("prompt") or "")
     if next_owner != owner or next_pending != pending or state.get("session_key") != key:
         if next_owner or next_pending or state.get("session_key") == key:
@@ -207,10 +177,9 @@ def handle_hook(root: Path, platform: str, payload: dict) -> dict | None:
 def hook_spec() -> hooks_host.Spec:
     return hooks_host.Spec(
         tag="turn-owner",
-        state_dir=home() / ".understand",
+        state_dir=home() / ".pair",
         script=Path(__file__).resolve(),
         events={
-            "cursor": [hooks_host.Event(name) for name in ("sessionStart", "beforeSubmitPrompt")],
             "claude": [
                 hooks_host.Event("SessionStart", matcher="startup|resume|compact"),
                 hooks_host.Event("UserPromptSubmit"),
@@ -244,9 +213,8 @@ def main(argv: list[str] | None = None) -> int:
     hook.add_argument("--tag", default="turn-owner")
     hooks = sub.add_parser("hooks")
     hooks_sub = hooks.add_subparsers(dest="hooks_cmd", required=True)
-    for name in ("install", "uninstall"):
-        command = hooks_sub.add_parser(name)
-        command.add_argument("platform", choices=("claude", "cursor"))
+    hooks_sub.add_parser("install").add_argument("platform", choices=("claude",))
+    hooks_sub.add_parser("uninstall").add_argument("platform", choices=("claude", "cursor"))
     hooks_sub.add_parser("status")
     args = parser.parse_args(argv)
     try:

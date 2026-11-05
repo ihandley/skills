@@ -1,3 +1,5 @@
+> **Archived.** Removed after version 0.7.0. Replaced by [pair](./pair.md).
+
 ## What it does
 
 `understand` builds a mental model of an existing subject in arrival order, one portion at a time, then stops. A portion is one or two instructions. The first line of each turn names the layer: Ticket, Rows, Code, Theory, or Decision. A learning journal in the project keeps the thread so a later session can resume it.

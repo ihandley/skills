@@ -1,6 +1,6 @@
 # Question Patterns
 
-Types, examples, and hints for a question that already passed Before Asking in `SKILL.md`. Tone, detours, STOP, and the direct-answer rule live there.
+Types, examples, and hints for a question that already passed Before Asking in `PORTION.md`. Tone, detours, STOP, and the direct-answer rule live there and in `SKILL.md` Wording.
 
 ## Question Types
 
@@ -8,7 +8,7 @@ Types, examples, and hints for a question that already passed Before Asking in `
 
 ### 1. Prediction
 
-**Use when** the learner can reason about the next piece before seeing it.
+**Use when** the driver can reason about the next piece before seeing it.
 
 **Skip when** the name or signature already answers it, or they asked what it does.
 
@@ -36,7 +36,7 @@ Skip: `Why do you think they wrote it this way?` after the explanation.
 
 **Use when** execution order, data transformation, state, async, or control flow is the portion. For a subject with no repo, use it when the sequence of the claim is the portion.
 
-**Skip when** walking the path yourself is clearer.
+**Skip when** tracing the path yourself is clearer.
 
 > The request hits this middleware first. What must happen before the controller?
 
@@ -52,7 +52,7 @@ Skip: `What's the value of count after the second loop iteration?`
 
 ### 5. Error Prediction
 
-**Use when** the failure behavior is part of this portion or explains the shape.
+**Use when** the way it fails is part of this portion or explains the shape.
 
 **Skip when** the edge cases are only a list of things that could go wrong.
 
@@ -60,13 +60,13 @@ Skip: `What's the value of count after the second loop iteration?`
 
 ## Graduated Hints
 
-Only after a question that passed Before Asking, and the answer was wrong. Phrasing follows `SKILL.md` Turn.
+Only after a question that passed Before Asking, and the answer was wrong. Phrasing follows `SKILL.md` Wording.
 
 1. Conceptual hint. Name the concept and ask again.
 2. Narrowed options `(a)/(b)/(c)` plus a line clue.
 3. Fill-in-the-blank. The context supplies one word. One blank.
 
-After level 3, explain. Ask them to apply it only if that application is still this portion. Otherwise STOP.
+After hint 3, explain. Ask them to apply it only if that application is still this portion. Otherwise STOP.
 
 ## Confirming Understanding
 

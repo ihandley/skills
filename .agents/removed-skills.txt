@@ -1,3 +1,4 @@
 # Promoted skills removed outright, one per line as <bucket>/<name>.
 # Each keeps an archived docs page. The promotion check enforces it.
 engineering/chad-learn
+engineering/understand
