@@ -6,7 +6,7 @@ The list is temporary working memory for one stretch of delivery. The agent hold
 
 ## When to reach for it
 
-Type `/stepper`, or the agent reaches for it when a reply contains a concrete list of remaining work, when you ask what is left, when you ask what is open (the index), or when you say to drop or replace the list.
+Type `/stepper`, or the agent reaches for it when a reply contains a concrete list of remaining work, when you ask what is left, when you ask what is open (the index), when you say to drop or replace the list, or when you say to amend the note on a verified item or remove one item.
 
 Reach for it when you want to walk one feature through to the end without losing the thread. It is the wrong tool for learning a subject (`pair`) or for a ticket backlog.
 
@@ -23,6 +23,9 @@ Stepper recommends waiting, and says why. You can skip to the next item when tha
 
 **Can I throw the list away?**
 Yes, when you say so. Dropping archives it without marking the leftovers done. Replacing swaps the outstanding items in one step. Another chat's list stays put.
+
+**Can I correct one item without throwing the list away?**
+Yes. Amending replaces the note on a verified item and leaves that item verified. Removing one item leaves the rest of the list. An item that others depend on stays, and the refusal names those items.
 
 **Will I hear the brief twice?**
 No. A turn that already briefed or changed the list gets no reminder. When a reminder does follow a reply, its sentence ends with "Add nothing," and the agent adds nothing under it.
@@ -45,7 +48,7 @@ No. The chat that starts the list holds it. Another chat can take it only when y
 `status` is the item table for one list. With no name, that is the list this chat holds. When this chat holds several, you are asked which name. Naming a list shows its items and leaves the hold where it is.
 
 **Which commands can I ask for?**
-track, add, focus, verify, block, unblock, skip, defer, cancel, pause, resume, replace, drop, attach, list, and status. Asking what is left, and naming no list, is the brief for the list this chat holds.
+track, add, focus, verify, amend, block, unblock, skip, defer, cancel, pause, resume, replace, drop, remove, attach, list, and status. Asking what is left, and naming no list, is the brief for the list this chat holds.
 
 **Can it offer another list while one is already open?**
 Yes. The offer names a free list and never uses `pr-queue`. Saying yes tracks that list beside the ones you already hold. A paused list does not hide the offer. Saying no keeps that candidate from being offered again.
@@ -59,4 +62,5 @@ Yes. The offer names a free list and never uses `pr-queue`. Saying yes tracks th
 - Asking what is open shows one row per open list, with the day, the progress, a lease word, and one line.
 - Asking for status shows each item on its own row.
 - Saying the list is wrong archives it or replaces it, and the next item table matches that.
+- Amending a verified item changes its note and leaves it verified. Removing one item leaves the list. A refusal names the items that depend on the one you tried to remove.
 - A second list is offered by name while the first is still open, including when the first is paused.

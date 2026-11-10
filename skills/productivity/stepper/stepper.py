@@ -1368,6 +1368,19 @@ def cmd_verify(root: Path, session_key: str, context_id: str, item_id: str, evid
     return result(ctx)
 
 
+def cmd_amend(root: Path, session_key: str, context_id: str, item_id: str, evidence: str) -> dict:
+    ctx = require_holder(root, session_key, context_id)
+    item = _item(ctx, item_id)
+    if item["status"] != "verified":
+        raise StepperError(f"cannot amend {item_id} because it is {item['status']}")
+    evidence = evidence.strip()
+    if not evidence:
+        raise StepperError("verification evidence must be a non-empty string")
+    item["evidence"] = evidence
+    save_context(root, ctx)
+    return result(ctx)
+
+
 def cmd_block(root: Path, session_key: str, context_id: str, item_id: str, reason: str) -> dict:
     ctx = require_holder(root, session_key, context_id)
     transition(ctx, item_id, "blocked", reason=reason)
@@ -1460,6 +1473,29 @@ def cmd_drop(root: Path, session_key: str, context_id: str) -> dict:
         "reminder": "Stepper: no list.",
         "brief": brief_of(None),
     }
+
+
+def cmd_remove(root: Path, session_key: str, context_id: str, item_id: str) -> dict:
+    ctx = require_holder(root, session_key, context_id)
+    item = _item(ctx, item_id)
+    dependents = [
+        other["id"]
+        for other in ctx["items"]
+        if other["id"] != item_id
+        and (item_id in (other.get("depends_on") or []) or other.get("parent_id") == item_id)
+    ]
+    if dependents:
+        if len(dependents) == 1:
+            why = f"{dependents[0]} depends on it"
+        else:
+            why = f"{', '.join(dependents)} depend on it"
+        raise StepperError(f"cannot remove {item_id} because {why}")
+    was_active = item["status"] == "active"
+    ctx["items"] = [existing for existing in ctx["items"] if existing["id"] != item_id]
+    if was_active:
+        selection.activate_next(ctx)
+    save_context(root, ctx)
+    return result(ctx)
 
 
 def _cancel_quietly(item: dict) -> None:
@@ -2026,6 +2062,8 @@ def run_command(args: argparse.Namespace) -> dict:
             body = cmd_focus(root, args.session, context_id, args.item_id)
         elif args.cmd == "verify":
             body = cmd_verify(root, args.session, context_id, args.item_id, args.evidence)
+        elif args.cmd == "amend":
+            body = cmd_amend(root, args.session, context_id, args.item_id, args.evidence)
         elif args.cmd == "block":
             body = cmd_block(root, args.session, context_id, args.item_id, args.reason)
         elif args.cmd == "unblock":
@@ -2048,6 +2086,8 @@ def run_command(args: argparse.Namespace) -> dict:
             body = cmd_order(root, args.session, context_id, args.item or [], args.free or [])
         elif args.cmd == "drop":
             body = cmd_drop(root, args.session, context_id)
+        elif args.cmd == "remove":
+            body = cmd_remove(root, args.session, context_id, args.item_id)
         elif args.cmd == "replace":
             body = cmd_replace(root, args.session, context_id, args.item or [])
         elif args.cmd == "attach":
@@ -2135,6 +2175,13 @@ def build_parser() -> argparse.ArgumentParser:
     verify.add_argument("item_id")
     verify.add_argument("--evidence", required=True)
 
+    amend = sub.add_parser("amend")
+    root(amend)
+    session(amend)
+    context(amend)
+    amend.add_argument("item_id")
+    amend.add_argument("--evidence", required=True)
+
     block = sub.add_parser("block")
     root(block)
     session(block)
@@ -2153,6 +2200,12 @@ def build_parser() -> argparse.ArgumentParser:
     session(free)
     context(free)
     free.add_argument("item_id")
+
+    remove = sub.add_parser("remove")
+    root(remove)
+    session(remove)
+    context(remove)
+    remove.add_argument("item_id")
 
     order = sub.add_parser("order")
     root(order)

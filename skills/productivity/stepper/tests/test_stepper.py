@@ -49,6 +49,8 @@ class StepperTests(unittest.TestCase):
             "replace",
             "drop",
             "detach",
+            "amend",
+            "remove",
         }
         prefix = []
         args = list(args)
@@ -476,6 +478,39 @@ class StepperTests(unittest.TestCase):
         self.assertEqual(code, 1)
         code, _data = self.cli("focus", "--session", "cursor:aaa", "AC-4")
         self.assertEqual(code, 0)
+
+    def test_amend_replaces_evidence_on_a_verified_item_and_leaves_it_verified(self):
+        self.capture()
+        self.cli("verify", "--session", "cursor:aaa", "AC-3", "--evidence", "uncommitted")
+        code, amended = self.cli(
+            "amend", "--session", "cursor:aaa", "AC-3", "--evidence", "  PR 79695 merged  "
+        )
+        self.assertEqual(code, 0, amended)
+        self.assertEqual(self.item(amended, "AC-3")["status"], "verified")
+        self.assertEqual(self.item(amended, "AC-3")["evidence"], "PR 79695 merged")
+        self.assertEqual(self.item(amended, "AC-4")["status"], "active")
+        code, again = self.cli("status", "--session", "cursor:aaa")
+        self.assertEqual(self.item(again, "AC-3")["evidence"], "PR 79695 merged")
+        self.assertEqual(self.item(again, "AC-3")["status"], "verified")
+
+    def test_amend_refuses_an_item_that_is_not_verified(self):
+        self.capture()
+        code, denied = self.cli("amend", "--session", "cursor:aaa", "AC-3", "--evidence", "too soon")
+        self.assertEqual(code, 1)
+        self.assertIn("active", denied["error"])
+        code, status = self.cli("status", "--session", "cursor:aaa")
+        self.assertEqual(self.item(status, "AC-3")["status"], "active")
+        self.assertIsNone(self.item(status, "AC-3")["evidence"])
+
+    def test_amend_refuses_blank_evidence_and_keeps_the_recorded_note(self):
+        self.capture()
+        self.cli("verify", "--session", "cursor:aaa", "AC-3", "--evidence", "uncommitted")
+        code, denied = self.cli("amend", "--session", "cursor:aaa", "AC-3", "--evidence", "   ")
+        self.assertEqual(code, 1)
+        self.assertIn("non-empty", denied["error"])
+        code, status = self.cli("status", "--session", "cursor:aaa")
+        self.assertEqual(self.item(status, "AC-3")["evidence"], "uncommitted")
+        self.assertEqual(self.item(status, "AC-3")["status"], "verified")
 
     def test_false_evidence_is_stored_without_a_correctness_check(self):
         self.capture()
@@ -2311,6 +2346,48 @@ class StepperTests(unittest.TestCase):
         code, again = self.capture()
         self.assertEqual(code, 0)
         self.assertEqual(again["context"]["items"][0]["status"], "active")
+
+    def test_remove_takes_one_item_and_leaves_the_context(self):
+        self.capture()
+        code, removed = self.cli("remove", "--session", "cursor:aaa", "AC-4")
+        self.assertEqual(code, 0, removed)
+        self.assertEqual(removed["context"]["id"], "default")
+        self.assertFalse(removed["context"]["closed"])
+        self.assertEqual([item["id"] for item in removed["context"]["items"]], ["AC-3"])
+        self.assertEqual(self.item(removed, "AC-3")["status"], "active")
+        code, status = self.cli("status", "--session", "cursor:aaa")
+        self.assertEqual(code, 0)
+        self.assertIn("| AC-3 | active |", status["table"])
+        self.assertNotIn("AC-4", status["table"])
+
+    def test_remove_refuses_an_item_others_depend_on_and_names_them(self):
+        self.capture()
+        code, denied = self.cli("remove", "--session", "cursor:aaa", "AC-3")
+        self.assertEqual(code, 1)
+        self.assertIn("AC-4", denied["error"])
+        code, status = self.cli("status", "--session", "cursor:aaa")
+        self.assertEqual([item["id"] for item in status["context"]["items"]], ["AC-3", "AC-4"])
+        self.assertEqual(self.item(status, "AC-3")["status"], "active")
+
+    def test_remove_refuses_a_parent_and_names_its_children(self):
+        self.capture()
+        self.cli("add", "--session", "cursor:aaa", "--parent", "AC-3", "--item", "AC-3a: check the template")
+        self.cli("free", "--session", "cursor:aaa", "AC-4")
+        code, denied = self.cli("remove", "--session", "cursor:aaa", "AC-3")
+        self.assertEqual(code, 1, denied)
+        self.assertIn("AC-3a", denied["error"])
+        code, status = self.cli("status", "--session", "cursor:aaa")
+        self.assertEqual(code, 0, status)
+        self.assertEqual(self.item(status, "AC-3a")["parent_id"], "AC-3")
+
+    def test_remove_of_the_active_item_activates_the_next_free_item(self):
+        self.capture()
+        self.cli("free", "--session", "cursor:aaa", "AC-4")
+        code, removed = self.cli("remove", "--session", "cursor:aaa", "AC-3")
+        self.assertEqual(code, 0, removed)
+        self.assertFalse(removed["context"]["closed"])
+        self.assertEqual([item["id"] for item in removed["context"]["items"]], ["AC-4"])
+        self.assertEqual(self.item(removed, "AC-4")["status"], "active")
 
     def test_replace_cancels_outstanding_items_without_verifying_them(self):
         self.capture()
