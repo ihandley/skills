@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.9.0](https://github.com/ihandley/skills/compare/ihandley-skills-v0.8.0...ihandley-skills-v0.9.0) (2026-11-10)
+
+
+### Features
+
+* **stepper:** amend a verified note and remove one item ([#139](https://github.com/ihandley/skills/issues/139)) ([93c827e](https://github.com/ihandley/skills/commit/93c827e3b3a0b38bbec4ed8c830e0e1babd008b0))
+* **terse:** compress skill and move mechanical checks into check-dashes ([#136](https://github.com/ihandley/skills/issues/136)) ([7ec14e8](https://github.com/ihandley/skills/commit/7ec14e8d7ae2246103e836b6049aef1f93e62a1c))
+
 ## [0.8.0](https://github.com/ihandley/skills/compare/ihandley-skills-v0.7.0...ihandley-skills-v0.8.0) (2026-11-05)
 
 
