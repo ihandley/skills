@@ -89,7 +89,7 @@ Done when the user has been told to hold and why, or `skip` has moved the active
 - There is a concrete list of work: [OFFER.md](references/OFFER.md). A list this session already holds does not suppress the offer.
 - A list is held and the user has not accepted an order: [ORDER.md](references/ORDER.md).
 - The user says to drop the list or replace it: [REPLACE.md](references/REPLACE.md).
-- The user says to remove one item: `remove` that item. The list stays. An item others depend on stays, and the error names them.
+- The user says to remove one item: `remove` that item. The list stays. An item that open items depend on stays, and the error names them.
 
 An unrelated question or a pause leaves the list in place. Answer it. Leave the brief for a new start, a list change, or a status request. While `.claude/turn-owner.json` names this session's owner as understand or pair, that skill owns the turn. Leave the list leased and untouched. A turn that already briefed or changed the list gets no stop-hook reminder. A turn whose new input is the reminder adds nothing: no brief, and no repeated questions. The brief is spoken once.
 

@@ -1478,22 +1478,29 @@ def cmd_drop(root: Path, session_key: str, context_id: str) -> dict:
 def cmd_remove(root: Path, session_key: str, context_id: str, item_id: str) -> dict:
     ctx = require_holder(root, session_key, context_id)
     item = _item(ctx, item_id)
+    children = [child["id"] for child in _children(ctx, item_id)]
+    if children:
+        raise StepperError(f"cannot remove {item_id} because {', '.join(children)} sit under it")
     dependents = [
-        other["id"]
+        other
         for other in ctx["items"]
-        if other["id"] != item_id
-        and (item_id in (other.get("depends_on") or []) or other.get("parent_id") == item_id)
+        if other["id"] != item_id and item_id in (other.get("depends_on") or [])
     ]
-    if dependents:
-        if len(dependents) == 1:
-            why = f"{dependents[0]} depends on it"
+    open_dependents = [] if item["status"] in ("verified", "cancelled") else [
+        other["id"] for other in dependents if other["status"] not in ("verified", "cancelled")
+    ]
+    if open_dependents:
+        if len(open_dependents) == 1:
+            why = f"{open_dependents[0]} depends on it"
         else:
-            why = f"{', '.join(dependents)} depend on it"
+            why = f"{', '.join(open_dependents)} depend on it"
         raise StepperError(f"cannot remove {item_id} because {why}")
     was_active = item["status"] == "active"
     ctx["items"] = [existing for existing in ctx["items"] if existing["id"] != item_id]
+    for other in dependents:
+        other["depends_on"] = [dep for dep in other["depends_on"] if dep != item_id]
     if was_active:
-        selection.activate_next(ctx)
+        selection.activate_next(ctx, item)
     save_context(root, ctx)
     return result(ctx)
 

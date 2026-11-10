@@ -2389,6 +2389,15 @@ class StepperTests(unittest.TestCase):
         self.assertEqual([item["id"] for item in removed["context"]["items"]], ["AC-4"])
         self.assertEqual(self.item(removed, "AC-4")["status"], "active")
 
+    def test_remove_a_verified_item_releases_the_dependent_that_follows_it(self):
+        self.capture()
+        self.cli("verify", "--session", "cursor:aaa", "AC-3", "--evidence", "sent")
+        code, removed = self.cli("remove", "--session", "cursor:aaa", "AC-3")
+        self.assertEqual(code, 0, removed)
+        self.assertEqual([item["id"] for item in removed["context"]["items"]], ["AC-4"])
+        self.assertEqual(self.item(removed, "AC-4")["depends_on"], [])
+        self.assertEqual(self.item(removed, "AC-4")["status"], "active")
+
     def test_replace_cancels_outstanding_items_without_verifying_them(self):
         self.capture()
         code, replaced = self.cli(

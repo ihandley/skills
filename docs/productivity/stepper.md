@@ -25,7 +25,7 @@ Stepper recommends waiting, and says why. You can skip to the next item when tha
 Yes, when you say so. Dropping archives it without marking the leftovers done. Replacing swaps the outstanding items in one step. Another chat's list stays put.
 
 **Can I correct one item without throwing the list away?**
-Yes. Amending replaces the note on a verified item and leaves that item verified. Removing one item leaves the rest of the list. An item that others depend on stays, and the refusal names those items.
+Yes. Amending replaces the note on a verified item and leaves that item verified. Removing one item leaves the rest of the list. An item that open items depend on stays, and the refusal names those items.
 
 **Will I hear the brief twice?**
 No. A turn that already briefed or changed the list gets no reminder. When a reminder does follow a reply, its sentence ends with "Add nothing," and the agent adds nothing under it.
