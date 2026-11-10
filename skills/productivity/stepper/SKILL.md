@@ -4,8 +4,9 @@ description: >-
   Track one ordered list of work and stick to the active item. Use when a
   concrete list of remaining work should be tracked, when a Stepper reminder
   is in context, when the user asks what is left, when the user asks what
-  is open, or when the user says to drop or replace the list. Change list
-  state only through the stepper CLI.
+  is open, when the user says to drop or replace the list, when the user
+  says to amend evidence on a verified item, or when the user says to
+  remove one item. Change list state only through the stepper CLI.
 compatibility: Requires Python 3
 metadata:
   author: ian.handley
@@ -13,7 +14,7 @@ metadata:
 
 # Stepper
 
-A session may hold several contexts. Each context is one ordered list with one active item. The CLI in this directory is the source of truth. Leave files in the home store untouched; report the CLI error. Record evidence only for a criterion you have actually established, and pass that sentence to `verify`.
+A session may hold several contexts. Each context is one ordered list with one active item. The CLI in this directory is the source of truth. Leave files in the home store untouched; report the CLI error. Record evidence only for a criterion you have actually established, and pass that sentence to `verify`. Pass a corrected sentence to `amend` when that item is already verified.
 
 **Reminder.** The one sentence a hook shows for the active item. A stop hook ends that sentence with "Add nothing." A turn whose new input is that sentence adds nothing.
 
@@ -65,13 +66,13 @@ Done when the reply speaks that one `table`, asks which name, or reports that th
 
 ## Help
 
-When the user asks for help, speak these commands: track, add, focus, verify, block, unblock, skip, defer, cancel, pause, resume, replace, drop, attach, list, and status.
+When the user asks for help, speak these commands: track, add, focus, verify, amend, block, unblock, skip, defer, cancel, pause, resume, replace, drop, remove, attach, list, and status.
 
 Done when the reply lists those commands.
 
 ## Stick
 
-Work the active item. `verify` it with the evidence you established. `block` it with the reason when it is waiting on someone or something. Verifying the active item activates the next pending item.
+Work the active item. `verify` it with the evidence you established. `amend` replaces the evidence on an item that is already verified, and the item stays verified. `block` it with the reason when it is waiting on someone or something. Verifying the active item activates the next pending item.
 
 Done when the active item is verified, or the user has chosen hold or skip.
 
@@ -88,6 +89,7 @@ Done when the user has been told to hold and why, or `skip` has moved the active
 - There is a concrete list of work: [OFFER.md](references/OFFER.md). A list this session already holds does not suppress the offer.
 - A list is held and the user has not accepted an order: [ORDER.md](references/ORDER.md).
 - The user says to drop the list or replace it: [REPLACE.md](references/REPLACE.md).
+- The user says to remove one item: `remove` that item. The list stays. An item that open items depend on stays, and the error names them.
 
 An unrelated question or a pause leaves the list in place. Answer it. Leave the brief for a new start, a list change, or a status request. While `.claude/turn-owner.json` names this session's owner as understand or pair, that skill owns the turn. Leave the list leased and untouched. A turn that already briefed or changed the list gets no stop-hook reminder. A turn whose new input is the reminder adds nothing: no brief, and no repeated questions. The brief is spoken once.
 
