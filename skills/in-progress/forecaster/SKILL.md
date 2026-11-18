@@ -20,10 +20,16 @@ Run `python3 <this-skill>/forecaster.py forecast --inputs <file>`. It prints one
 - `start_date`: ISO date the work starts.
 - `capacity_share`: `[low, high]`, the fraction of Pace this work gets. Default `[1, 1]`. Assumed, not measured.
 - `history`: weekly Pace, a list of `{"week": "YYYY-MM-DD", "points": N}`. Or `history_file`: path to that list, relative to the inputs file.
+- `scope_file`: saved Jira search results (`{"issues": [...]}`) from `queries scope`. Optional `initiative`. When set, `forecast` adds a `scope` block: epic order proposed from Blocks links (blocker first), `remaining_points` per epic (open leaf tickets), `not_in_the_dates` (points in Testing) and `warnings` (unpointed open tickets, Blocks cycles). `remaining_points` may then be omitted.
+- `epic_order`: optional list of epic keys. Overrides the proposed order; show the proposal and ask the user to confirm or change it.
 - `seed`: integer. The same seed and inputs give identical output.
 - `trials`, `expiry_days`: optional. Defaults 10000 and 28.
 
 Ask the user only for fields that are missing. Save answers to the inputs file so a rerun asks nothing.
+
+## Scope from Jira
+
+`python3 <this-skill>/forecaster.py queries scope --key <initiative-or-epic>` prints Jira search operations (points read from `customfield_10016`). Run them with the Atlassian tool, merge the issues into one JSON file and set `scope_file`. The script never calls Jira.
 
 ## Steps
 
