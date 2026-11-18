@@ -21,10 +21,15 @@ DUE_PERCENTILE = 85
 DEFAULT_TRIALS = 10000
 DEFAULT_EXPIRY_DAYS = 28
 MAX_WEEKS = 520
-REFRESH_TRIGGER = (
-    "Rerun when the expiry date passes, when remaining points change by more than 10 percent, "
-    "or when a new week of Pace is saved."
-)
+UNITS = ("points", "items")
+DEFAULT_UNIT = "points"
+
+
+def refresh_trigger(unit: str) -> str:
+    return (
+        f"Rerun when the expiry date passes, when remaining {unit} change by more than 10 percent, "
+        "or when a new week of Pace is saved."
+    )
 
 
 ASSUMED = "assumed, not measured"
@@ -109,7 +114,7 @@ def ended_canceled(issue: dict) -> bool:
     return bool(moves) and moves[-1][1] == CANCELED
 
 
-def pace_from_results(data: dict, base: Path) -> tuple[list[dict], list[str], list[str]]:
+def pace_from_results(data: dict, base: Path, unit: str = DEFAULT_UNIT) -> tuple[list[dict], list[str], list[str]]:
     raw = load_json(base / data["jira_results_file"], "Jira results file")
     pages = raw if isinstance(raw, list) else [raw]
     issues = [i for page in pages for i in page.get("issues", [])]
@@ -125,6 +130,9 @@ def pace_from_results(data: dict, base: Path) -> tuple[list[dict], list[str], li
             continue
         counted = first_count_date(issue)
         if counted is None or not (start <= counted < end):
+            continue
+        if unit == "items":
+            totals[monday(counted)] += 1
             continue
         pts = f.get(field)
         if not pts:
@@ -162,13 +170,13 @@ def history_warnings(history: list[dict]) -> list[str]:
     return warnings
 
 
-def load_history(data: dict, base: Path) -> tuple[list[dict], list[str], list[str]]:
+def load_history(data: dict, base: Path, unit: str = DEFAULT_UNIT) -> tuple[list[dict], list[str], list[str]]:
     warnings, unpointed = [], []
     history = data.get("history")
     if history is None and data.get("history_file"):
         history = load_json(base / data["history_file"], "history file")
     if history is None and data.get("jira_results_file"):
-        history, warnings, unpointed = pace_from_results(data, base)
+        history, warnings, unpointed = pace_from_results(data, base, unit)
     history = history or []
     if not any(float(w.get("points", 0)) > 0 for w in history):
         raise Refusal("no history: saved weekly Pace is empty or has no points, so no date can be forecast.")
@@ -236,7 +244,7 @@ def propose_order(epic_keys: list[str], pairs: list[tuple[str, str]], warnings: 
     return order
 
 
-def scope(data: dict, base: Path) -> dict:
+def scope(data: dict, base: Path, unit: str = DEFAULT_UNIT) -> dict:
     saved = load_json(base / data["scope_file"], "scope file")
     issues = {i["key"]: i for i in saved.get("issues", [])}
     epics = [k for k, i in issues.items() if i["fields"]["issuetype"]["name"] == "Epic"]
@@ -263,7 +271,9 @@ def scope(data: dict, base: Path) -> dict:
     else:
         order = propose_order(epics, pairs, warnings)
         source = "blocks"
-    rows = {k: {"epic": k, "remaining_points": 0, "not_in_the_dates": 0} for k in order}
+    remaining_key = f"remaining_{unit}"
+    parked_key = "not_in_the_dates" if unit == "points" else f"not_in_the_dates_{unit}"
+    rows = {k: {"epic": k, remaining_key: 0, parked_key: 0} for k in order}
     for issue in issues.values():
         f = issue["fields"]
         if f["issuetype"]["name"] == "Epic" or f.get("subtasks"):
@@ -272,18 +282,18 @@ def scope(data: dict, base: Path) -> dict:
         status = f["status"]
         if epic is None or status["statusCategory"]["key"] == "done" or status["name"].lower() == "canceled":
             continue
-        pts = f.get(POINTS_FIELD)
+        pts = 1 if unit == "items" else f.get(POINTS_FIELD)
         if pts is None:
             warnings.append(f"{issue['key']} is open and has no points; left out of the sums.")
         elif status["name"].lower() == NOT_IN_DATES_STATUS:
-            rows[epic]["not_in_the_dates"] += pts
+            rows[epic][parked_key] += pts
         else:
-            rows[epic]["remaining_points"] += pts
+            rows[epic][remaining_key] += pts
     return {
         "initiative": data.get("initiative"),
         "order_source": source,
         "epics": [rows[k] for k in order],
-        "not_in_the_dates": sum(r["not_in_the_dates"] for r in rows.values()),
+        parked_key: sum(r[parked_key] for r in rows.values()),
         "warnings": warnings,
     }
 
@@ -392,22 +402,26 @@ def parse_percentiles(text: str | None) -> list[int]:
     return sorted(set(levels))
 
 
-def forecast(inputs_path: Path, percentiles: str | None = None) -> dict:
+def forecast(inputs_path: Path, percentiles: str | None = None, unit: str | None = None) -> dict:
     levels = parse_percentiles(percentiles)
     data = load_json(inputs_path, "inputs file")
-    scoped = scope(data, inputs_path.parent) if data.get("scope_file") else None
+    unit = unit or data.get("unit") or DEFAULT_UNIT
+    if unit not in UNITS:
+        raise Refusal(f"unit must be one of {', '.join(UNITS)}, got {unit!r}")
+    remaining_key = f"remaining_{unit}"
+    scoped = scope(data, inputs_path.parent, unit) if data.get("scope_file") else None
     rows = {r["epic"]: r for r in scoped["epics"]} if scoped else {}
     chain_epics = None
-    if scoped and "remaining_points" not in data:
+    if scoped and remaining_key not in data:
         if data.get("epic") in rows:
-            data["remaining_points"] = rows[data["epic"]]["remaining_points"]
+            data[remaining_key] = rows[data["epic"]][remaining_key]
         else:
             chain_epics = scoped["epics"]
-            data["remaining_points"] = sum(r["remaining_points"] for r in chain_epics)
-    for key in ("remaining_points", "start_date"):
+            data[remaining_key] = sum(r[remaining_key] for r in chain_epics)
+    for key in (remaining_key, "start_date"):
         if key not in data:
             raise Refusal(f"inputs file is missing required field: {key}")
-    history, warnings, unpointed = load_history(data, inputs_path.parent)
+    history, warnings, unpointed = load_history(data, inputs_path.parent, unit)
     start = date.fromisoformat(data["start_date"])
     share = parse_share(data.get("capacity_share", [1, 1]))
     december = parse_december_factor(data.get("december_factor"))
@@ -420,10 +434,10 @@ def forecast(inputs_path: Path, percentiles: str | None = None) -> dict:
     if chain_epics:
         cumulative, total = [], 0.0
         for r in chain_epics:
-            total += r["remaining_points"]
+            total += r[remaining_key]
             cumulative.append(total)
     else:
-        cumulative = [float(data["remaining_points"])]
+        cumulative = [float(data[remaining_key])]
     def week_factor(week: int) -> float:
         return december if december and (start + timedelta(weeks=week)).month == 12 else 1.0
 
@@ -465,6 +479,7 @@ def forecast(inputs_path: Path, percentiles: str | None = None) -> dict:
         assumptions.append({"factor": "soak_weeks", "value": soak, "label": ASSUMED})
     result = {
         "epic": data.get("epic"),
+        "unit": unit,
         "likely_date": at(last, LIKELY_PERCENTILE),
         "likely_percentile": LIKELY_PERCENTILE,
         "due_date": at(last, DUE_PERCENTILE),
@@ -473,13 +488,13 @@ def forecast(inputs_path: Path, percentiles: str | None = None) -> dict:
         "dates": dates(last),
         "production": production(last),
         "expiry": (start + timedelta(days=expiry_days)).isoformat(),
-        "refresh_trigger": REFRESH_TRIGGER,
+        "refresh_trigger": refresh_trigger(unit),
         "assumptions": assumptions,
         "history": history,
         "warnings": warnings,
         "unpointed": unpointed,
         "inputs": {
-            "remaining_points": data["remaining_points"],
+            remaining_key: data[remaining_key],
             "start_date": data["start_date"],
             "capacity_share": list(share),
             "seed": seed,
@@ -491,7 +506,7 @@ def forecast(inputs_path: Path, percentiles: str | None = None) -> dict:
         result["chain"] = [
             {
                 "epic": r["epic"],
-                "remaining_points": r["remaining_points"],
+                remaining_key: r[remaining_key],
                 "likely_date": at(w, LIKELY_PERCENTILE),
                 "likely_percentile": LIKELY_PERCENTILE,
                 "due_date": at(w, DUE_PERCENTILE),
@@ -514,6 +529,7 @@ def main(argv: list[str] | None = None) -> int:
     sub = parser.add_subparsers(dest="command", required=True)
     p = sub.add_parser("forecast", help="forecast one epic from an inputs file and saved Pace")
     p.add_argument("--inputs", required=True, type=Path)
+    p.add_argument("--unit", choices=UNITS, help="count points (default) or tickets for Pace and remaining work")
     p.add_argument("--percentiles", help="comma-separated levels, default 50,85 (for example 50,70,95)")
     q = sub.add_parser("queries", help="emit the Jira operations to run; never calls Jira")
     qsub = q.add_subparsers(dest="mode", required=True)
@@ -526,7 +542,7 @@ def main(argv: list[str] | None = None) -> int:
         if args.command == "queries":
             result = queries(args.inputs) if args.mode == "pace" else scope_queries(args.key)
         else:
-            result = forecast(args.inputs, args.percentiles)
+            result = forecast(args.inputs, args.percentiles, args.unit)
     except Refusal as exc:
         print(f"forecaster: {exc}", file=sys.stderr)
         return 2

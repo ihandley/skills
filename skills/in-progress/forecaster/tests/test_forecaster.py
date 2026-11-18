@@ -663,6 +663,98 @@ class TestCalendar(ForecastCase):
                              (date.fromisoformat(row["likely_date"]) + __import__("datetime").timedelta(weeks=1)).isoformat())
         self.assertEqual(out["production"]["likely_date"], out["chain"][-1]["production"]["likely_date"])
 
+class TestUnit(PaceCase):
+    def chain_items(self, *extra, **over):
+        data = inputs(scope_file=str(FIXTURES / "scope_search.json"), initiative="LV-1")
+        del data["remaining_points"]
+        data.update(over)
+        return self.ok(data, "--unit", "items", *extra)
+
+    def test_default_unit_is_points(self):
+        out = self.ok(inputs())
+        self.assertEqual(out["unit"], "points")
+        self.assertEqual(self.ok(inputs(), "--unit", "points"), out)
+
+    def test_bad_unit_refused(self):
+        r = self.run_cli(inputs(), "--unit", "hours")
+        self.assertNotEqual(r.returncode, 0)
+
+    def test_items_unit_stated_in_output(self):
+        out = self.ok(inputs(remaining_items=10), "--unit", "items")
+        self.assertEqual(out["unit"], "items")
+        self.assertEqual(out["inputs"]["remaining_items"], 10)
+        self.assertNotIn("remaining_points", out["inputs"])
+        self.assertIn("items", out["refresh_trigger"])
+
+    def test_items_unit_needs_remaining_items(self):
+        r = self.run_cli(inputs(), "--unit", "items")
+        self.assertEqual(r.returncode, 2)
+        self.assertIn("remaining_items", r.stderr)
+
+    def test_items_pace_counts_leaf_tickets_unpointed_included(self):
+        issues = [
+            issue("A-1", 5, [("2026-10-06", "In Progress", "Done")]),
+            issue("A-2", None, [("2026-10-07", "In Progress", "Testing")]),
+            issue("A-3", 8, [("2026-10-08", "In Progress", "Canceled")], status="Canceled"),
+            issue("A-4", 3, [("2026-10-06", "In Progress", "Done")], subtasks=["A-5"]),
+            issue("A-5", 2, [("2026-10-06", "In Progress", "Done")], parent="A-4"),
+            issue("A-6", 1, [("2026-08-25", "In Progress", "Done")]),
+        ]
+        out = self.ok(self.pace_inputs(issues, remaining_items=4), "--unit", "items")
+        weeks = {w["week"]: w["points"] for w in out["history"]}
+        self.assertEqual(weeks["2026-10-05"], 3)  # A-1, A-2, A-5
+        self.assertEqual(sum(weeks.values()), 3)
+        self.assertEqual(out["unpointed"], [])
+        self.assertFalse(any("npointed" in w for w in out["warnings"]))
+
+    def test_items_unit_works_when_no_ticket_is_pointed(self):
+        issues = [issue("A-1", None, [("2026-10-06", "In Progress", "Done")])]
+        r = self.run_cli(self.pace_inputs(issues, remaining_items=4), "--unit", "items")
+        self.assertEqual(r.returncode, 0, r.stderr)
+
+    def test_points_pace_unchanged_by_items_code(self):
+        issues = [issue("A-1", 5, [("2026-10-06", "In Progress", "Done")])]
+        weeks, out = self.pace(issues)
+        self.assertEqual(weeks["2026-10-05"], 5)
+        self.assertEqual(out["unit"], "points")
+
+    def test_remaining_is_count_of_open_leaf_tickets(self):
+        # LV-10: LV-101 open, LV-105 open unpointed (counts); LV-102 testing, done and canceled do not.
+        # LV-11: LV-111 is a parent; LV-112 + LV-113. LV-12: LV-121.
+        out = self.chain_items()
+        rows = {r["epic"]: r for r in out["chain"]}
+        self.assertEqual({k: r["remaining_items"] for k, r in rows.items()}, {"LV-12": 1, "LV-10": 2, "LV-11": 2})
+        self.assertNotIn("remaining_points", rows["LV-10"])
+        self.assertEqual(out["scope"]["epics"][1]["remaining_items"], 2)
+        self.assertEqual(out["scope"]["not_in_the_dates_items"], 1)
+        self.assertFalse(any("LV-105" in w for w in out["scope"]["warnings"]))
+        self.assertEqual(out["inputs"]["remaining_items"], 5)
+
+    def test_scope_points_still_default(self):
+        data = inputs(scope_file=str(FIXTURES / "scope_search.json"))
+        del data["remaining_points"]
+        out = self.ok(data)
+        self.assertEqual({r["epic"]: r["remaining_points"] for r in out["chain"]}, {"LV-12": 2, "LV-10": 5, "LV-11": 5})
+        self.assertTrue(any("LV-105" in w for w in out["scope"]["warnings"]))
+
+    def test_named_epic_in_items(self):
+        out = self.chain_items(epic="LV-10", seed=3)
+        self.assertEqual(out["inputs"]["remaining_items"], 2)
+        self.assertNotIn("chain", out)
+
+    def test_constant_pace_items_exact(self):
+        hist = [{"week": f"2026-09-{d:02d}", "points": 2} for d in (7, 14, 21)]
+        out = self.ok(inputs(history=hist, capacity_share=[1, 1], remaining_items=6), "--unit", "items")
+        self.assertEqual(out["due_date"], "2026-12-14")
+
+    def test_unit_can_come_from_inputs_file_and_flag_wins(self):
+        out = self.ok(inputs(unit="items", remaining_items=3))
+        self.assertEqual(out["unit"], "items")
+
+    def test_flag_overrides_inputs_unit(self):
+        out = self.ok(inputs(unit="items"), "--unit", "points")
+        self.assertEqual(out["unit"], "points")
+
 
 class TestInvocation(unittest.TestCase):
     root = FORECASTER.parent
