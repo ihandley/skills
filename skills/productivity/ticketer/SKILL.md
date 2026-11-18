@@ -54,6 +54,7 @@ Issue type names live in the provider config. This procedure uses parent ladder 
 - Never run `submit` before the user said yes to the rendered draft.
 - Never edit a draft file, cache file, or config to get past a refusal. Report the refusal.
 - A new `yes` is needed after any change to the draft.
+- Write every acceptance criterion as `AC<n>: ...`, one per line, numbered from AC1 with no gaps, repeats, or zero-padding. On Jira each line is also a checkbox item (`- [ ] AC1: ...`). The draft refuses `ac_not_numbered`, `ac_out_of_sequence`, or `ac_not_checkbox` otherwise.
 - With no parent ladder, `ticketer.py find-parent --query <text>` still emits today's parent search.
 
 The gate stops a skipped confirmation. It cannot stop an agent that fabricates the token. A host approval prompt on the tracker tool is the only hard guarantee.

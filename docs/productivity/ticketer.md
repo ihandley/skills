@@ -2,7 +2,7 @@
 
 Ticketer creates or updates a ticket in Jira or GitHub Issues while a CLI enforces your team's rules. The agent gathers the details and talks to you. The CLI checks the draft against your team config, shows you exactly what will be filed, and hands back the call to make.
 
-The constraint is that the agent cannot file without your confirmation of the exact rendered draft. The CLI refuses a required field left empty, a malformed label, a missing template section, a description that repeats its acceptance criteria, and a value the tracker does not allow. It never contacts the tracker or holds credentials. The agent runs the tracker call with its own tools.
+The constraint is that the agent cannot file without your confirmation of the exact rendered draft. The CLI refuses a required field left empty, a malformed label, a missing template section, a description that repeats its acceptance criteria, acceptance criteria that are not numbered `AC1`, `AC2`, and so on in order, and a value the tracker does not allow. It never contacts the tracker or holds credentials. The agent runs the tracker call with its own tools.
 
 ## When to reach for it
 
@@ -53,4 +53,5 @@ After the ticket is filed, the agent reads it back and the CLI compares the fiel
 - A GitHub-mapped directory files as it does today.
 - A draft missing a required field comes back with a specific error, and the agent fixes it instead of filing anyway.
 - Labels reach the tracker in lowercase kebab-case.
+- A description with acceptance criteria that skip a number, repeat one, or lack the `AC<n>:` prefix comes back with `ac_out_of_sequence` or `ac_not_numbered`, and the agent fixes it instead of filing anyway.
 - After filing, the agent reports the ticket reference and either confirms the fields match or names the one that does not.

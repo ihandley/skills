@@ -31,7 +31,7 @@ forbid_empty = ["labels"]
 [defaults]
 repo = "acme/widgets"
 """
-TASK_BODY = "## Context\nWhy this exists.\n\n## Acceptance criteria\n- [ ] Reset email is sent within one minute\n"
+TASK_BODY = "## Context\nWhy this exists.\n\n## Acceptance criteria\n- [ ] AC1: Reset email is sent within one minute\n"
 
 
 def parent_issue(key="AB-1", issue_type="Epic", summary="Reset email", status="In Progress",
@@ -302,16 +302,55 @@ class JiraDraftTests(Base):
         self.assertIn(("forbidden_empty", "labels"), fields)
 
     def test_template_section_must_be_nonempty(self):
-        code, data, _ = self.draft(jira_payload(description="## Context\n\n## Acceptance criteria\n- [ ] one thing happens here\n"))
+        code, data, _ = self.draft(jira_payload(description="## Context\n\n## Acceptance criteria\n- [ ] AC1: one thing happens here\n"))
         self.assertEqual(code, 2)
         self.assertEqual(data["errors"][0]["code"], "empty_section")
 
+    def test_jira_ac_must_be_checkboxes(self):
+        body = "## Context\nWhy this exists.\n\n## Acceptance criteria\n- Reset email is sent within one minute\n"
+        code, data, _ = self.draft(jira_payload(description=body))
+        self.assertEqual(code, 2)
+        self.assertEqual(data["errors"][0]["code"], "ac_not_checkbox")
+
     def test_description_and_ac_must_not_repeat(self):
         line = "Reset email is sent within one minute"
-        body = "## Context\n- %s\n\n## Acceptance criteria\n- [ ] %s\n" % (line, line)
+        body = "## Context\n- %s\n\n## Acceptance criteria\n- [ ] AC1: %s\n" % (line, line)
         code, data, _ = self.draft(jira_payload(description=body))
         self.assertEqual(code, 2)
         self.assertEqual(data["errors"][0]["code"], "duplicate_content")
+
+    def test_numbered_ac_repeating_context_line_still_refused(self):
+        line = "Reset email is sent within one minute"
+        body = "## Context\n- AC1: %s\n\n## Acceptance criteria\n- [ ] AC1: %s\n" % (line, line)
+        code, data, _ = self.draft(jira_payload(description=body))
+        self.assertEqual(code, 2)
+        self.assertEqual(data["errors"][0]["code"], "duplicate_content")
+
+    def test_ac_must_be_numbered(self):
+        body = "## Context\nWhy this exists.\n\n## Acceptance criteria\n- [ ] Reset email is sent within one minute\n"
+        code, data, _ = self.draft(jira_payload(description=body))
+        self.assertEqual(code, 2)
+        self.assertEqual([e["code"] for e in data["errors"]], ["ac_not_numbered"])
+
+    def test_ac_number_must_not_be_zero_padded(self):
+        body = "## Context\nWhy this exists.\n\n## Acceptance criteria\n- [ ] AC01: Reset email is sent\n"
+        code, data, _ = self.draft(jira_payload(description=body))
+        self.assertEqual(code, 2)
+        self.assertEqual(data["errors"][0]["code"], "ac_not_numbered")
+
+    def test_ac_numbers_must_run_in_sequence(self):
+        for numbers in (["AC1", "AC3"], ["AC1", "AC1"], ["AC2", "AC1"]):
+            lines = "".join("- [ ] %s: criterion %d\n" % (n, i) for i, n in enumerate(numbers))
+            body = "## Context\nWhy this exists.\n\n## Acceptance criteria\n" + lines
+            code, data, _ = self.draft(jira_payload(description=body))
+            self.assertEqual(code, 2, numbers)
+            self.assertEqual(data["errors"][0]["code"], "ac_out_of_sequence", numbers)
+
+    def test_numbered_ac_in_sequence_passes(self):
+        body = ("## Context\nWhy this exists.\n\n## Acceptance criteria\n"
+                "- [ ] AC1: first\n- [ ] AC2: second\n- [ ] AC3: third\n")
+        code, data, _ = self.draft(jira_payload(description=body))
+        self.assertEqual(code, 0, data)
 
     def test_unknown_key_and_wrong_type_refused(self):
         code, data, _ = self.draft(jira_payload(bogus=1))
@@ -609,6 +648,12 @@ class GithubTests(Base):
         self.assertEqual(code, 2)
         code, data, _ = self.draft({"operation": "update", "key": "PROJ-1", "summary": "x"})
         self.assertEqual(code, 2)
+
+    def test_github_ac_must_be_numbered(self):
+        body = "## Context\nBroken.\n\n## Acceptance criteria\n- [ ] Crash no longer happens\n"
+        code, data, _ = self.draft({"summary": "Fix crash", "description": body, "labels": ["bug"]})
+        self.assertEqual(code, 2)
+        self.assertEqual(data["errors"][0]["code"], "ac_not_numbered")
 
 
 class UnsupportedMetadataKindTests(Base):
