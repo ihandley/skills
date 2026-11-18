@@ -521,6 +521,74 @@ def forecast(inputs_path: Path, percentiles: str | None = None, unit: str | None
     return result
 
 
+PROSE_SECTIONS = (
+    ("deferred_scope", "Deferred scope"),
+    ("waits_outside_the_plan", "Waits outside the plan"),
+    ("risks", "Risks"),
+    ("asks_of_manager", "Asks of the manager"),
+)
+
+
+def plain(text: str) -> str:
+    return str(text).replace("\u2014", ", ").replace("\u2013", "-")
+
+
+def prose_block(prose: dict, key: str) -> str:
+    value = prose.get(key)
+    items = value if isinstance(value, list) else [value]
+    items = [plain(i).strip() for i in items if isinstance(i, str) and i.strip()]
+    if not items:
+        raise Refusal(f"prose file is missing required section: {key}")
+    if isinstance(value, list):
+        return "\n".join(f"- {i}" for i in items)
+    return items[0]
+
+
+def render(forecast_path: Path, prose_path: Path) -> str:
+    fc = load_json(forecast_path, "forecast file")
+    prose = load_json(prose_path, "prose file")
+    if not isinstance(fc, dict) or "likely_date" not in fc or "due_date" not in fc or "expiry" not in fc:
+        raise Refusal("forecast file is not forecast output (needs likely_date, due_date, expiry)")
+    if not isinstance(prose, dict):
+        raise Refusal("prose file must be a JSON object")
+    blocks = {key: prose_block(prose, key) for key, _ in PROSE_SECTIONS}
+    unit = fc.get("unit", DEFAULT_UNIT)
+    rem = f"remaining_{unit}"
+    chain = fc.get("chain") or [
+        {"epic": fc.get("epic") or "Epic", "likely_date": fc["likely_date"], "due_date": fc["due_date"]}
+    ]
+    total = (fc.get("inputs") or {}).get(rem)
+    if total is None:
+        total = sum(r.get(rem, 0) for r in chain)
+    paces = [w["points"] for w in fc.get("history", [])]
+    pace = f"{sum(paces) / len(paces):.1f}".rstrip("0").rstrip(".") if paces else "unknown"
+    scope_block = fc.get("scope") or {}
+    parked = sum((scope_block.get("not_in_the_dates") or {}).values())
+    warnings = list(fc.get("warnings", [])) + list(scope_block.get("warnings", []))
+    if fc.get("unpointed"):
+        warnings.append("Unpointed tickets left out of the sums: " + ", ".join(fc["unpointed"]))
+    out = [f"# {plain(prose.get('title') or 'Plan')}", "", "## Dates", "",
+           "| Epic | Likely date | Due date |", "| --- | --- | --- |"]
+    out += [f"| {r['epic']} | {r['likely_date']} | {r['due_date']} |" for r in chain]
+    out += ["", f"Likely date: the date by which {fc.get('likely_percentile', LIKELY_PERCENTILE)}% of runs finish.",
+            f"Due date: the date by which {fc.get('due_percentile', DUE_PERCENTILE)}% of runs finish.", ""]
+    for key, heading in PROSE_SECTIONS:
+        out += [f"## {heading}", "", blocks[key], ""]
+    out += ["## How the dates were built", "",
+            f"- Remaining work: {total} {unit}.",
+            f"- Pace: {pace} {unit} per week, the mean of {len(paces)} weeks of history.",
+            f"- Epic order: {', '.join(r['epic'] for r in chain)}.",
+            f"- Review date: {fc['expiry']}."]
+    if parked:
+        out.append(f"- Not in the dates: {parked} {unit} waiting in Testing.")
+    out += ["", "## Assumptions", ""]
+    out += [f"- {a['factor']}: {json.dumps(a['value'])} ({a['label']})" for a in fc.get("assumptions", [])] or ["- None."]
+    out += ["", "## Data-quality warnings", ""]
+    out += [f"- {plain(w)}" for w in warnings] or ["No data-quality warnings."]
+    out += ["", "## Expiry", "", f"Expires {fc['expiry']}. {plain(fc.get('refresh_trigger', ''))}".rstrip(), ""]
+    return "\n".join(out)
+
+
 def main(argv: list[str] | None = None) -> int:
     if sys.version_info < MIN_PYTHON:
         print("forecaster needs Python 3.11 or newer.", file=sys.stderr)
@@ -537,8 +605,14 @@ def main(argv: list[str] | None = None) -> int:
     qp.add_argument("--inputs", required=True, type=Path)
     qs = qsub.add_parser("scope", help="initiative and epic search with Blocks links")
     qs.add_argument("--key", required=True, help="initiative or epic key")
+    r = sub.add_parser("render", help="print the plan as Confluence-ready markdown")
+    r.add_argument("--forecast", required=True, type=Path, help="output of the forecast command")
+    r.add_argument("--prose", required=True, type=Path, help="JSON with the four prose sections")
     args = parser.parse_args(argv)
     try:
+        if args.command == "render":
+            print(render(args.forecast, args.prose))
+            return 0
         if args.command == "queries":
             result = queries(args.inputs) if args.mode == "pace" else scope_queries(args.key)
         else:

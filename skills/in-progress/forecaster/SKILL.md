@@ -59,3 +59,9 @@ With `scope_file` and no `epic` or `remaining_points`, `forecast` runs every epi
 ## Pace rules
 
 A ticket counts in the week (Monday start) it first entered Testing or Done, from the status changelog. Canceled never counts. Parents of sub-tasks are skipped. Unpointed tickets are left out and listed in `warnings` and `unpointed`. Short or volatile history also adds a warning. Report every warning.
+
+## Render the plan
+
+`python3 <this-skill>/forecaster.py render --forecast <forecast.json> --prose <prose.json>` prints Confluence-ready markdown: a dates table (Likely date, Due date per epic), the four prose sections, how the dates were built, assumptions (each "assumed, not measured"), data-quality warnings and the expiry with its refresh trigger. Due date is stated as the date by which 85% of runs finish.
+
+`prose.json` holds `deferred_scope`, `waits_outside_the_plan`, `risks` and `asks_of_manager` (each a string or list of strings) and an optional `title`. Write them from the interview, never invent them. A missing or empty section is refused (exit 2) and named; ask the user for it and rerun. Save the output to a local file for review.
