@@ -540,6 +540,130 @@ class TestChain(ForecastCase):
         self.assertNotIn("chain", self.ok(data))
 
 
+class TestCalendar(ForecastCase):
+    FLAT = [{"week": f"2026-09-{d:02d}", "points": 10} for d in (7, 14, 21)]
+
+    def flat(self, **over):
+        return self.ok(inputs(history=self.FLAT, capacity_share=[1, 1], remaining_points=30, **over))
+
+    # AC1
+    def test_capacity_share_range_is_accepted_and_echoed(self):
+        out = self.ok(inputs(capacity_share=[0.4, 0.6]))
+        self.assertEqual(out["inputs"]["capacity_share"], [0.4, 0.6])
+
+    def test_lower_share_finishes_later(self):
+        hi = self.ok(inputs(capacity_share=[0.9, 1.0]))
+        lo = self.ok(inputs(capacity_share=[0.3, 0.4]))
+        self.assertGreater(lo["due_date"], hi["due_date"])
+
+    def test_single_number_share_is_a_degenerate_range(self):
+        out = self.ok(inputs(capacity_share=0.5))
+        self.assertEqual(out["inputs"]["capacity_share"], [0.5, 0.5])
+
+    def test_bad_share_refused(self):
+        for bad in ([0.8, 0.4], [0, 0.5], [0.5, 1.5], "half", []):
+            r = self.run_cli(inputs(capacity_share=bad))
+            self.assertEqual(r.returncode, 2, bad)
+            self.assertIn("capacity_share", r.stderr)
+
+    # AC2
+    def test_non_measured_factors_labelled_assumed(self):
+        out = self.flat(december_factor=0.5, freezes=[{"start": "2026-12-20", "end": "2027-01-03"}], soak_weeks=2)
+        by = {a["factor"]: a for a in out["assumptions"]}
+        self.assertEqual(set(by), {"capacity_share", "december_factor", "freezes", "soak_weeks"})
+        for a in by.values():
+            self.assertEqual(a["label"], "assumed, not measured")
+        self.assertEqual(by["december_factor"]["value"], 0.5)
+        self.assertEqual(by["soak_weeks"]["value"], 2)
+
+    def test_unset_factors_are_not_listed_except_share(self):
+        out = self.flat()
+        self.assertEqual([a["factor"] for a in out["assumptions"]], ["capacity_share"])
+
+    # AC5
+    def test_december_factor_slows_december_weeks_only(self):
+        base = self.flat()
+        self.assertEqual(base["likely_date"], "2026-12-14")
+        slow = self.flat(december_factor=0.5)
+        # Nov 23 and Nov 30 at 10; Dec 7 and Dec 14 at 5 -> done after 4 weeks.
+        self.assertEqual(slow["likely_date"], "2026-12-21")
+
+    def test_december_factor_leaves_pre_december_work_alone(self):
+        out = self.ok(inputs(history=self.FLAT, capacity_share=[1, 1], remaining_points=20, december_factor=0.1))
+        self.assertEqual(out["likely_date"], "2026-12-07")
+
+    def test_december_factor_must_be_positive_number(self):
+        for bad in (0, -1, "slow"):
+            r = self.run_cli(inputs(december_factor=bad))
+            self.assertEqual(r.returncode, 2, bad)
+            self.assertIn("december_factor", r.stderr)
+
+    # AC3 / AC4
+    def prod(self, **over):
+        return self.flat(**over)["production"]
+
+    def test_no_soak_means_no_production_date_and_says_so(self):
+        p = self.prod()
+        self.assertIsNone(p["likely_date"])
+        self.assertIsNone(p["due_date"])
+        self.assertIn("no soak length", p["note"].lower())
+
+    def test_soak_adds_weeks_to_the_finish(self):
+        p = self.prod(soak_weeks=2)
+        self.assertEqual(p["likely_date"], "2026-12-28")
+        self.assertEqual(p["due_date"], "2026-12-28")
+        self.assertIsNone(p["note"])
+
+    def test_cutover_never_lands_inside_a_freeze(self):
+        p = self.prod(soak_weeks=2, freezes=[{"start": "2026-12-20", "end": "2027-01-03", "name": "holiday"}])
+        self.assertEqual(p["likely_date"], "2027-01-04")  # first day after the freeze
+        self.assertEqual(p["dates"]["85"], "2027-01-04")
+
+    def test_back_to_back_freezes_chain(self):
+        p = self.prod(soak_weeks=2, freezes=[
+            {"start": "2027-01-04", "end": "2027-01-10"},
+            {"start": "2026-12-20", "end": "2027-01-03"},
+        ])
+        self.assertEqual(p["likely_date"], "2027-01-11")
+
+    def test_freeze_boundaries_are_inclusive(self):
+        p = self.prod(soak_weeks=2, freezes=[{"start": "2026-12-28", "end": "2026-12-28"}])
+        self.assertEqual(p["likely_date"], "2026-12-29")
+
+    def test_freeze_does_not_move_epic_dates(self):
+        a = self.flat(soak_weeks=2)
+        b = self.flat(soak_weeks=2, freezes=[{"start": "2026-12-10", "end": "2026-12-31"}])
+        self.assertEqual(a["likely_date"], b["likely_date"])
+        self.assertEqual(a["due_date"], b["due_date"])
+
+    def test_freeze_outside_cutover_leaves_it_alone(self):
+        p = self.prod(soak_weeks=2, freezes=[{"start": "2027-02-01", "end": "2027-02-07"}])
+        self.assertEqual(p["likely_date"], "2026-12-28")
+
+    def test_bad_freezes_refused(self):
+        for bad in ([{"start": "2026-12-20"}], [{"start": "2027-01-03", "end": "2026-12-20"}], [{"start": "x", "end": "y"}], "none"):
+            r = self.run_cli(inputs(freezes=bad))
+            self.assertEqual(r.returncode, 2, bad)
+            self.assertIn("freezes", r.stderr)
+
+    def test_bad_soak_refused(self):
+        for bad in (-1, "two", 1.5):
+            r = self.run_cli(inputs(soak_weeks=bad))
+            self.assertEqual(r.returncode, 2, bad)
+            self.assertIn("soak_weeks", r.stderr)
+
+    def test_chain_rows_carry_production_dates(self):
+        data = inputs(scope_file=str(FIXTURES / "scope_search.json"), initiative="LV-1",
+                      history=self.FLAT, capacity_share=[1, 1], soak_weeks=1,
+                      freezes=[{"start": "2026-01-01", "end": "2026-01-02"}])
+        del data["remaining_points"]
+        out = self.ok(data)
+        for row in out["chain"]:
+            self.assertEqual(row["production"]["likely_date"],
+                             (date.fromisoformat(row["likely_date"]) + __import__("datetime").timedelta(weeks=1)).isoformat())
+        self.assertEqual(out["production"]["likely_date"], out["chain"][-1]["production"]["likely_date"])
+
+
 class TestInvocation(unittest.TestCase):
     root = FORECASTER.parent
 

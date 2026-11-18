@@ -27,6 +27,8 @@ REFRESH_TRIGGER = (
 )
 
 
+ASSUMED = "assumed, not measured"
+NO_SOAK_NOTE = "No soak length is set, so production has no date. Set soak_weeks to get one."
 POINTS_FIELD = "customfield_10016"
 WINDOW_WEEKS = 12
 COUNT_STATUSES = ("Testing", "Done")
@@ -291,7 +293,65 @@ def percentile(sorted_values: list[int], pct: int) -> int:
     return sorted_values[rank - 1]
 
 
-def simulate_chain(cumulative: list[float], paces: list[float], share: tuple[float, float], trials: int, seed: int) -> list[list[int]]:
+def parse_share(raw) -> tuple[float, float]:
+    vals = [raw] if isinstance(raw, (int, float)) and not isinstance(raw, bool) else raw
+    ok = (
+        isinstance(vals, list) and len(vals) in (1, 2)
+        and all(isinstance(v, (int, float)) and not isinstance(v, bool) for v in vals)
+    )
+    if ok:
+        low, high = float(vals[0]), float(vals[-1])
+        ok = 0 < low <= high <= 1
+    if not ok:
+        raise Refusal(f"capacity_share must be a number or [low, high] with 0 < low <= high <= 1, got {raw!r}")
+    return low, high
+
+
+def parse_december_factor(raw) -> float | None:
+    if raw is None:
+        return None
+    if isinstance(raw, bool) or not isinstance(raw, (int, float)) or raw <= 0:
+        raise Refusal(f"december_factor must be a number above 0, got {raw!r}")
+    return float(raw)
+
+
+def parse_soak_weeks(raw) -> int | None:
+    if raw is None:
+        return None
+    if isinstance(raw, bool) or not isinstance(raw, int) or raw < 0:
+        raise Refusal(f"soak_weeks must be a whole number of weeks, 0 or more, got {raw!r}")
+    return raw
+
+
+def parse_freezes(raw) -> list[tuple[date, date, str | None]]:
+    if raw is None:
+        return []
+    if not isinstance(raw, list):
+        raise Refusal(f"freezes must be a list of {{start, end}} dates, got {raw!r}")
+    out = []
+    for f in raw:
+        try:
+            start, end = date.fromisoformat(f["start"]), date.fromisoformat(f["end"])
+        except (TypeError, KeyError, ValueError):
+            raise Refusal(f"freezes entries need ISO start and end dates, got {f!r}")
+        if end < start:
+            raise Refusal(f"freezes entry ends before it starts: {f!r}")
+        out.append((start, end, f.get("name")))
+    return out
+
+
+def clear_of_freezes(day: date, freezes: list[tuple[date, date, str | None]]) -> date:
+    moved = True
+    while moved:
+        moved = False
+        for start, end, _ in freezes:
+            if start <= day <= end:
+                day, moved = end + timedelta(days=1), True
+    return day
+
+
+def simulate_chain(cumulative: list[float], paces: list[float], share: tuple[float, float], trials: int, seed: int,
+                   week_factor=lambda week: 1.0) -> list[list[int]]:
     """Run the epics in order in each trial. cumulative[i] is points needed through epic i.
 
     Returns, per epic, the sorted weeks at which each whole run finished that epic.
@@ -311,7 +371,7 @@ def simulate_chain(cumulative: list[float], paces: list[float], share: tuple[flo
                 for j in range(i, len(cumulative)):
                     per_epic[j].append(weeks)
                 break
-            done += rng.choice(paces) * s
+            done += rng.choice(paces) * s * week_factor(weeks)
             weeks += 1
     return [sorted(w) for w in per_epic]
 
@@ -349,8 +409,10 @@ def forecast(inputs_path: Path, percentiles: str | None = None) -> dict:
             raise Refusal(f"inputs file is missing required field: {key}")
     history, warnings, unpointed = load_history(data, inputs_path.parent)
     start = date.fromisoformat(data["start_date"])
-    share = data.get("capacity_share", [1, 1])
-    share = (float(share[0]), float(share[-1]))
+    share = parse_share(data.get("capacity_share", [1, 1]))
+    december = parse_december_factor(data.get("december_factor"))
+    soak = parse_soak_weeks(data.get("soak_weeks"))
+    freezes = parse_freezes(data.get("freezes"))
     seed = int(data.get("seed", 0))
     trials = int(data.get("trials", DEFAULT_TRIALS))
     expiry_days = int(data.get("expiry_days", DEFAULT_EXPIRY_DAYS))
@@ -362,7 +424,10 @@ def forecast(inputs_path: Path, percentiles: str | None = None) -> dict:
             cumulative.append(total)
     else:
         cumulative = [float(data["remaining_points"])]
-    all_weeks = simulate_chain(cumulative, paces, share, trials, seed)
+    def week_factor(week: int) -> float:
+        return december if december and (start + timedelta(weeks=week)).month == 12 else 1.0
+
+    all_weeks = simulate_chain(cumulative, paces, share, trials, seed, week_factor)
 
     def at(weeks: list[int], pct: int) -> str:
         return (start + timedelta(weeks=percentile(weeks, pct))).isoformat()
@@ -370,7 +435,34 @@ def forecast(inputs_path: Path, percentiles: str | None = None) -> dict:
     def dates(weeks: list[int]) -> dict:
         return {str(p): at(weeks, p) for p in levels}
 
+    def production(weeks: list[int]) -> dict:
+        if soak is None:
+            return {"likely_date": None, "due_date": None, "dates": {}, "note": NO_SOAK_NOTE}
+
+        def cutover(pct: int) -> str:
+            finish = start + timedelta(weeks=percentile(weeks, pct) + soak)
+            return clear_of_freezes(finish, freezes).isoformat()
+
+        return {
+            "likely_date": cutover(LIKELY_PERCENTILE),
+            "due_date": cutover(DUE_PERCENTILE),
+            "dates": {str(p): cutover(p) for p in levels},
+            "soak_weeks": soak,
+            "note": None,
+        }
+
     last = all_weeks[-1]
+    assumptions = [{"factor": "capacity_share", "value": list(share), "label": ASSUMED}]
+    if december is not None:
+        assumptions.append({"factor": "december_factor", "value": december, "label": ASSUMED})
+    if freezes:
+        assumptions.append({
+            "factor": "freezes",
+            "value": [{"start": a.isoformat(), "end": b.isoformat(), "name": n} for a, b, n in freezes],
+            "label": ASSUMED,
+        })
+    if soak is not None:
+        assumptions.append({"factor": "soak_weeks", "value": soak, "label": ASSUMED})
     result = {
         "epic": data.get("epic"),
         "likely_date": at(last, LIKELY_PERCENTILE),
@@ -379,8 +471,10 @@ def forecast(inputs_path: Path, percentiles: str | None = None) -> dict:
         "due_percentile": DUE_PERCENTILE,
         "percentiles": levels,
         "dates": dates(last),
+        "production": production(last),
         "expiry": (start + timedelta(days=expiry_days)).isoformat(),
         "refresh_trigger": REFRESH_TRIGGER,
+        "assumptions": assumptions,
         "history": history,
         "warnings": warnings,
         "unpointed": unpointed,
@@ -403,6 +497,7 @@ def forecast(inputs_path: Path, percentiles: str | None = None) -> dict:
                 "due_date": at(w, DUE_PERCENTILE),
                 "due_percentile": DUE_PERCENTILE,
                 "dates": dates(w),
+                "production": production(w),
             }
             for r, w in zip(chain_epics, all_weeks)
         ]
