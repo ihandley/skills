@@ -589,6 +589,98 @@ def render(forecast_path: Path, prose_path: Path) -> str:
     return "\n".join(out)
 
 
+KNOWN_INPUTS = (
+    "epic", "initiative", "remaining_points", "remaining_items", "start_date", "capacity_share", "assignee",
+    "as_of", "points_field", "jira_results_file", "history", "history_file", "scope_file", "epic_order",
+    "december_factor", "freezes", "soak_weeks", "seed", "trials", "expiry_days", "unit",
+)
+
+
+def blank(value) -> bool:
+    return value is None or value == "" or value == [] or value == {}
+
+
+def valid_date(value) -> bool:
+    try:
+        date.fromisoformat(value)
+    except (TypeError, ValueError):
+        return False
+    return True
+
+
+def inputs_missing(data: dict) -> list[dict]:
+    """The required inputs the file lacks, each with the question to ask. Empty means ask nothing."""
+    missing = []
+
+    def ask(key: str, question: str) -> None:
+        missing.append({"key": key, "question": question})
+
+    has = lambda *keys: any(not blank(data.get(k)) for k in keys)
+    if not has("epic", "initiative", "scope_file"):
+        ask("scope", "Which initiative or epics do you want to plan (Jira key)?")
+    unit = data.get("unit") or DEFAULT_UNIT
+    if unit == "items":
+        if not has("remaining_items", "scope_file"):
+            ask("remaining", "How many open tickets remain on the epic?")
+    elif not has("remaining_points", "scope_file"):
+        ask("remaining", "How many story points remain on the epic?")
+    if not valid_date(data.get("start_date")):
+        ask("start_date", "On what date does the work start (YYYY-MM-DD)?")
+    if not has("history", "history_file", "jira_results_file"):
+        if blank(data.get("assignee")):
+            ask("assignee", "Whose Pace should the forecast read (Jira assignee)?")
+        ask("pace", "Pace is not saved yet. Run `queries pace`, run the search through the Atlassian tool and "
+                    "save the raw results: what is the file path?")
+    return missing
+
+
+def inputs_report(data: dict) -> dict:
+    missing = inputs_missing(data)
+    return {"complete": not missing, "missing": missing}
+
+
+def inputs_value(key: str, raw: str):
+    try:
+        value = json.loads(raw)
+    except json.JSONDecodeError:
+        value = raw
+    if key in ("start_date", "as_of") and not valid_date(value):
+        raise Refusal(f"{key} must be an ISO date (YYYY-MM-DD), got {raw!r}")
+    if key == "history":
+        ok = isinstance(value, list) and all(
+            isinstance(w, dict) and valid_date(w.get("week")) and isinstance(w.get("points"), (int, float))
+            for w in value
+        )
+        if not ok:
+            raise Refusal('history must be a list of {"week": "YYYY-MM-DD", "points": N}')
+    return value
+
+
+def inputs_set(path: Path, pairs: list[str]) -> dict:
+    data = load_json(path, "inputs file") if path.exists() else {}
+    if not isinstance(data, dict):
+        raise Refusal(f"inputs file must hold a JSON object: {path}")
+    updates = {}
+    for pair in pairs:
+        key, sep, raw = pair.partition("=")
+        if not sep or not key:
+            raise Refusal(f"expected key=value, got {pair!r}")
+        if key not in KNOWN_INPUTS:
+            raise Refusal(f"unknown input {key!r}; known: {', '.join(KNOWN_INPUTS)}")
+        updates[key] = inputs_value(key, raw)
+    data.update(updates)
+    data["saved_on"] = date.today().isoformat()
+    path.write_text(json.dumps(data, indent=2) + "\n")
+    return inputs_report(data)
+
+
+def inputs_check(path: Path) -> dict:
+    data = load_json(path, "inputs file") if path.exists() else {}
+    if not isinstance(data, dict):
+        raise Refusal(f"inputs file must hold a JSON object: {path}")
+    return inputs_report(data)
+
+
 def main(argv: list[str] | None = None) -> int:
     if sys.version_info < MIN_PYTHON:
         print("forecaster needs Python 3.11 or newer.", file=sys.stderr)
@@ -608,8 +700,19 @@ def main(argv: list[str] | None = None) -> int:
     r = sub.add_parser("render", help="print the plan as Confluence-ready markdown")
     r.add_argument("--forecast", required=True, type=Path, help="output of the forecast command")
     r.add_argument("--prose", required=True, type=Path, help="JSON with the four prose sections")
+    i = sub.add_parser("inputs", help="check or write the saved inputs file; never calls Jira")
+    isub = i.add_subparsers(dest="mode", required=True)
+    ic = isub.add_parser("check", help="list missing required inputs, each with a question")
+    ic.add_argument("--inputs", required=True, type=Path)
+    iset = isub.add_parser("set", help="write key=value answers, keeping every other key")
+    iset.add_argument("--inputs", required=True, type=Path)
+    iset.add_argument("pairs", nargs="+", metavar="key=value", help="value is JSON when it parses, else text")
     args = parser.parse_args(argv)
     try:
+        if args.command == "inputs":
+            result = inputs_check(args.inputs) if args.mode == "check" else inputs_set(args.inputs, args.pairs)
+            print(json.dumps(result, indent=2))
+            return 0
         if args.command == "render":
             print(render(args.forecast, args.prose))
             return 0

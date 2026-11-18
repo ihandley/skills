@@ -32,7 +32,16 @@ Run `python3 <this-skill>/forecaster.py <cmd>`. `queries pace --inputs <file>` a
 - `seed`: integer. The same seed and inputs give identical output.
 - `trials`, `expiry_days`: optional. Defaults 10000 and 28.
 
-Ask the user only for fields that are missing. Save answers to the inputs file so a rerun asks nothing.
+Dates are stored: `start_date`, `as_of`, every `history` week, and `saved_on` (stamped by `inputs set`), all ISO. Keep them so a backtest can be added later.
+
+## Flow
+
+The skill is user-invoked. The argument is an optional initiative or epic key. Never ask a question `inputs check` did not report.
+
+1. Pick the inputs file (default `forecaster-inputs.json` in the workspace; reuse the one the user names).
+2. With a key argument, run `python3 <this-skill>/forecaster.py inputs set --inputs <file> epic=<key>` (use `initiative=<key>` when it is an initiative; run `queries scope --key <key>` and set `scope_file`). The scope is now known; do not ask for it. With no argument and no saved scope, ask which initiative or epics to plan, then `inputs set` the answer.
+3. Run `inputs check --inputs <file>`. It prints `{"complete", "missing": [{"key", "question"}]}`. Ask the user exactly the `question` of each missing item, nothing else, then save each answer with `inputs set --inputs <file> key=value ...` (value is JSON when it parses, else text; dates are `YYYY-MM-DD`). `set` keeps every other key, including hand edits, and prints the remaining gaps. Repeat until `complete` is true. Answers to optional factors (capacity share, December speed, freezes, soak, seed) are saved the same way when the user volunteers them; do not interview for them.
+4. The user may edit the file by hand at any time. Tell them its path. A rerun with a complete file asks nothing: go straight to the Steps below.
 
 ## Unit
 
