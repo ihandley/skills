@@ -418,8 +418,12 @@ def find_template(issue_type, config):
     return None
 
 
+AC_NUMBER_RE = re.compile(r"^\s*(?:[-*]\s+(?:\[[ xX]\]\s+)?)?AC([1-9][0-9]*):\s+\S")
+
+
 def _norm_line(line):
-    return re.sub(r"^[-*]\s*(\[[ xX]\]\s*)?", "", line.strip()).strip().casefold()
+    text = re.sub(r"^[-*]\s*(\[[ xX]\]\s*)?", "", line.strip()).strip()
+    return re.sub(r"^AC[1-9][0-9]*:\s*", "", text).strip().casefold()
 
 
 def check_description(draft, config):
@@ -432,6 +436,23 @@ def check_description(draft, config):
             if not parsed.get(heading):
                 problems.append(err("empty_section", "description needs a non-empty '## %s' section (template %s)" % (heading, template.name), "description"))
     ac_key = next((k for k in parsed if k.startswith("acceptance criteria")), None)
+    if ac_key and config["tracker"] == "jira":
+        for line in parsed[ac_key].splitlines():
+            if line.strip() and not re.match(r"^\s*[-*]\s+\[[ xX]\]\s+\S", line):
+                problems.append(err("ac_not_checkbox", "acceptance criteria must be checkbox items ('- [ ] ...'): %r" % line.strip()[:60], "description"))
+    if ac_key:
+        numbers, unnumbered = [], False
+        for line in parsed[ac_key].splitlines():
+            if not line.strip():
+                continue
+            match = AC_NUMBER_RE.match(line)
+            if match:
+                numbers.append(int(match.group(1)))
+            else:
+                unnumbered = True
+                problems.append(err("ac_not_numbered", "acceptance criteria must start with AC<n>: (e.g. '- [ ] AC1: ...'): %r" % line.strip()[:60], "description"))
+        if not unnumbered and numbers != list(range(1, len(numbers) + 1)):
+            problems.append(err("ac_out_of_sequence", "acceptance criteria must run AC1, AC2, ... with no gaps or repeats; found %s" % ", ".join("AC%d" % n for n in numbers), "description"))
     if ac_key:
         ac_lines = {_norm_line(l) for l in parsed[ac_key].splitlines() if len(_norm_line(l)) >= 20}
         for name, body in parsed.items():
