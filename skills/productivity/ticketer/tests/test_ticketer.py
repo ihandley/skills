@@ -509,6 +509,8 @@ class SubmitGateTests(Base):
         self.assertEqual(payload["additional_fields"]["labels"], ["auth-flow"])
         self.assertEqual(payload["additional_fields"]["priority"], {"name": "High"})
         self.assertEqual(payload["additional_fields"]["components"], [{"name": "Backend"}])
+        self.assertEqual(payload["contentFormat"], "html")
+        self.assertIn('<ul data-type="task-list"><li data-type="task-item"><input type="checkbox">', payload["description"])
         self.assertNotIn("mcp__", json.dumps(data))
 
     def test_second_submit_refused_without_resend(self):
@@ -1163,6 +1165,34 @@ class AdapterContractTests(unittest.TestCase):
         for adapter in self.adapters():
             for kind in adapter.METADATA_KINDS:
                 self.assertIn(kind, proc.stdout)
+
+
+class JiraBodyTests(unittest.TestCase):
+    def setUp(self):
+        sys.path.insert(0, str(TICKETER.parent))
+        from adapters import jira
+        self.jira = jira
+
+    def test_task_items_become_real_task_list_with_ticks(self):
+        body = "## Acceptance criteria\n- [ ] AC1: one `x`\n- [x] AC2: two\n"
+        text, fmt = self.jira._body(body)
+        self.assertEqual(fmt, "html")
+        self.assertEqual(
+            text,
+            '<h2>Acceptance criteria</h2><ul data-type="task-list">'
+            '<li data-type="task-item"><input type="checkbox"> AC1: one <code>x</code></li>'
+            '<li data-type="task-item"><input type="checkbox" checked> AC2: two</li></ul>',
+        )
+
+    def test_html_is_escaped_and_fences_and_lists_convert(self):
+        body = "a <b> & c\n\n* one\n* two\n\n```\n<x>\n```\n- [ ] AC1: go\n"
+        text, _ = self.jira._body(body)
+        self.assertIn("<p>a &lt;b&gt; &amp; c</p>", text)
+        self.assertIn("<ul><li>one</li><li>two</li></ul>", text)
+        self.assertIn("<pre><code>&lt;x&gt;</code></pre>", text)
+
+    def test_description_without_task_items_stays_markdown(self):
+        self.assertEqual(self.jira._body("## Context\nplain\n"), ("## Context\nplain\n", "markdown"))
 
 
 if __name__ == "__main__":

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import html as _html
 import re
 
 from lookup import lookup_ci
@@ -253,6 +254,101 @@ def validate(draft, config, metadata):
     return problems
 
 
+_TASK = re.compile(r"^\s*[-*]\s+\[([ xX])\]\s+(.*)$")
+_BULLET = re.compile(r"^\s*[-*]\s+(.*)$")
+_ORDERED = re.compile(r"^\s*\d+[.)]\s+(.*)$")
+_HEADING = re.compile(r"^(#{1,6})\s+(.*?)\s*$")
+
+
+def _inline(text):
+    out = []
+    for part in re.split(r"(`[^`]+`)", text):
+        if part.startswith("`") and part.endswith("`") and len(part) > 1:
+            out.append("<code>%s</code>" % _html.escape(part[1:-1], quote=False))
+            continue
+        part = _html.escape(part, quote=False)
+        part = re.sub(r"\*\*([^*]+)\*\*", r"<strong>\1</strong>", part)
+        part = re.sub(r"\[([^\]]+)\]\((https?://[^)\s]+)\)", r'<a href="\2">\1</a>', part)
+        out.append(part)
+    return "".join(out)
+
+
+def _list_kind(line):
+    if _TASK.match(line):
+        return "task"
+    if _BULLET.match(line):
+        return "bullet"
+    if _ORDERED.match(line):
+        return "ordered"
+    return None
+
+
+def _render_list(kind, lines):
+    if kind == "task":
+        items = []
+        for line in lines:
+            m = _TASK.match(line)
+            items.append('<li data-type="task-item"><input type="checkbox"%s> %s</li>'
+                         % (" checked" if m.group(1) in "xX" else "", _inline(m.group(2))))
+        return '<ul data-type="task-list">%s</ul>' % "".join(items)
+    pattern, tag = (_BULLET, "ul") if kind == "bullet" else (_ORDERED, "ol")
+    items = "".join("<li>%s</li>" % _inline(pattern.match(line).group(1)) for line in lines)
+    return '<ol start="1">%s</ol>' % items if tag == "ol" else "<ul>%s</ul>" % items
+
+
+def md_to_html(text):
+    """Convert the markdown subset tickets use (headings, lists, task items, fences, inline code) to Jira HTML."""
+    blocks, para, lines, i = [], [], text.splitlines(), 0
+
+    def flush():
+        if para:
+            blocks.append("<p>%s</p>" % "<br>".join(_inline(l.strip()) for l in para))
+            para.clear()
+
+    while i < len(lines):
+        line = lines[i]
+        if line.strip().startswith("```"):
+            flush()
+            i += 1
+            code = []
+            while i < len(lines) and not lines[i].strip().startswith("```"):
+                code.append(lines[i])
+                i += 1
+            i += 1
+            blocks.append("<pre><code>%s</code></pre>" % _html.escape("\n".join(code), quote=False))
+            continue
+        m = _HEADING.match(line)
+        if m:
+            flush()
+            level = len(m.group(1))
+            blocks.append("<h%d>%s</h%d>" % (level, _inline(m.group(2)), level))
+            i += 1
+            continue
+        kind = _list_kind(line)
+        if kind:
+            flush()
+            run = []
+            while i < len(lines) and _list_kind(lines[i]) == kind:
+                run.append(lines[i])
+                i += 1
+            blocks.append(_render_list(kind, run))
+            continue
+        if line.strip():
+            para.append(line)
+        else:
+            flush()
+        i += 1
+    flush()
+    return "".join(blocks)
+
+
+def _body(text):
+    """Markdown would store a `- [ ]` item as literal text. Send task items as HTML so Jira makes real checkboxes."""
+    if any(_TASK.match(line) for line in text.splitlines()):
+        return md_to_html(text), "html"
+    return text, "markdown"
+
+
 def build(draft, body_path):
     cloud = draft["cloud_id"]
     if draft["operation"] == "create":
@@ -269,7 +365,7 @@ def build(draft, body_path):
             "summary": draft["summary"], "contentFormat": "markdown",
         }
         if draft.get("description"):
-            payload["description"] = draft["description"]
+            payload["description"], payload["contentFormat"] = _body(draft["description"])
         if draft.get("parent"):
             payload["parent"] = draft["parent"]
         if draft.get("assignee"):
@@ -277,11 +373,11 @@ def build(draft, body_path):
         if extra:
             payload["additional_fields"] = extra
         return {"operation": "jira.create_issue", "payload": payload}
-    fields = {}
+    fields, content_format = {}, "markdown"
     if "summary" in draft:
         fields["summary"] = draft["summary"]
     if "description" in draft:
-        fields["description"] = draft["description"]
+        fields["description"], content_format = _body(draft["description"])
     if "labels" in draft:
         fields["labels"] = draft["labels"]
     if "priority" in draft:
@@ -294,7 +390,7 @@ def build(draft, body_path):
         fields["parent"] = {"key": draft["parent"]}
     fields.update(draft.get("fields", {}))
     return {"operation": "jira.edit_issue",
-            "payload": {"cloudId": cloud, "issueIdOrKey": draft["key"], "fields": fields, "contentFormat": "markdown"},
+            "payload": {"cloudId": cloud, "issueIdOrKey": draft["key"], "fields": fields, "contentFormat": content_format},
             "note": "labels and components replace the whole list; description and summary replace the old value"}
 
 
