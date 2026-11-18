@@ -26,6 +26,15 @@ REFRESH_TRIGGER = (
 )
 
 
+POINTS_FIELD = "customfield_10016"
+WINDOW_WEEKS = 12
+COUNT_STATUSES = ("Testing", "Done")
+CANCELED = "Canceled"
+MIN_ACTIVE_WEEKS = 6
+VOLATILE_CV = 1.0
+SEARCH_FIELDS = ["summary", "status", "parent", "subtasks", "assignee"]
+
+
 class Refusal(Exception):
     pass
 
@@ -39,14 +48,128 @@ def load_json(path: Path, what: str):
         raise Refusal(f"{what} is not valid JSON ({path}): {exc}")
 
 
-def load_history(data: dict, base: Path) -> list[dict]:
+def monday(d: date) -> date:
+    return d - timedelta(days=d.weekday())
+
+
+def as_of_date(data: dict) -> date:
+    return date.fromisoformat(data["as_of"]) if data.get("as_of") else date.today()
+
+
+def window_start(data: dict) -> date:
+    return monday(as_of_date(data)) - timedelta(weeks=WINDOW_WEEKS)
+
+
+def queries(inputs_path: Path) -> dict:
+    data = load_json(inputs_path, "inputs file")
+    if not data.get("assignee"):
+        raise Refusal("inputs file is missing required field: assignee")
+    field = data.get("points_field", POINTS_FIELD)
+    start = window_start(data).isoformat()
+    jql = (
+        f'assignee = "{data["assignee"]}" AND status changed TO ("Testing", "Done") '
+        f'AFTER "{start}" ORDER BY updated ASC'
+    )
+    return {
+        "operations": [{
+            "purpose": "pace",
+            "tool": "searchJiraIssuesUsingJql",
+            "jql": jql,
+            "fields": SEARCH_FIELDS + [field],
+            "expand": "changelog",
+            "note": "Page through every result; keep each page.",
+        }],
+        "save_results_note": (
+            "Save the raw results (one object, or a list of pages, each with an issues list) to a file "
+            "and set jira_results_file in the inputs file to its path, relative to the inputs file."
+        ),
+        "points_field": field,
+    }
+
+
+def first_count_date(issue: dict) -> date | None:
+    days = []
+    for h in issue.get("changelog", {}).get("histories", []):
+        if any(i.get("field") == "status" and i.get("toString") in COUNT_STATUSES for i in h.get("items", [])):
+            days.append(date.fromisoformat(h["created"][:10]))
+    return min(days) if days else None
+
+
+def ended_canceled(issue: dict) -> bool:
+    if (issue.get("fields", {}).get("status") or {}).get("name") == CANCELED:
+        return True
+    moves = sorted(
+        (h["created"], i["toString"])
+        for h in issue.get("changelog", {}).get("histories", [])
+        for i in h.get("items", []) if i.get("field") == "status"
+    )
+    return bool(moves) and moves[-1][1] == CANCELED
+
+
+def pace_from_results(data: dict, base: Path) -> tuple[list[dict], list[str], list[str]]:
+    raw = load_json(base / data["jira_results_file"], "Jira results file")
+    pages = raw if isinstance(raw, list) else [raw]
+    issues = [i for page in pages for i in page.get("issues", [])]
+    field = data.get("points_field", POINTS_FIELD)
+    parents = {(i.get("fields", {}).get("parent") or {}).get("key") for i in issues}
+    start = window_start(data)
+    end = start + timedelta(weeks=WINDOW_WEEKS)
+    totals = {start + timedelta(weeks=n): 0.0 for n in range(WINDOW_WEEKS)}
+    unpointed, pointed_seen = [], 0
+    for issue in issues:
+        f = issue.get("fields", {})
+        if ended_canceled(issue) or f.get("subtasks") or issue.get("key") in parents:
+            continue
+        counted = first_count_date(issue)
+        if counted is None or not (start <= counted < end):
+            continue
+        pts = f.get(field)
+        if not pts:
+            unpointed.append(issue["key"])
+            continue
+        pointed_seen += 1
+        totals[monday(counted)] += float(pts)
+    warnings = []
+    if unpointed:
+        warnings.append(
+            f"Unpointed tickets left out of Pace ({len(unpointed)}): {', '.join(unpointed)}. Fix the points before trusting the dates."
+        )
+    if unpointed and not pointed_seen:
+        raise Refusal(
+            f"no history: the points field {field} is empty on every counted ticket ({', '.join(unpointed)}). "
+            "Check the points_field input names the field this tenant populates."
+        )
+    history = [{"week": w.isoformat(), "points": int(p) if p == int(p) else p} for w, p in sorted(totals.items())]
+    return history, warnings, unpointed
+
+
+def history_warnings(history: list[dict]) -> list[str]:
+    pts = [float(w.get("points", 0)) for w in history]
+    warnings = []
+    active = sum(1 for p in pts if p > 0)
+    if len(pts) < WINDOW_WEEKS or active < MIN_ACTIVE_WEEKS:
+        warnings.append(
+            f"Short history: {active} of {len(pts)} weeks have points (want {WINDOW_WEEKS} weeks, at least {MIN_ACTIVE_WEEKS} active). Percentiles are weak."
+        )
+    mean = sum(pts) / len(pts) if pts else 0
+    if mean > 0:
+        sd = (sum((p - mean) ** 2 for p in pts) / len(pts)) ** 0.5
+        if sd / mean > VOLATILE_CV:
+            warnings.append(f"Volatile history: weekly Pace varies widely (stdev {sd:.1f} on mean {mean:.1f}). Percentiles are weak.")
+    return warnings
+
+
+def load_history(data: dict, base: Path) -> tuple[list[dict], list[str], list[str]]:
+    warnings, unpointed = [], []
     history = data.get("history")
     if history is None and data.get("history_file"):
         history = load_json(base / data["history_file"], "history file")
+    if history is None and data.get("jira_results_file"):
+        history, warnings, unpointed = pace_from_results(data, base)
     history = history or []
     if not any(float(w.get("points", 0)) > 0 for w in history):
         raise Refusal("no history: saved weekly Pace is empty or has no points, so no date can be forecast.")
-    return history
+    return history, warnings + history_warnings(history), unpointed
 
 
 def percentile(sorted_values: list[int], pct: int) -> int:
@@ -72,7 +195,7 @@ def forecast(inputs_path: Path) -> dict:
     for key in ("remaining_points", "start_date"):
         if key not in data:
             raise Refusal(f"inputs file is missing required field: {key}")
-    history = load_history(data, inputs_path.parent)
+    history, warnings, unpointed = load_history(data, inputs_path.parent)
     start = date.fromisoformat(data["start_date"])
     share = data.get("capacity_share", [1, 1])
     share = (float(share[0]), float(share[-1]))
@@ -93,12 +216,15 @@ def forecast(inputs_path: Path) -> dict:
         "expiry": (start + timedelta(days=expiry_days)).isoformat(),
         "refresh_trigger": REFRESH_TRIGGER,
         "history": history,
+        "warnings": warnings,
+        "unpointed": unpointed,
         "inputs": {
             "remaining_points": data["remaining_points"],
             "start_date": data["start_date"],
             "capacity_share": list(share),
             "seed": seed,
             "trials": trials,
+            "points_field": data.get("points_field", POINTS_FIELD),
         },
     }
 
@@ -111,9 +237,11 @@ def main(argv: list[str] | None = None) -> int:
     sub = parser.add_subparsers(dest="command", required=True)
     p = sub.add_parser("forecast", help="forecast one epic from an inputs file and saved Pace")
     p.add_argument("--inputs", required=True, type=Path)
+    q = sub.add_parser("queries", help="print the Jira search to run for Pace; never calls Jira")
+    q.add_argument("--inputs", required=True, type=Path)
     args = parser.parse_args(argv)
     try:
-        result = forecast(args.inputs)
+        result = queries(args.inputs) if args.command == "queries" else forecast(args.inputs)
     except Refusal as exc:
         print(f"forecaster: {exc}", file=sys.stderr)
         return 2
