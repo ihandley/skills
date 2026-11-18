@@ -8,6 +8,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from datetime import date
 from pathlib import Path
 
 FORECASTER = Path(__file__).resolve().parents[1] / "forecaster.py"
@@ -428,6 +429,115 @@ class TestScope(ForecastCase):
         s = self.scoped(scope_file=str(self.dir / "cyc.json"))
         self.assertEqual(sorted(e["epic"] for e in s["epics"]), ["LV-10", "LV-11", "LV-12"])
         self.assertTrue(any("cycle" in w.lower() for w in s["warnings"]))
+
+
+def three_epics(a, b, c):
+    out = two_epics(a, b)
+    out["issues"] += [two_epics(0, 0)["issues"][0] | {"key": "LV-22"},
+                      {"key": "LV-221", "fields": {"issuetype": {"name": "Story"}, "parent": {"key": "LV-22"}, "subtasks": [],
+                       "customfield_10016": c, "status": {"name": "To Do", "statusCategory": {"key": "new"}}}}]
+    return out
+
+
+def two_epics(a, b):
+    def epic(k):
+        return {"key": k, "fields": {"issuetype": {"name": "Epic"}, "issuelinks": [], "parent": {"key": "LV-1"},
+                "status": {"name": "To Do", "statusCategory": {"key": "new"}}}}
+    def story(k, parent, pts):
+        return {"key": k, "fields": {"issuetype": {"name": "Story"}, "parent": {"key": parent}, "subtasks": [],
+                "customfield_10016": pts, "status": {"name": "To Do", "statusCategory": {"key": "new"}}}}
+    issues = [epic("LV-20"), epic("LV-21"), story("LV-201", "LV-20", a)]
+    if b:
+        issues.append(story("LV-211", "LV-21", b))
+    return {"issues": issues}
+
+
+class TestChain(ForecastCase):
+    def chain(self, *extra, **over):
+        data = inputs(scope_file=str(FIXTURES / "scope_search.json"), initiative="LV-1")
+        del data["remaining_points"]
+        data.update(over)
+        return self.ok(data, *extra)
+
+    def test_each_epic_gets_likely_50_and_due_85_in_order(self):
+        out = self.chain()
+        rows = out["chain"]
+        self.assertEqual([r["epic"] for r in rows], ["LV-12", "LV-10", "LV-11"])
+        for r in rows:
+            self.assertRegex(r["likely_date"], r"^\d{4}-\d\d-\d\d$")
+            self.assertGreaterEqual(r["due_date"], r["likely_date"])
+            self.assertEqual((r["likely_percentile"], r["due_percentile"]), (50, 85))
+        self.assertEqual(out["likely_date"], rows[-1]["likely_date"])
+        self.assertEqual(out["due_date"], rows[-1]["due_date"])
+
+    def test_constant_pace_chain_dates_are_exact(self):
+        # 10 points a week, share 1: LV-12 (2) done wk 1, LV-10 (5) cumulative 7 wk 1, LV-11 (5) cumulative 12 wk 2.
+        hist = [{"week": f"2026-09-{d:02d}", "points": 10} for d in (7, 14, 21)]
+        rows = self.chain(history=hist, capacity_share=[1, 1])["chain"]
+        self.assertEqual([r["due_date"] for r in rows], ["2026-11-30", "2026-11-30", "2026-12-07"])
+
+    def test_chain_percentile_is_from_whole_runs_not_summed(self):
+        # Pace is 0 or 10 with equal odds; three epics of 10 points each need three good weeks.
+        # Worked by hand: one epic's p85 is 3 weeks, the chain's p85 is 8 weeks, summed p85s would be 9.
+        hist = [{"week": "2026-09-07", "points": 0}, {"week": "2026-09-14", "points": 10}]
+        data = inputs(history=hist, capacity_share=[1, 1], trials=4000, seed=5,
+                      scope_file=str(self.dir / "two.json"), initiative="LV-1")
+        del data["remaining_points"]
+        (self.dir / "two.json").write_text(json.dumps(three_epics(10, 10, 10)))
+        rows = self.ok(data)["chain"]
+        single = [self.ok(inputs(history=hist, capacity_share=[1, 1], trials=4000, seed=5,
+                                 remaining_points=10))["due_date"]]
+        weeks = lambda d: (date.fromisoformat(d) - date(2026, 11, 23)).days // 7
+        self.assertEqual(weeks(single[0]), 3)
+        self.assertEqual(weeks(rows[2]["due_date"]), 8)
+
+    def test_later_epic_never_earlier(self):
+        for seed in range(5):
+            rows = self.chain(seed=seed)["chain"]
+            for p in ("likely_date", "due_date"):
+                dates = [r[p] for r in rows]
+                self.assertEqual(dates, sorted(dates))
+
+    def test_zero_remaining_epic_matches_epic_before(self):
+        (self.dir / "z.json").write_text(json.dumps(two_epics(10, 0)))
+        data = inputs(scope_file=str(self.dir / "z.json"), initiative="LV-1")
+        del data["remaining_points"]
+        rows = self.ok(data)["chain"]
+        self.assertEqual(rows[0]["due_date"], rows[1]["due_date"])
+
+    def test_percentiles_flag_selects_levels(self):
+        out = self.chain("--percentiles", "50,70,95")
+        for r in out["chain"]:
+            self.assertEqual(list(r["dates"]), ["50", "70", "95"])
+            self.assertLessEqual(r["dates"]["50"], r["dates"]["70"])
+            self.assertLessEqual(r["dates"]["70"], r["dates"]["95"])
+        self.assertEqual(out["percentiles"], [50, 70, 95])
+        self.assertEqual(out["chain"][0]["dates"]["50"], out["chain"][0]["likely_date"])
+
+    def test_default_percentiles_are_50_and_85(self):
+        out = self.chain()
+        self.assertEqual(out["percentiles"], [50, 85])
+        self.assertEqual(out["chain"][0]["dates"]["85"], out["chain"][0]["due_date"])
+
+    def test_bad_percentiles_refused(self):
+        for bad in ("0", "101", "abc", "50,,70", ""):
+            r = self.run_cli(inputs(), "--percentiles", bad)
+            self.assertEqual(r.returncode, 2, bad)
+            self.assertIn("percentiles", r.stderr)
+
+    def test_single_epic_accepts_percentiles(self):
+        out = self.ok(inputs(), "--percentiles", "50,95")
+        self.assertEqual(out["percentiles"], [50, 95])
+        self.assertEqual(out["dates"]["50"], out["likely_date"])
+        self.assertNotIn("chain", out)
+
+    def test_chain_is_deterministic(self):
+        self.assertEqual(self.chain(seed=9), self.chain(seed=9))
+
+    def test_named_epic_stays_a_single_epic_forecast(self):
+        data = inputs(scope_file=str(FIXTURES / "scope_search.json"), epic="LV-10", seed=3)
+        del data["remaining_points"]
+        self.assertNotIn("chain", self.ok(data))
 
 
 class TestInvocation(unittest.TestCase):

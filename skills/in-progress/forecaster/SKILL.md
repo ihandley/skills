@@ -1,6 +1,6 @@
 ---
 name: forecaster
-description: Forecast a likely date (50%) and a due date (85%) for one epic from your saved weekly Pace.
+description: Forecast a likely date (50%) and a due date (85%) per epic, simulating the whole epic chain from your saved weekly Pace.
 disable-model-invocation: true
 compatibility: Requires Python 3.11+
 metadata:
@@ -11,7 +11,7 @@ metadata:
 
 `forecaster.py` does all the arithmetic. It never touches the network or a credential. You gather inputs and report what it prints.
 
-Run `python3 <this-skill>/forecaster.py <cmd>`. `queries pace --inputs <file>` and `queries scope --key <key>` print the Jira searches to run; `forecast --inputs <file>` does the arithmetic. It prints one JSON object. Exit 2 means a refusal; report the message and stop. Exit 3 means Python is too old.
+Run `python3 <this-skill>/forecaster.py <cmd>`. `queries pace --inputs <file>` and `queries scope --key <key>` print the Jira searches to run; `forecast --inputs <file> [--percentiles 50,70,95]` does the arithmetic (default levels 50,85). It prints one JSON object. Exit 2 means a refusal; report the message and stop. Exit 3 means Python is too old.
 
 ## Inputs file (JSON)
 
@@ -40,6 +40,10 @@ Ask the user only for fields that are missing. Save answers to the inputs file s
 1. Build or read the inputs file. If Pace is not saved yet, run `queries pace`, run each emitted operation through the Atlassian tool (all pages, with changelog), save the raw results, and set `jira_results_file`. The script never calls Jira.
 2. Run `forecast`. Never invent history. Empty history is refused: tell the user, do not guess a date.
 3. Report `likely_date` (date by which 50% of runs finish), `due_date` (date by which 85% of runs finish), `expiry` and `refresh_trigger`. A single date is not a forecast.
+
+## Epic chain
+
+With `scope_file` and no `epic` or `remaining_points`, `forecast` runs every epic in order inside each trial (ADR 0004). `chain` has one row per epic, in order: `likely_date` (50%), `due_date` (85%) and `dates` (every level asked for). Each is a percentile of that epic's cumulative finish date across whole runs, never a sum of per-epic percentiles, and a later epic is never earlier than the one before. The top-level dates are the last epic's. Report each epic's pair. With `epic` set or no `scope_file`, you get the single-epic forecast.
 
 ## Pace rules
 

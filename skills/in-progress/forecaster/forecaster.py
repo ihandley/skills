@@ -291,28 +291,59 @@ def percentile(sorted_values: list[int], pct: int) -> int:
     return sorted_values[rank - 1]
 
 
-def simulate(remaining: float, paces: list[float], share: tuple[float, float], trials: int, seed: int) -> list[int]:
+def simulate_chain(cumulative: list[float], paces: list[float], share: tuple[float, float], trials: int, seed: int) -> list[list[int]]:
+    """Run the epics in order in each trial. cumulative[i] is points needed through epic i.
+
+    Returns, per epic, the sorted weeks at which each whole run finished that epic.
+    """
     rng = random.Random(seed)
-    weeks_needed = []
+    per_epic: list[list[int]] = [[] for _ in cumulative]
     for _ in range(trials):
         s = rng.uniform(*share)
-        done, weeks = 0.0, 0
-        while done < remaining and weeks < MAX_WEEKS:
+        done, weeks, i = 0.0, 0, 0
+        while i < len(cumulative):
+            while i < len(cumulative) and done >= cumulative[i]:
+                per_epic[i].append(weeks)
+                i += 1
+            if i == len(cumulative):
+                break
+            if weeks >= MAX_WEEKS:
+                for j in range(i, len(cumulative)):
+                    per_epic[j].append(weeks)
+                break
             done += rng.choice(paces) * s
             weeks += 1
-        weeks_needed.append(weeks)
-    return sorted(weeks_needed)
+    return [sorted(w) for w in per_epic]
 
 
-def forecast(inputs_path: Path) -> dict:
+def simulate(remaining: float, paces: list[float], share: tuple[float, float], trials: int, seed: int) -> list[int]:
+    return simulate_chain([remaining], paces, share, trials, seed)[0]
+
+
+def parse_percentiles(text: str | None) -> list[int]:
+    if text is None:
+        return [LIKELY_PERCENTILE, DUE_PERCENTILE]
+    try:
+        levels = [int(p) for p in text.split(",")]
+    except ValueError:
+        levels = []
+    if not levels or any(not 1 <= p <= 100 for p in levels):
+        raise Refusal(f"percentiles must be a comma-separated list of whole numbers from 1 to 100, got {text!r}")
+    return sorted(set(levels))
+
+
+def forecast(inputs_path: Path, percentiles: str | None = None) -> dict:
+    levels = parse_percentiles(percentiles)
     data = load_json(inputs_path, "inputs file")
     scoped = scope(data, inputs_path.parent) if data.get("scope_file") else None
+    rows = {r["epic"]: r for r in scoped["epics"]} if scoped else {}
+    chain_epics = None
     if scoped and "remaining_points" not in data:
-        rows = {r["epic"]: r for r in scoped["epics"]}
         if data.get("epic") in rows:
             data["remaining_points"] = rows[data["epic"]]["remaining_points"]
         else:
-            data["remaining_points"] = sum(r["remaining_points"] for r in scoped["epics"])
+            chain_epics = scoped["epics"]
+            data["remaining_points"] = sum(r["remaining_points"] for r in chain_epics)
     for key in ("remaining_points", "start_date"):
         if key not in data:
             raise Refusal(f"inputs file is missing required field: {key}")
@@ -323,17 +354,31 @@ def forecast(inputs_path: Path) -> dict:
     seed = int(data.get("seed", 0))
     trials = int(data.get("trials", DEFAULT_TRIALS))
     expiry_days = int(data.get("expiry_days", DEFAULT_EXPIRY_DAYS))
-    weeks = simulate(float(data["remaining_points"]), [float(w["points"]) for w in history], share, trials, seed)
+    paces = [float(w["points"]) for w in history]
+    if chain_epics:
+        cumulative, total = [], 0.0
+        for r in chain_epics:
+            total += r["remaining_points"]
+            cumulative.append(total)
+    else:
+        cumulative = [float(data["remaining_points"])]
+    all_weeks = simulate_chain(cumulative, paces, share, trials, seed)
 
-    def at(pct: int) -> str:
+    def at(weeks: list[int], pct: int) -> str:
         return (start + timedelta(weeks=percentile(weeks, pct))).isoformat()
 
+    def dates(weeks: list[int]) -> dict:
+        return {str(p): at(weeks, p) for p in levels}
+
+    last = all_weeks[-1]
     result = {
         "epic": data.get("epic"),
-        "likely_date": at(LIKELY_PERCENTILE),
+        "likely_date": at(last, LIKELY_PERCENTILE),
         "likely_percentile": LIKELY_PERCENTILE,
-        "due_date": at(DUE_PERCENTILE),
+        "due_date": at(last, DUE_PERCENTILE),
         "due_percentile": DUE_PERCENTILE,
+        "percentiles": levels,
+        "dates": dates(last),
         "expiry": (start + timedelta(days=expiry_days)).isoformat(),
         "refresh_trigger": REFRESH_TRIGGER,
         "history": history,
@@ -348,6 +393,19 @@ def forecast(inputs_path: Path) -> dict:
             "points_field": data.get("points_field", POINTS_FIELD),
         },
     }
+    if chain_epics:
+        result["chain"] = [
+            {
+                "epic": r["epic"],
+                "remaining_points": r["remaining_points"],
+                "likely_date": at(w, LIKELY_PERCENTILE),
+                "likely_percentile": LIKELY_PERCENTILE,
+                "due_date": at(w, DUE_PERCENTILE),
+                "due_percentile": DUE_PERCENTILE,
+                "dates": dates(w),
+            }
+            for r, w in zip(chain_epics, all_weeks)
+        ]
     if scoped:
         result["scope"] = scoped
     return result
@@ -361,6 +419,7 @@ def main(argv: list[str] | None = None) -> int:
     sub = parser.add_subparsers(dest="command", required=True)
     p = sub.add_parser("forecast", help="forecast one epic from an inputs file and saved Pace")
     p.add_argument("--inputs", required=True, type=Path)
+    p.add_argument("--percentiles", help="comma-separated levels, default 50,85 (for example 50,70,95)")
     q = sub.add_parser("queries", help="emit the Jira operations to run; never calls Jira")
     qsub = q.add_subparsers(dest="mode", required=True)
     qp = qsub.add_parser("pace", help="resolved-ticket search with changelog for Pace")
@@ -372,7 +431,7 @@ def main(argv: list[str] | None = None) -> int:
         if args.command == "queries":
             result = queries(args.inputs) if args.mode == "pace" else scope_queries(args.key)
         else:
-            result = forecast(args.inputs)
+            result = forecast(args.inputs, args.percentiles)
     except Refusal as exc:
         print(f"forecaster: {exc}", file=sys.stderr)
         return 2
