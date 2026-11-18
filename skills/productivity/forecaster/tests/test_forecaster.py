@@ -765,9 +765,9 @@ class TestInvocation(unittest.TestCase):
         yaml = (self.root / "agents" / "openai.yaml").read_text()
         self.assertIn("allow_implicit_invocation: false", yaml)
 
-    def test_listed_in_in_progress_readme(self):
+    def test_listed_in_bucket_readme(self):
         readme = (self.root.parent / "README.md").read_text()
-        self.assertIn("[forecaster](forecaster/SKILL.md)", readme)
+        self.assertIn("[forecaster](./forecaster/SKILL.md)", readme)
 
 
 if __name__ == "__main__":

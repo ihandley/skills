@@ -8,7 +8,7 @@ Promoted. Each skill here is listed in the top-level README, registered in `.cla
 
 Reachable only when you type them (`disable-model-invocation: true`, and `policy.allow_implicit_invocation: false` in `agents/openai.yaml`).
 
-None yet.
+- **[forecaster](./forecaster/SKILL.md)**: Forecast a likely date (50%) and a due date (85%) per epic, simulating the whole epic chain from your saved weekly Pace.
 
 ## Model-invoked
 
