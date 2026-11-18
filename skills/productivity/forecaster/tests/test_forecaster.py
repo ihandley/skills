@@ -92,13 +92,21 @@ class TestDeterminism(ForecastCase):
 
 class TestExpiry(ForecastCase):
     def test_forecast_carries_expiry_and_refresh_trigger(self):
-        out = self.ok(inputs())
-        self.assertEqual(out["expiry"], "2026-12-21")  # start_date + 28 days
+        out = self.ok(inputs(as_of="2026-11-18"))
+        self.assertEqual(out["expiry"], "2026-12-16")  # Forecast date + 28 days
         self.assertTrue(out["refresh_trigger"].strip())
 
     def test_expiry_days_is_an_input(self):
-        out = self.ok(inputs(expiry_days=14))
-        self.assertEqual(out["expiry"], "2026-12-07")
+        out = self.ok(inputs(as_of="2026-11-18", expiry_days=14))
+        self.assertEqual(out["expiry"], "2026-12-02")
+
+    def test_expiry_ignores_a_far_future_start_date(self):
+        out = self.ok(inputs(as_of="2026-11-18", start_date="2027-06-01"))
+        self.assertEqual(out["expiry"], "2026-12-16")
+
+    def test_expiry_without_as_of_is_today_plus_days(self):
+        out = self.ok(inputs(expiry_days=10))
+        self.assertEqual(out["expiry"], (date.today() + __import__("datetime").timedelta(days=10)).isoformat())
 
     def test_percentiles_are_labelled(self):
         out = self.ok(inputs())
@@ -154,7 +162,7 @@ class TestBadInputs(ForecastCase):
         self.assertIn("nope.json", r.stderr)
 
 
-PTS = "customfield_10016"
+PTS = "customfield_10024"
 
 
 def issue(key, points, history, status="Done", parent=None, subtasks=None, pts_field=PTS):
@@ -253,7 +261,7 @@ class TestPaceWarnings(PaceCase):
 
     def test_points_field_is_the_configured_one(self):
         t = issue("A-1", 4, [("2026-10-06", "In Progress", "Done")], pts_field="customfield_10002")
-        t["fields"]["customfield_10016"] = 99
+        t["fields"]["customfield_10024"] = 99
         weeks, out = self.pace([t], points_field="customfield_10002")
         self.assertEqual(sum(weeks.values()), 4)
         self.assertEqual(out["inputs"]["points_field"], "customfield_10002")
@@ -262,7 +270,7 @@ class TestPaceWarnings(PaceCase):
         t = issue("A-1", 4, [("2026-10-06", "In Progress", "Done")], pts_field="customfield_10002")
         r = self.run_cli(self.pace_inputs([t]))
         self.assertEqual(r.returncode, 2)  # no points anywhere: refused as empty history
-        self.assertIn("customfield_10016", r.stderr)
+        self.assertIn("customfield_10024", r.stderr)
         self.assertIn("empty", r.stderr.lower())
 
     def test_short_history_warns(self):
@@ -300,6 +308,40 @@ class TestPaceWarnings(PaceCase):
         self.assertEqual(sum(w["points"] for w in out["history"]), 5)
 
 
+class TestAsOfDeterminism(PaceCase):
+    def test_results_file_without_as_of_refused_naming_as_of(self):
+        data = self.pace_inputs([issue("A-1", 5, [("2026-10-06", "In Progress", "Done")])])
+        del data["as_of"]
+        r = self.run_cli(data)
+        self.assertEqual(r.returncode, 2)
+        self.assertIn("as_of", r.stderr)
+        self.assertEqual(r.stdout, "")
+
+    def test_saved_history_does_not_need_as_of(self):
+        self.assertEqual(self.run_cli(inputs()).returncode, 0)
+
+
+class TestMaxWeeksCap(ForecastCase):
+    SLOW = dict(history=[{"week": "2026-09-07", "points": 0.001}], remaining_points=1000,
+                capacity_share=[1, 1], trials=5)
+
+    def test_capped_trials_warn_instead_of_silently_writing_dates(self):
+        out = self.ok(inputs(**self.SLOW))
+        self.assertTrue(any("520" in w and "cap" in w.lower() for w in out["warnings"]), out["warnings"])
+
+    def test_no_cap_warning_on_a_normal_forecast(self):
+        out = self.ok(inputs())
+        self.assertFalse(any("cap" in w.lower() for w in out["warnings"]))
+
+    def test_cap_warning_reaches_the_rendered_plan(self):
+        (self.dir / "f.json").write_text(json.dumps(self.ok(inputs(**self.SLOW))))
+        (self.dir / "p.json").write_text(json.dumps({k: "x" for k in
+            ("deferred_scope", "waits_outside_the_plan", "risks", "asks_of_manager")}))
+        r = subprocess.run([sys.executable, str(FORECASTER), "render", "--forecast", str(self.dir / "f.json"),
+                            "--prose", str(self.dir / "p.json")], capture_output=True, text=True)
+        self.assertIn("cap", r.stdout.lower())
+
+
 class TestQueries(ForecastCase):
     def queries(self, data):
         path = self.dir / "q.json"
@@ -313,16 +355,31 @@ class TestQueries(ForecastCase):
         self.assertEqual(r.returncode, 0, r.stderr)
         out = json.loads(r.stdout)
         op = out["operations"][0]
-        self.assertEqual(op["tool"], "searchJiraIssuesUsingJql")
-        self.assertIn('assignee = "ian.handley"', op["jql"])
-        self.assertIn("2026-08-31", op["jql"])
-        self.assertIn("Testing", op["jql"])
-        self.assertIn("Done", op["jql"])
-        self.assertIn(PTS, op["fields"])
+        self.assertEqual(op["operation"], "jira.search_issues")
+        payload = op["payload"]
+        self.assertIn('assignee = "ian.handley"', payload["jql"])
+        self.assertIn("2026-08-31", payload["jql"])
+        self.assertIn("Testing", payload["jql"])
+        self.assertIn("Done", payload["jql"])
+        self.assertIn(PTS, payload["fields"])
         for f in ("status", "parent", "subtasks"):
-            self.assertIn(f, op["fields"])
-        self.assertEqual(op["expand"], "changelog")
+            self.assertIn(f, payload["fields"])
+        self.assertEqual(payload["expand"], "changelog")
         self.assertIn("jira_results_file", out["save_results_note"])
+
+    def test_default_points_field_is_10024_and_stated(self):
+        out = json.loads(self.queries({"assignee": "ian", "as_of": PACE_AS_OF}).stdout)
+        self.assertEqual(out["points_field"], "customfield_10024")
+        self.assertIn("customfield_10024", out["operations"][0]["payload"]["fields"])
+
+    def test_pace_and_scope_queries_share_one_descriptor_shape(self):
+        pace = json.loads(self.queries({"assignee": "ian", "as_of": PACE_AS_OF}).stdout)
+        scope = json.loads(subprocess.run([sys.executable, str(FORECASTER), "queries", "scope", "--key", "LV-1"],
+                                          capture_output=True, text=True).stdout)
+        for op in pace["operations"] + scope["operations"]:
+            self.assertEqual(op["operation"], "jira.search_issues")
+            self.assertIn("jql", op["payload"])
+            self.assertIn("fields", op["payload"])
 
     def test_missing_assignee_refused(self):
         r = self.queries({"as_of": PACE_AS_OF})
@@ -347,12 +404,12 @@ class TestQueriesScope(unittest.TestCase):
         self.assertEqual(r.returncode, 0, r.stderr)
         out = json.loads(r.stdout)
         op = out["operations"][0]
-        self.assertEqual(op["operation"], "jira.search")
+        self.assertEqual(op["operation"], "jira.search_issues")
         jql = op["payload"]["jql"]
         self.assertIn("LV-1", jql)
         self.assertIn("issuetype = Epic", jql)
         self.assertIn("issuelinks", op["payload"]["fields"])
-        self.assertIn("customfield_10016", op["payload"]["fields"])
+        self.assertIn("customfield_10024", op["payload"]["fields"])
         self.assertIn("issuelinks", " ".join(out["operations"][0]["payload"]["fields"]))
 
     def test_second_operation_searches_child_tickets(self):
@@ -366,6 +423,20 @@ class TestQueriesScope(unittest.TestCase):
 
     def test_key_required(self):
         self.assertNotEqual(self.run_q().returncode, 0)
+
+    def test_points_field_comes_from_inputs_and_is_stated(self):
+        with tempfile.TemporaryDirectory() as d:
+            path = Path(d) / "i.json"
+            path.write_text(json.dumps({"points_field": "customfield_10099"}))
+            out = json.loads(self.run_q("--key", "LV-1", "--inputs", str(path)).stdout)
+        self.assertEqual(out["points_field"], "customfield_10099")
+        for op in out["operations"]:
+            self.assertIn("customfield_10099", op["payload"]["fields"])
+            self.assertNotIn("customfield_10024", op["payload"]["fields"])
+
+    def test_default_points_field_is_10024_and_stated(self):
+        out = json.loads(self.run_q("--key", "LV-1").stdout)
+        self.assertEqual(out["points_field"], "customfield_10024")
 
 
 class TestScope(ForecastCase):
@@ -415,6 +486,33 @@ class TestScope(ForecastCase):
         out = self.ok(data)
         self.assertEqual(out["inputs"]["remaining_points"], 5)
 
+    def test_pace_and_scope_read_the_same_non_default_field(self):
+        other = "customfield_10099"
+        raw = (FIXTURES / "scope_search.json").read_text().replace("customfield_10024", other)
+        (self.dir / "scope.json").write_text(raw)
+        (self.dir / "raw.json").write_text(json.dumps({"issues": [
+            issue("A-1", 7, [("2026-10-06", "In Progress", "Done")], pts_field=other)]}))
+        data = inputs(scope_file="scope.json", initiative="LV-1", points_field=other, as_of=PACE_AS_OF,
+                      jira_results_file="raw.json")
+        del data["remaining_points"], data["history"]
+        out = self.ok(data)
+        self.assertEqual(out["inputs"]["points_field"], other)
+        self.assertEqual(out["scope"]["points_field"], other)
+        self.assertEqual(sum(w["points"] for w in out["history"]), 7)
+        self.assertEqual({r["epic"]: r["remaining_points"] for r in out["chain"]}, {"LV-12": 2, "LV-10": 5, "LV-11": 5})
+        self.assertFalse(any("every" in w for w in out["scope"]["warnings"]))
+
+    def test_scope_states_the_default_field(self):
+        self.assertEqual(self.scoped()["points_field"], "customfield_10024")
+
+    def test_wrong_points_field_warns_once_at_field_level(self):
+        s = self.scoped(points_field="customfield_10077")
+        field_level = [w for w in s["warnings"] if "customfield_10077" in w and "every" in w]
+        self.assertEqual(len(field_level), 1, s["warnings"])
+
+    def test_populated_field_gets_no_field_level_warning(self):
+        self.assertFalse(any("every" in w for w in self.scoped()["warnings"]))
+
     def test_missing_scope_file_refused(self):
         r = self.run_cli(inputs(scope_file="nope.json"))
         self.assertNotEqual(r.returncode, 0)
@@ -435,7 +533,7 @@ def three_epics(a, b, c):
     out = two_epics(a, b)
     out["issues"] += [two_epics(0, 0)["issues"][0] | {"key": "LV-22"},
                       {"key": "LV-221", "fields": {"issuetype": {"name": "Story"}, "parent": {"key": "LV-22"}, "subtasks": [],
-                       "customfield_10016": c, "status": {"name": "To Do", "statusCategory": {"key": "new"}}}}]
+                       "customfield_10024": c, "status": {"name": "To Do", "statusCategory": {"key": "new"}}}}]
     return out
 
 
@@ -445,7 +543,7 @@ def two_epics(a, b):
                 "status": {"name": "To Do", "statusCategory": {"key": "new"}}}}
     def story(k, parent, pts):
         return {"key": k, "fields": {"issuetype": {"name": "Story"}, "parent": {"key": parent}, "subtasks": [],
-                "customfield_10016": pts, "status": {"name": "To Do", "statusCategory": {"key": "new"}}}}
+                "customfield_10024": pts, "status": {"name": "To Do", "statusCategory": {"key": "new"}}}}
     issues = [epic("LV-20"), epic("LV-21"), story("LV-201", "LV-20", a)]
     if b:
         issues.append(story("LV-211", "LV-21", b))

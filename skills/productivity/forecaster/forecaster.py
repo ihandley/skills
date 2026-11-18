@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
-"""forecaster: seeded Monte Carlo forecast for one epic from saved weekly Pace.
+"""forecaster: seeded Monte Carlo forecast of a Likely date and a Due date per epic.
 
+Simulates a single epic or a whole epic chain from saved weekly Pace, builds Pace and scope
+from saved Jira results, renders the plan as markdown, and emits write-back descriptors.
 Stdlib only. Never touches the network or a credential.
 """
 
@@ -35,7 +37,7 @@ def refresh_trigger(unit: str) -> str:
 
 ASSUMED = "assumed, not measured"
 NO_SOAK_NOTE = "No soak length is set, so production has no date. Set soak_weeks to get one."
-POINTS_FIELD = "customfield_10016"
+POINTS_FIELD = "customfield_10024"
 WINDOW_WEEKS = 12
 COUNT_STATUSES = ("Testing", "Done")
 CANCELED = "Canceled"
@@ -61,6 +63,11 @@ def monday(d: date) -> date:
     return d - timedelta(days=d.weekday())
 
 
+def unit_keys(unit: str) -> tuple[str, str]:
+    """The (remaining, parked) key names for a unit. Parked is the work waiting in Testing."""
+    return f"remaining_{unit}", "not_in_the_dates" if unit == "points" else f"not_in_the_dates_{unit}"
+
+
 def as_of_date(data: dict) -> date:
     return date.fromisoformat(data["as_of"]) if data.get("as_of") else date.today()
 
@@ -81,18 +88,19 @@ def queries(inputs_path: Path) -> dict:
     )
     return {
         "operations": [{
+            "operation": "jira.search_issues",
             "purpose": "pace",
-            "tool": "searchJiraIssuesUsingJql",
-            "jql": jql,
-            "fields": SEARCH_FIELDS + [field],
-            "expand": "changelog",
+            "payload": {"jql": jql, "fields": SEARCH_FIELDS + [field], "expand": "changelog"},
             "note": "Page through every result; keep each page.",
         }],
         "save_results_note": (
             "Save the raw results (one object, or a list of pages, each with an issues list) to a file "
-            "and set jira_results_file in the inputs file to its path, relative to the inputs file."
+            "and set jira_results_file in the inputs file to its path, relative to the inputs file. "
+            f"Also set as_of to {as_of_date(data).isoformat()}, the date this window was built from, "
+            "so a rerun reads the same weeks."
         ),
         "points_field": field,
+        "as_of": as_of_date(data).isoformat(),
     }
 
 
@@ -177,6 +185,8 @@ def load_history(data: dict, base: Path, unit: str = DEFAULT_UNIT) -> tuple[list
     if history is None and data.get("history_file"):
         history = load_json(base / data["history_file"], "history file")
     if history is None and data.get("jira_results_file"):
+        if not data.get("as_of"):
+            raise Refusal("as_of is required with jira_results_file: the 12 week window must end on a fixed date, or a rerun shifts the dates.")
         history, warnings, unpointed = pace_from_results(data, base, unit)
     history = history or []
     if not any(float(w.get("points", 0)) > 0 for w in history):
@@ -184,29 +194,32 @@ def load_history(data: dict, base: Path, unit: str = DEFAULT_UNIT) -> tuple[list
     return history, warnings + history_warnings(history), unpointed
 
 
-POINTS_FIELD = "customfield_10016"
 KEY_RE = re.compile(r"^[A-Z][A-Z0-9_]*-\d+$")
 NOT_IN_DATES_STATUS = "testing"
 
 
-def scope_queries(key: str) -> dict:
+def scope_points_field(inputs_path: Path | None) -> str:
+    return load_json(inputs_path, "inputs file").get("points_field", POINTS_FIELD) if inputs_path else POINTS_FIELD
+
+
+def scope_queries(key: str, field: str = POINTS_FIELD) -> dict:
     if not KEY_RE.match(key):
         raise Refusal(f"not a Jira key: {key!r}")
-    fields = ["summary", "issuetype", "status", "parent", "subtasks", "issuelinks", POINTS_FIELD]
+    fields = ["summary", "issuetype", "status", "parent", "subtasks", "issuelinks", field]
     epics = _epic_subquery(key)
     return {
-        "points_field": POINTS_FIELD,
+        "points_field": field,
         "note": (
             "Run the operations in order with the Atlassian tool, paging through every result. Fill {epic_keys} and "
             "{ticket_keys} (comma-separated) from the earlier results. Save all issues merged as "
-            f'{{"issues": [...]}} JSON and point scope_file at it. Points are read from {POINTS_FIELD}.'
+            f'{{"issues": [...]}} JSON and point scope_file at it. Points are read from {field}.'
         ),
         "operations": [
-            {"operation": "jira.search", "purpose": "epics with Blocks links",
+            {"operation": "jira.search_issues", "purpose": "epics with Blocks links",
              "payload": {"jql": epics, "fields": fields}},
-            {"operation": "jira.search", "purpose": "tickets under those epics", "needs": ["epic_keys"],
+            {"operation": "jira.search_issues", "purpose": "tickets under those epics", "needs": ["epic_keys"],
              "payload": {"jql": "issuetype != Epic AND parent in ({epic_keys})", "fields": fields}},
-            {"operation": "jira.search", "purpose": "sub-tasks of those tickets", "needs": ["ticket_keys"],
+            {"operation": "jira.search_issues", "purpose": "sub-tasks of those tickets", "needs": ["ticket_keys"],
              "payload": {"jql": "parent in ({ticket_keys})", "fields": fields}},
         ],
     }
@@ -272,8 +285,9 @@ def scope(data: dict, base: Path, unit: str = DEFAULT_UNIT) -> dict:
     else:
         order = propose_order(epics, pairs, warnings)
         source = "blocks"
-    remaining_key = f"remaining_{unit}"
-    parked_key = "not_in_the_dates" if unit == "points" else f"not_in_the_dates_{unit}"
+    remaining_key, parked_key = unit_keys(unit)
+    field = data.get("points_field", POINTS_FIELD)
+    open_leaves = unpointed_leaves = 0
     rows = {k: {"epic": k, remaining_key: 0, parked_key: 0} for k in order}
     for issue in issues.values():
         f = issue["fields"]
@@ -283,14 +297,22 @@ def scope(data: dict, base: Path, unit: str = DEFAULT_UNIT) -> dict:
         status = f["status"]
         if epic is None or status["statusCategory"]["key"] == "done" or status["name"].lower() == "canceled":
             continue
-        pts = 1 if unit == "items" else f.get(POINTS_FIELD)
+        open_leaves += 1
+        pts = 1 if unit == "items" else f.get(field)
         if pts is None:
+            unpointed_leaves += 1
             warnings.append(f"{issue['key']} is open and has no points; left out of the sums.")
         elif status["name"].lower() == NOT_IN_DATES_STATUS:
             rows[epic][parked_key] += pts
         else:
             rows[epic][remaining_key] += pts
+    if unit == "points" and open_leaves and unpointed_leaves == open_leaves:
+        warnings.append(
+            f"The points field {field} is empty on every open ticket in scope ({open_leaves}), so remaining work is 0. "
+            "Check that points_field names the field this tenant populates."
+        )
     return {
+        "points_field": field,
         "initiative": data.get("initiative"),
         "order_source": source,
         "epics": [rows[k] for k in order],
@@ -362,13 +384,15 @@ def clear_of_freezes(day: date, freezes: list[tuple[date, date, str | None]]) ->
 
 
 def simulate_chain(cumulative: list[float], paces: list[float], share: tuple[float, float], trials: int, seed: int,
-                   week_factor=lambda week: 1.0) -> list[list[int]]:
+                   week_factor=lambda week: 1.0) -> tuple[list[list[int]], int]:
     """Run the epics in order in each trial. cumulative[i] is points needed through epic i.
 
-    Returns, per epic, the sorted weeks at which each whole run finished that epic.
+    Returns, per epic, the sorted weeks at which each whole run finished that epic, and how many
+    runs hit MAX_WEEKS before finishing (their weeks are the cap, not a real finish).
     """
     rng = random.Random(seed)
     per_epic: list[list[int]] = [[] for _ in cumulative]
+    capped = 0
     for _ in range(trials):
         s = rng.uniform(*share)
         done, weeks, i = 0.0, 0, 0
@@ -379,16 +403,13 @@ def simulate_chain(cumulative: list[float], paces: list[float], share: tuple[flo
             if i == len(cumulative):
                 break
             if weeks >= MAX_WEEKS:
+                capped += 1
                 for j in range(i, len(cumulative)):
                     per_epic[j].append(weeks)
                 break
             done += rng.choice(paces) * s * week_factor(weeks)
             weeks += 1
-    return [sorted(w) for w in per_epic]
-
-
-def simulate(remaining: float, paces: list[float], share: tuple[float, float], trials: int, seed: int) -> list[int]:
-    return simulate_chain([remaining], paces, share, trials, seed)[0]
+    return [sorted(w) for w in per_epic], capped
 
 
 def parse_percentiles(text: str | None) -> list[int]:
@@ -409,7 +430,7 @@ def forecast(inputs_path: Path, percentiles: str | None = None, unit: str | None
     unit = unit or data.get("unit") or DEFAULT_UNIT
     if unit not in UNITS:
         raise Refusal(f"unit must be one of {', '.join(UNITS)}, got {unit!r}")
-    remaining_key = f"remaining_{unit}"
+    remaining_key, _ = unit_keys(unit)
     scoped = scope(data, inputs_path.parent, unit) if data.get("scope_file") else None
     rows = {r["epic"]: r for r in scoped["epics"]} if scoped else {}
     chain_epics = None
@@ -442,7 +463,7 @@ def forecast(inputs_path: Path, percentiles: str | None = None, unit: str | None
     def week_factor(week: int) -> float:
         return december if december and (start + timedelta(weeks=week)).month == 12 else 1.0
 
-    all_weeks = simulate_chain(cumulative, paces, share, trials, seed, week_factor)
+    all_weeks, capped = simulate_chain(cumulative, paces, share, trials, seed, week_factor)
 
     def at(weeks: list[int], pct: int) -> str:
         return (start + timedelta(weeks=percentile(weeks, pct))).isoformat()
@@ -466,6 +487,11 @@ def forecast(inputs_path: Path, percentiles: str | None = None, unit: str | None
             "note": None,
         }
 
+    if capped:
+        warnings.append(
+            f"{capped} of {trials} trials hit the {MAX_WEEKS} week cap without finishing, so their dates are the cap, "
+            "not a forecast. Pace is too low for the remaining work; do not trust these dates."
+        )
     last = all_weeks[-1]
     assumptions = [{"factor": "capacity_share", "value": list(share), "label": ASSUMED}]
     if december is not None:
@@ -488,7 +514,7 @@ def forecast(inputs_path: Path, percentiles: str | None = None, unit: str | None
         "percentiles": levels,
         "dates": dates(last),
         "production": production(last),
-        "expiry": (start + timedelta(days=expiry_days)).isoformat(),
+        "expiry": (as_of_date(data) + timedelta(days=expiry_days)).isoformat(),
         "refresh_trigger": refresh_trigger(unit),
         "assumptions": assumptions,
         "history": history,
@@ -554,7 +580,7 @@ def render(forecast_path: Path, prose_path: Path) -> str:
         raise Refusal("prose file must be a JSON object")
     blocks = {key: prose_block(prose, key) for key, _ in PROSE_SECTIONS}
     unit = fc.get("unit", DEFAULT_UNIT)
-    rem = f"remaining_{unit}"
+    rem, parked_key = unit_keys(unit)
     chain = fc.get("chain") or [
         {"epic": fc.get("epic") or "Epic", "likely_date": fc["likely_date"], "due_date": fc["due_date"]}
     ]
@@ -564,7 +590,7 @@ def render(forecast_path: Path, prose_path: Path) -> str:
     paces = [w["points"] for w in fc.get("history", [])]
     pace = f"{sum(paces) / len(paces):.1f}".rstrip("0").rstrip(".") if paces else "unknown"
     scope_block = fc.get("scope") or {}
-    parked = sum((scope_block.get("not_in_the_dates") or {}).values())
+    parked = scope_block.get(parked_key) or 0
     warnings = list(fc.get("warnings", [])) + list(scope_block.get("warnings", []))
     if fc.get("unpointed"):
         warnings.append("Unpointed tickets left out of the sums: " + ", ".join(fc["unpointed"]))
@@ -632,6 +658,9 @@ def inputs_missing(data: dict) -> list[dict]:
             ask("assignee", "Whose Pace should the forecast read (Jira assignee)?")
         ask("pace", "Pace is not saved yet. Run `queries pace`, run the search through the Atlassian tool and "
                     "save the raw results: what is the file path?")
+    if blank(data.get("history")) and blank(data.get("history_file")) and not blank(data.get("jira_results_file")) \
+            and blank(data.get("as_of")):
+        ask("as_of", "What date should the 12 week window end on (YYYY-MM-DD)? Use the date the Jira results were saved.")
     return missing
 
 
@@ -737,6 +766,7 @@ def main(argv: list[str] | None = None) -> int:
     qp.add_argument("--inputs", required=True, type=Path)
     qs = qsub.add_parser("scope", help="initiative and epic search with Blocks links")
     qs.add_argument("--key", required=True, help="initiative or epic key")
+    qs.add_argument("--inputs", type=Path, help="inputs file; its points_field is read (default customfield_10024)")
     r = sub.add_parser("render", help="print the plan as Confluence-ready markdown")
     r.add_argument("--forecast", required=True, type=Path, help="output of the forecast command")
     r.add_argument("--prose", required=True, type=Path, help="JSON with the four prose sections")
@@ -770,7 +800,7 @@ def main(argv: list[str] | None = None) -> int:
             print(render(args.forecast, args.prose))
             return 0
         if args.command == "queries":
-            result = queries(args.inputs) if args.mode == "pace" else scope_queries(args.key)
+            result = queries(args.inputs) if args.mode == "pace" else scope_queries(args.key, scope_points_field(args.inputs))
         else:
             result = forecast(args.inputs, args.percentiles, args.unit)
     except Refusal as exc:

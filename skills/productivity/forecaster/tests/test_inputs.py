@@ -93,9 +93,17 @@ class TestCheck(InputsCase):
 
     def test_jira_results_file_and_history_file_satisfy_pace(self):
         data = {k: v for k, v in COMPLETE.items() if k != "history"}
-        for field in ("jira_results_file", "history_file"):
-            self.write({**data, field: "x.json"})
-            self.assertEqual(self.check()["missing"], [])
+        self.write({**data, "history_file": "x.json"})
+        self.assertEqual(self.check()["missing"], [])
+        self.write({**data, "jira_results_file": "x.json", "as_of": "2026-11-23"})
+        self.assertEqual(self.check()["missing"], [])
+
+    def test_results_file_without_as_of_reports_as_of_missing(self):
+        data = {k: v for k, v in COMPLETE.items() if k != "history"}
+        self.write({**data, "jira_results_file": "x.json"})
+        report = self.check()
+        self.assertEqual(self.keys(report), ["as_of"])
+        self.assertIn("12 week window end", report["missing"][0]["question"])
 
     def test_blank_values_count_as_missing(self):
         self.write({**COMPLETE, "start_date": ""})
@@ -180,6 +188,10 @@ class TestSet(InputsCase):
         self.assertEqual(self.run_cli("set", "saved_on=2020-01-01").returncode, 2)
         self.set("epic=LV-1")
         self.assertEqual(self.read()["saved_on"], date.today().isoformat())
+
+    def test_set_does_not_default_as_of(self):
+        self.set("epic=LV-1", "jira_results_file=x.json")
+        self.assertNotIn("as_of", self.read())
 
     def test_saved_file_feeds_forecast(self):
         self.set("epic=LV-1", "remaining_points=20", "start_date=2026-11-23", "seed=1", "trials=500",

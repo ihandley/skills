@@ -11,7 +11,7 @@ metadata:
 
 `forecaster.py` does all the arithmetic. It never touches the network or a credential. You gather inputs and report what it prints.
 
-Run `python3 <this-skill>/forecaster.py <cmd>`. `queries pace --inputs <file>` and `queries scope --key <key>` print the Jira searches to run; `forecast --inputs <file> [--percentiles 50,70,95] [--unit items|points]` does the arithmetic (default levels 50,85). It prints one JSON object. Exit 2 means a refusal; report the message and stop. Exit 3 means Python is too old.
+Run `python3 <this-skill>/forecaster.py <cmd>`. `queries pace --inputs <file>` and `queries scope --key <key> [--inputs <file>]` print the Jira searches to run; `forecast --inputs <file> [--percentiles 50,70,95] [--unit items|points]` does the arithmetic (default levels 50,85). It prints one JSON object. Exit 2 means a refusal; report the message and stop. Exit 3 means Python is too old.
 
 ## Inputs file (JSON)
 
@@ -20,17 +20,17 @@ Run `python3 <this-skill>/forecaster.py <cmd>`. `queries pace --inputs <file>` a
 - `start_date`: ISO date the work starts.
 - `capacity_share`: `[low, high]`, the fraction of Pace this work gets. Default `[1, 1]`. Assumed, not measured.
 - `assignee`: whose Pace to read (needed by `queries`).
-- `as_of`: ISO date, default today. The 12 whole weeks before its Monday are the window; holiday weeks stay in as zero.
-- `points_field`: Jira field holding story points. Default `customfield_10016`. Warns when empty.
+- `as_of`: ISO date, the Forecast date. The 12 whole weeks before its Monday are the window; holiday weeks stay in as zero. Required with `jira_results_file` (`forecast` refuses without it, and `inputs check` asks for it), so a rerun reads the same weeks. Expiry counts from it; without `as_of` (saved `history`) it is today.
+- `points_field`: Jira field holding story points. Default `customfield_10024`; override it when your tenant uses another field (for example `inputs set --inputs <file> points_field=customfield_10016`). Pace queries, scope queries, Pace and scope all read this one field, and `forecast` states it in `inputs.points_field` and `scope.points_field`. Warns when the field is empty on a ticket, and once more when it is empty on every open ticket in scope. Pass the inputs file to `queries scope --inputs` so the search asks for the same field.
 - `jira_results_file`: saved raw results of the `queries` search, relative to the inputs file. Builds Pace when `history` is absent.
 - `history`: weekly Pace, a list of `{"week": "YYYY-MM-DD", "points": N}`. Or `history_file`: path to that list, relative to the inputs file.
-- `scope_file`: saved Jira search results (`{"issues": [...]}`) from `queries scope`. Optional `initiative`. When set, `forecast` adds a `scope` block: epic order proposed from Blocks links (blocker first), `remaining_points` per epic (open leaf tickets), `not_in_the_dates` (points in Testing) and `warnings` (unpointed open tickets, Blocks cycles). `remaining_points` may then be omitted.
+- `scope_file`: saved Jira search results (`{"issues": [...]}`) from `queries scope`. Optional `initiative`. When set, `forecast` adds a `scope` block: epic order proposed from Blocks links (blocker first), `remaining_points` per epic (open leaf tickets), `not_in_the_dates` (a total, and per epic row; points in Testing) and `warnings` (unpointed open tickets, Blocks cycles). `remaining_points` may then be omitted.
 - `epic_order`: optional list of epic keys. Overrides the proposed order; show the proposal and ask the user to confirm or change it.
 - `december_factor`: number above 0. Multiplies Pace for weeks that start in December only. Assumed, not measured.
 - `freezes`: list of `{"start", "end", "name"?}` ISO dates, inclusive. They constrain the production cutover only, never epic dates. Assumed, not measured.
 - `soak_weeks`: whole weeks between an epic finishing and production cutover. When unset, `production` has no date and its `note` says so; report that.
 - `seed`: integer. The same seed and inputs give identical output.
-- `trials`, `expiry_days`: optional. Defaults 10000 and 28.
+- `trials`, `expiry_days`: optional. Defaults 10000 and 28. Expiry is the Forecast date plus `expiry_days`.
 
 Dates are stored: `start_date`, `as_of`, every `history` week, and `saved_on` (stamped by `inputs set`), all ISO. Keep them so a backtest can be added later.
 
@@ -49,7 +49,7 @@ The skill is user-invoked. The argument is an optional initiative or epic key. N
 
 ## Scope from Jira
 
-`python3 <this-skill>/forecaster.py queries scope --key <initiative-or-epic>` prints Jira search operations (points read from `customfield_10016`). Run them with the Atlassian tool, merge the issues into one JSON file and set `scope_file`. The script never calls Jira.
+`python3 <this-skill>/forecaster.py queries scope --key <initiative-or-epic>` prints Jira search operations (points read from `points_field`, default `customfield_10024`; `queries pace` and `queries scope` emit the same `{operation: jira.search_issues, payload}` shape). Run them with the Atlassian tool, merge the issues into one JSON file and set `scope_file`. The script never calls Jira.
 
 ## Steps
 
@@ -67,7 +67,7 @@ With `scope_file` and no `epic` or `remaining_points`, `forecast` runs every epi
 
 ## Pace rules
 
-A ticket counts in the week (Monday start) it first entered Testing or Done, from the status changelog. Canceled never counts. Parents of sub-tasks are skipped. Unpointed tickets are left out and listed in `warnings` and `unpointed`. Short or volatile history also adds a warning. Report every warning.
+A ticket counts in the week (Monday start) it first entered Testing or Done, from the status changelog. Canceled never counts. Parents of sub-tasks are skipped. Unpointed tickets are left out and listed in `warnings` and `unpointed`. Short or volatile history also adds a warning. Report every warning. A warning that trials hit the 520 week cap means Pace is too low for the remaining work: say the dates are not a forecast.
 
 ## Render the plan
 
