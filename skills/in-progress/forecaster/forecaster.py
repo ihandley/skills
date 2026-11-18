@@ -7,6 +7,7 @@ Stdlib only. Never touches the network or a credential.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import math
 import random
@@ -681,6 +682,45 @@ def inputs_check(path: Path) -> dict:
     return inputs_report(data)
 
 
+def writeback_edits(data: dict) -> list[dict]:
+    """One edit per epic: the Jira due date is the Due date, never the Likely date."""
+    rows = data.get("chain") or ([{"epic": data.get("epic"), "due_date": data.get("due_date")}] if data.get("epic") else [])
+    edits = []
+    for row in rows:
+        if not row.get("epic") or not valid_date(row.get("due_date")):
+            raise Refusal(f"forecast has no epic or Due date to write back: {row}")
+        edits.append({"epic": row["epic"], "duedate": row["due_date"]})
+    if not edits:
+        raise Refusal("forecast has no epic to write back")
+    return edits
+
+
+def writeback_code(edits: list[dict]) -> str:
+    return hashlib.sha256(json.dumps(edits, sort_keys=True).encode()).hexdigest()[:12]
+
+
+def writeback(forecast_path: Path, mode: str, confirm: str | None) -> dict:
+    edits = writeback_edits(load_json(forecast_path, "forecast file"))
+    code = writeback_code(edits)
+    if mode == "dry-run":
+        return {"dry_run": True, "edits": edits, "note": "Nothing was changed or emitted."}
+    if mode == "prepare":
+        return {
+            "edits": edits, "code": code,
+            "ask": f"Show the edits to the user, then ask: Write these due dates to Jira? (yes / no). "
+                   f"Only on 'yes': forecaster.py writeback emit --forecast <file> --confirm {code}",
+        }
+    if confirm != code:
+        raise Refusal("write-back not confirmed: the code is missing or does not match this forecast; "
+                      "run 'writeback prepare' and ask the user first")
+    return {"descriptors": [
+        {"operation": "jira.edit_issue",
+         "payload": {"cloudId": "<cloud_id>", "issueIdOrKey": e["epic"],
+                     "fields": {"duedate": e["duedate"]}, "contentFormat": "markdown"},
+         "note": "Run with editJiraIssue. Sets the Jira due date to the Due date (85%)."}
+        for e in edits]}
+
+
 def main(argv: list[str] | None = None) -> int:
     if sys.version_info < MIN_PYTHON:
         print("forecaster needs Python 3.11 or newer.", file=sys.stderr)
@@ -707,11 +747,24 @@ def main(argv: list[str] | None = None) -> int:
     iset = isub.add_parser("set", help="write key=value answers, keeping every other key")
     iset.add_argument("--inputs", required=True, type=Path)
     iset.add_argument("pairs", nargs="+", metavar="key=value", help="value is JSON when it parses, else text")
+    w = sub.add_parser("writeback", help="emit Jira edits that set each epic's due date; never calls Jira")
+    w.add_argument("--forecast", required=True, type=Path, help="output of the forecast command")
+    w.add_argument("--dry-run", action="store_true", help="list the edits; emit nothing executable")
+    wsub = w.add_subparsers(dest="mode")
+    wsub.add_parser("prepare", help="list the edits and print the confirm code")
+    we = wsub.add_parser("emit", help="print the edit descriptors; needs the code from prepare")
+    we.add_argument("--confirm", help="code from prepare, only after the user said yes")
     args = parser.parse_args(argv)
     try:
         if args.command == "inputs":
             result = inputs_check(args.inputs) if args.mode == "check" else inputs_set(args.inputs, args.pairs)
             print(json.dumps(result, indent=2))
+            return 0
+        if args.command == "writeback":
+            mode = "dry-run" if args.dry_run else args.mode
+            if mode is None:
+                raise Refusal("writeback needs --dry-run, prepare or emit")
+            print(json.dumps(writeback(args.forecast, mode, getattr(args, "confirm", None)), indent=2))
             return 0
         if args.command == "render":
             print(render(args.forecast, args.prose))
