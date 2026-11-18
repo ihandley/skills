@@ -11,7 +11,7 @@ metadata:
 
 `forecaster.py` does all the arithmetic. It never touches the network or a credential. You gather inputs and report what it prints.
 
-Run `python3 <this-skill>/forecaster.py <cmd>`. `queries pace --inputs <file>` and `queries scope --key <key>` print the Jira searches to run; `forecast --inputs <file> [--percentiles 50,70,95]` does the arithmetic (default levels 50,85). It prints one JSON object. Exit 2 means a refusal; report the message and stop. Exit 3 means Python is too old.
+Run `python3 <this-skill>/forecaster.py <cmd>`. `queries pace --inputs <file>` and `queries scope --key <key>` print the Jira searches to run; `forecast --inputs <file> [--percentiles 50,70,95] [--unit items|points]` does the arithmetic (default levels 50,85). It prints one JSON object. Exit 2 means a refusal; report the message and stop. Exit 3 means Python is too old.
 
 ## Inputs file (JSON)
 
@@ -30,6 +30,10 @@ Run `python3 <this-skill>/forecaster.py <cmd>`. `queries pace --inputs <file>` a
 - `trials`, `expiry_days`: optional. Defaults 10000 and 28.
 
 Ask the user only for fields that are missing. Save answers to the inputs file so a rerun asks nothing.
+
+## Unit
+
+`--unit points` (default) or `--unit items`, or `unit` in the inputs file (the flag wins). With `items`, Pace is the count of finished leaf tickets per week under the same rules (unpointed tickets count and are not warned about), and remaining work is the count of open leaf tickets: give `remaining_items` instead of `remaining_points`, and scope rows carry `remaining_items` and `not_in_the_dates_items`. Output states the unit in `unit`. History values stay under the `points` key, in the chosen unit. Say which unit the dates use when you report them.
 
 ## Scope from Jira
 
