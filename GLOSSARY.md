@@ -185,3 +185,23 @@ _Avoid_: Promote, decay
 **Thread**:
 The subject the journal is in the middle of.
 _Avoid_: Topic, context
+
+**Pace**:
+Points one person finished per week, read from history.
+_Avoid_: Velocity, throughput, speed
+
+**Capacity share**:
+The fraction of pace one body of work gets, given as a range.
+_Avoid_: Allocation, focus factor
+
+**Likely date**:
+The date by which half of the simulated runs finish.
+_Avoid_: Estimate, target, 50% date
+
+**Due date**:
+The date by which 85% of the simulated runs finish. It is the date written to the tracker.
+_Avoid_: Deadline, commitment, 85% date
+
+**Forecast**:
+A dated range with a probability and an expiry. A single date is not a forecast.
+_Avoid_: Estimate, plan, prediction
