@@ -25,6 +25,7 @@
     "./skills/productivity/ticketer",
     "./skills/productivity/tidy",
     "./skills/productivity/alias",
-    "./skills/engineering/compressor"
+    "./skills/engineering/compressor",
+    "./skills/productivity/forecaster"
   ]
 }

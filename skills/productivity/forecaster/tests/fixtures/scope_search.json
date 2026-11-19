@@ -1,0 +1,274 @@
+{
+ "issues": [
+  {
+   "key": "LV-10",
+   "fields": {
+    "issuetype": {
+     "name": "Epic"
+    },
+    "status": {
+     "name": "In Progress",
+     "statusCategory": {
+      "key": "indeterminate"
+     }
+    },
+    "customfield_10024": null,
+    "subtasks": [],
+    "issuelinks": [
+     {
+      "type": {
+       "name": "Blocks"
+      },
+      "outwardIssue": {
+       "key": "LV-11"
+      }
+     },
+     {
+      "type": {
+       "name": "Relates"
+      },
+      "outwardIssue": {
+       "key": "LV-12"
+      }
+     }
+    ],
+    "parent": {
+     "key": "LV-1"
+    }
+   }
+  },
+  {
+   "key": "LV-11",
+   "fields": {
+    "issuetype": {
+     "name": "Epic"
+    },
+    "status": {
+     "name": "To Do",
+     "statusCategory": {
+      "key": "new"
+     }
+    },
+    "customfield_10024": null,
+    "subtasks": [],
+    "issuelinks": [],
+    "parent": {
+     "key": "LV-1"
+    }
+   }
+  },
+  {
+   "key": "LV-12",
+   "fields": {
+    "issuetype": {
+     "name": "Epic"
+    },
+    "status": {
+     "name": "To Do",
+     "statusCategory": {
+      "key": "new"
+     }
+    },
+    "customfield_10024": null,
+    "subtasks": [],
+    "issuelinks": [
+     {
+      "type": {
+       "name": "Blocks"
+      },
+      "outwardIssue": {
+       "key": "LV-10"
+      }
+     }
+    ],
+    "parent": {
+     "key": "LV-1"
+    }
+   }
+  },
+  {
+   "key": "LV-101",
+   "fields": {
+    "issuetype": {
+     "name": "Story"
+    },
+    "status": {
+     "name": "To Do",
+     "statusCategory": {
+      "key": "new"
+     }
+    },
+    "customfield_10024": 5,
+    "subtasks": [],
+    "issuelinks": [],
+    "parent": {
+     "key": "LV-10"
+    }
+   }
+  },
+  {
+   "key": "LV-102",
+   "fields": {
+    "issuetype": {
+     "name": "Story"
+    },
+    "status": {
+     "name": "Testing",
+     "statusCategory": {
+      "key": "indeterminate"
+     }
+    },
+    "customfield_10024": 3,
+    "subtasks": [],
+    "issuelinks": [],
+    "parent": {
+     "key": "LV-10"
+    }
+   }
+  },
+  {
+   "key": "LV-103",
+   "fields": {
+    "issuetype": {
+     "name": "Story"
+    },
+    "status": {
+     "name": "Done",
+     "statusCategory": {
+      "key": "done"
+     }
+    },
+    "customfield_10024": 8,
+    "subtasks": [],
+    "issuelinks": [],
+    "parent": {
+     "key": "LV-10"
+    }
+   }
+  },
+  {
+   "key": "LV-104",
+   "fields": {
+    "issuetype": {
+     "name": "Story"
+    },
+    "status": {
+     "name": "Canceled",
+     "statusCategory": {
+      "key": "done"
+     }
+    },
+    "customfield_10024": 5,
+    "subtasks": [],
+    "issuelinks": [],
+    "parent": {
+     "key": "LV-10"
+    }
+   }
+  },
+  {
+   "key": "LV-105",
+   "fields": {
+    "issuetype": {
+     "name": "Story"
+    },
+    "status": {
+     "name": "In Progress",
+     "statusCategory": {
+      "key": "indeterminate"
+     }
+    },
+    "customfield_10024": null,
+    "subtasks": [],
+    "issuelinks": [],
+    "parent": {
+     "key": "LV-10"
+    }
+   }
+  },
+  {
+   "key": "LV-111",
+   "fields": {
+    "issuetype": {
+     "name": "Story"
+    },
+    "status": {
+     "name": "In Progress",
+     "statusCategory": {
+      "key": "indeterminate"
+     }
+    },
+    "customfield_10024": 13,
+    "subtasks": [
+     {
+      "key": "LV-112"
+     }
+    ],
+    "issuelinks": [],
+    "parent": {
+     "key": "LV-11"
+    }
+   }
+  },
+  {
+   "key": "LV-112",
+   "fields": {
+    "issuetype": {
+     "name": "Sub-task"
+    },
+    "status": {
+     "name": "In Progress",
+     "statusCategory": {
+      "key": "indeterminate"
+     }
+    },
+    "customfield_10024": 2,
+    "subtasks": [],
+    "issuelinks": [],
+    "parent": {
+     "key": "LV-111"
+    }
+   }
+  },
+  {
+   "key": "LV-113",
+   "fields": {
+    "issuetype": {
+     "name": "Story"
+    },
+    "status": {
+     "name": "To Do",
+     "statusCategory": {
+      "key": "new"
+     }
+    },
+    "customfield_10024": 3,
+    "subtasks": [],
+    "issuelinks": [],
+    "parent": {
+     "key": "LV-11"
+    }
+   }
+  },
+  {
+   "key": "LV-121",
+   "fields": {
+    "issuetype": {
+     "name": "Story"
+    },
+    "status": {
+     "name": "To Do",
+     "statusCategory": {
+      "key": "new"
+     }
+    },
+    "customfield_10024": 2,
+    "subtasks": [],
+    "issuelinks": [],
+    "parent": {
+     "key": "LV-12"
+    }
+   }
+  }
+ ]
+}

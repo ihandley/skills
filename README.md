@@ -66,7 +66,7 @@ General workflow tools, outside code work.
 
 **User-invoked**
 
-None yet.
+- **[forecaster](./skills/productivity/forecaster/SKILL.md)**: Forecast a likely date (50%) and a due date (85%) per epic, simulating the whole epic chain from your saved weekly Pace.
 
 **Model-invoked**
 

@@ -1,0 +1,5 @@
+interface:
+  display_name: "Forecaster"
+  short_description: "Forecast epic dates from your own Pace history"
+policy:
+  allow_implicit_invocation: false
