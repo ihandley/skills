@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.10.0](https://github.com/ihandley/skills/compare/ihandley-skills-v0.9.0...ihandley-skills-v0.10.0) (2026-11-19)
+
+
+### Features
+
+* **forecaster:** release the Jira-backed plan generator ([6f4a4c6](https://github.com/ihandley/skills/commit/6f4a4c6f86a85c256a4f87334a96b018e8b56451))
+
 ## [0.9.0](https://github.com/ihandley/skills/compare/ihandley-skills-v0.8.0...ihandley-skills-v0.9.0) (2026-11-10)
 
 
