@@ -778,7 +778,8 @@ def inputs_value(key: str, raw: str):
         value = json.loads(raw)
     except json.JSONDecodeError:
         value = raw
-    if key in ("start_date", "as_of", "sprint_start") and not valid_date(value):
+    optional = key == "sprint_start" and blank(value)  # blank clears the optional cadence
+    if key in ("start_date", "as_of", "sprint_start") and not optional and not valid_date(value):
         raise Refusal(f"{key} must be an ISO date (YYYY-MM-DD), got {raw!r}")
     if key == "history":
         ok = isinstance(value, list) and all(

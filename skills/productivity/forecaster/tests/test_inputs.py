@@ -122,6 +122,37 @@ class TestCheck(InputsCase):
         self.assertFalse(self.path.exists())
 
 
+class TestSprintInputs(InputsCase):
+    def test_not_asked_when_sprints_not_wanted(self):
+        self.write(COMPLETE)
+        self.assertTrue(self.check()["complete"])
+
+    def test_asked_when_sprints_wanted(self):
+        self.write({**COMPLETE, "sprints": True})
+        self.assertEqual(self.keys(self.check()), ["sprint_weeks", "sprint_start"])
+
+    def test_asks_only_for_the_missing_half(self):
+        self.write({**COMPLETE, "sprint_weeks": 2})
+        self.assertEqual(self.keys(self.check()), ["sprint_start"])
+
+    def test_complete_with_cadence(self):
+        self.write({**COMPLETE, "sprint_weeks": 2, "sprint_start": "2026-11-09"})
+        self.assertTrue(self.check()["complete"])
+
+    def test_set_saves_cadence_and_rejects_bad_date(self):
+        ok = self.run_cli("set", "sprint_weeks=2", "sprint_start=2026-11-09")
+        self.assertEqual(ok.returncode, 0, ok.stderr)
+        self.assertEqual(self.read()["sprint_weeks"], 2)
+        self.assertEqual(self.run_cli("set", "sprint_start=soon").returncode, 2)
+
+    def test_blank_clears_cadence_but_start_date_stays_validated(self):
+        self.write({**COMPLETE, "sprint_weeks": 2, "sprint_start": "2026-11-09"})
+        cleared = self.run_cli("set", "sprint_weeks=null", "sprint_start=")
+        self.assertEqual(cleared.returncode, 0, cleared.stderr)
+        self.assertTrue(json.loads(cleared.stdout)["complete"])
+        self.assertEqual(self.run_cli("set", "start_date=").returncode, 2)
+
+
 class TestSet(InputsCase):
     def set(self, *pairs):
         proc = self.run_cli("set", *pairs)

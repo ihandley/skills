@@ -62,6 +62,30 @@ class RenderCase(unittest.TestCase):
         return r.stdout
 
 
+class TestSprintSection(RenderCase):
+    CADENCE = {"sprint_weeks": 2, "sprint_start": "2026-11-09"}
+
+    def test_no_sprint_section_without_cadence(self):
+        self.assertNotIn("Sprint", self.ok())
+
+    def test_sprint_row_per_epic(self):
+        f = real_forecast(**self.CADENCE)
+        out = self.ok(forecast=f)
+        self.assertIn("| Epic | Likely sprint | Due sprint |", out)
+        for row in f["chain"]:
+            likely, due = row["likely_sprint"], row["due_sprint"]
+            self.assertIn(f"| {row['epic']} | Sprint {likely['number']} ({likely['start']} to {likely['end']}) "
+                          f"| Sprint {due['number']} ({due['start']} to {due['end']}) |", out)
+        self.assertIn("Sprints are 2 weeks long, counted from 2026-11-09.", out)
+
+    def test_single_epic_gets_one_sprint_row(self):
+        f = real_forecast(epic="LV-1", remaining_points=30, scope_file=None, **self.CADENCE)
+        self.assertIn(f"| LV-1 | Sprint {f['likely_sprint']['number']} (", self.ok(forecast=f))
+
+    def test_dates_table_unchanged_by_sprints(self):
+        self.assertIn("| Epic | Likely date | Due date |", self.ok(forecast=real_forecast(**self.CADENCE)))
+
+
 class TestDatesTable(RenderCase):
     def test_one_row_per_epic_with_likely_and_due(self):
         out = self.ok()
