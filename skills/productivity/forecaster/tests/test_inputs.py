@@ -156,6 +156,49 @@ class TestSet(InputsCase):
         self.assertEqual(self.read()["start_date"], "2026-11-23")
         self.assertEqual(self.read()["epic"], "LV-2")
 
+    def test_changing_the_epic_resets_scope_dependent_inputs_only(self):
+        self.write({**COMPLETE, "epic": "LV-1", "remaining_items": 4, "scope_file": "s.json", "epic_order": ["LV-1"],
+                    "jira_results_file": "raw.json", "as_of": "2026-11-18", "assignee": "ian"})
+        self.set("epic=LV-2")
+        data = self.read()
+        for gone in ("remaining_points", "remaining_items", "scope_file", "epic_order"):
+            self.assertNotIn(gone, data)
+        self.assertEqual(data["epic"], "LV-2")
+        for kept in ("history", "jira_results_file", "as_of", "assignee", "start_date"):
+            self.assertIn(kept, data)
+        self.assertIn("remaining", [m["key"] for m in self.check()["missing"]])
+
+    def test_rerun_with_the_same_key_preserves_everything(self):
+        self.write({**COMPLETE, "scope_file": "s.json"})
+        self.set("epic=LV-1")
+        data = self.read()
+        self.assertEqual(data["remaining_points"], 40)
+        self.assertEqual(data["scope_file"], "s.json")
+
+    def test_first_key_does_not_drop_hand_edited_remaining(self):
+        self.write({"remaining_points": 9})
+        self.set("epic=LV-1")
+        self.assertEqual(self.read()["remaining_points"], 9)
+
+    def test_values_given_in_the_same_call_survive_the_reset(self):
+        self.write({**COMPLETE, "scope_file": "old.json"})
+        self.set("epic=LV-2", "scope_file=new.json", "remaining_points=7")
+        data = self.read()
+        self.assertEqual((data["scope_file"], data["remaining_points"]), ("new.json", 7))
+
+    def test_changing_the_initiative_resets_scope_and_clears_the_epic(self):
+        self.write({**COMPLETE, "initiative": "LV-1", "scope_file": "s.json"})
+        self.set("initiative=LV-9")
+        data = self.read()
+        self.assertNotIn("scope_file", data)
+        self.assertNotIn("epic", data)
+        self.assertNotIn("remaining_points", data)
+
+    def test_skill_md_maps_every_check_key_to_a_set_name(self):
+        text = (Path(__file__).resolve().parents[1] / "SKILL.md").read_text()
+        for pair in ("`scope`", "`remaining`", "`pace`", "`jira_results_file`", "`remaining_items`"):
+            self.assertIn(pair, text)
+
     def test_output_reports_what_is_still_missing(self):
         out = self.set("epic=LV-1")
         self.assertIn("start_date", [m["key"] for m in out["missing"]])

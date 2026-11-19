@@ -43,7 +43,9 @@ COUNT_STATUSES = ("Testing", "Done")
 CANCELED = "Canceled"
 MIN_ACTIVE_WEEKS = 6
 VOLATILE_CV = 1.0
-SEARCH_FIELDS = ["summary", "status", "parent", "subtasks", "assignee"]
+SEARCH_FIELDS = ["summary", "issuetype", "status", "parent", "subtasks", "assignee"]
+SCOPE_KEYS = ("epic", "initiative")
+SCOPE_DEPENDENT = ("remaining_points", "remaining_items", "scope_file", "epic_order")
 
 
 class Refusal(Exception):
@@ -91,7 +93,12 @@ def queries(inputs_path: Path) -> dict:
             "operation": "jira.search_issues",
             "purpose": "pace",
             "payload": {"jql": jql, "fields": SEARCH_FIELDS + [field], "expand": "changelog"},
-            "note": "Page through every result; keep each page.",
+            "note": (
+                "Page through every result; keep each page. Jira truncates the changelog it expands on a search: "
+                "when an issue has changelog.total above the histories returned, fetch that issue's remaining "
+                "changelog pages and merge them into its changelog.histories before saving. forecast refuses "
+                "an incomplete changelog."
+            ),
         }],
         "save_results_note": (
             "Save the raw results (one object, or a list of pages, each with an issues list) to a file "
@@ -135,6 +142,15 @@ def pace_from_results(data: dict, base: Path, unit: str = DEFAULT_UNIT) -> tuple
     unpointed, pointed_seen = [], 0
     for issue in issues:
         f = issue.get("fields", {})
+        total = (issue.get("changelog") or {}).get("total")
+        have = len((issue.get("changelog") or {}).get("histories", []))
+        if isinstance(total, int) and total > have:
+            raise Refusal(
+                f"changelog for {issue.get('key')} is incomplete ({have} of {total} histories): fetch the remaining "
+                "changelog pages for it, merge them into changelog.histories, save the results again and rerun."
+            )
+        if (f.get("issuetype") or {}).get("name") == "Epic":
+            continue
         if ended_canceled(issue) or f.get("subtasks") or issue.get("key") in parents:
             continue
         counted = first_count_date(issue)
@@ -277,6 +293,9 @@ def scope(data: dict, base: Path, unit: str = DEFAULT_UNIT) -> dict:
     pairs = [p for k in epics for p in _blocks(issues[k])]
     override = data.get("epic_order")
     if override:
+        repeated = sorted({k for k in override if list(override).count(k) > 1})
+        if repeated:
+            raise Refusal("epic_order repeats epics: " + ", ".join(repeated))
         unknown = [k for k in override if k not in epics]
         if unknown:
             raise Refusal("epic_order names epics not in the saved scope: " + ", ".join(unknown))
@@ -435,7 +454,12 @@ def forecast(inputs_path: Path, percentiles: str | None = None, unit: str | None
     rows = {r["epic"]: r for r in scoped["epics"]} if scoped else {}
     chain_epics = None
     if scoped and remaining_key not in data:
-        if data.get("epic") in rows:
+        if data.get("epic"):
+            if data["epic"] not in rows:
+                raise Refusal(
+                    f"epic {data['epic']} is not in the saved scope ({', '.join(rows)}): rerun queries scope for it "
+                    "and update scope_file, or clear epic to forecast the whole chain."
+                )
             data[remaining_key] = rows[data["epic"]][remaining_key]
         else:
             chain_epics = scoped["epics"]
@@ -571,6 +595,20 @@ def prose_block(prose: dict, key: str) -> str:
     return items[0]
 
 
+def production_section(fc: dict, chain: list[dict]) -> list[str]:
+    """Production cutover dates, kept apart from epic finish dates. Empty for output that has no production block."""
+    top = fc.get("production")
+    if top is None:
+        return []
+    lines = ["## Production cutover", ""]
+    if top.get("likely_date") is None:
+        return lines + [plain(top.get("note") or NO_SOAK_NOTE), ""]
+    rows = [(r["epic"], r.get("production") or top) for r in chain] if fc.get("chain") else [(chain[0]["epic"], top)]
+    lines += ["| Epic | Production likely date | Production due date |", "| --- | --- | --- |"]
+    lines += [f"| {epic} | {p['likely_date']} | {p['due_date']} |" for epic, p in rows]
+    return lines + ["", f"Epic finish plus {top.get('soak_weeks')} soak weeks, moved past any freeze.", ""]
+
+
 def render(forecast_path: Path, prose_path: Path) -> str:
     fc = load_json(forecast_path, "forecast file")
     prose = load_json(prose_path, "prose file")
@@ -590,7 +628,11 @@ def render(forecast_path: Path, prose_path: Path) -> str:
     paces = [w["points"] for w in fc.get("history", [])]
     pace = f"{sum(paces) / len(paces):.1f}".rstrip("0").rstrip(".") if paces else "unknown"
     scope_block = fc.get("scope") or {}
-    parked = scope_block.get(parked_key) or 0
+    if fc.get("chain"):
+        parked = scope_block.get(parked_key) or 0
+    else:
+        row = next((r for r in scope_block.get("epics", []) if r.get("epic") == fc.get("epic")), {})
+        parked = row.get(parked_key) or 0
     warnings = list(fc.get("warnings", [])) + list(scope_block.get("warnings", []))
     if fc.get("unpointed"):
         warnings.append("Unpointed tickets left out of the sums: " + ", ".join(fc["unpointed"]))
@@ -599,6 +641,7 @@ def render(forecast_path: Path, prose_path: Path) -> str:
     out += [f"| {r['epic']} | {r['likely_date']} | {r['due_date']} |" for r in chain]
     out += ["", f"Likely date: the date by which {fc.get('likely_percentile', LIKELY_PERCENTILE)}% of runs finish.",
             f"Due date: the date by which {fc.get('due_percentile', DUE_PERCENTILE)}% of runs finish.", ""]
+    out += production_section(fc, chain)
     for key, heading in PROSE_SECTIONS:
         out += [f"## {heading}", "", blocks[key], ""]
     out += ["## How the dates were built", "",
@@ -698,6 +741,12 @@ def inputs_set(path: Path, pairs: list[str]) -> dict:
         if key not in KNOWN_INPUTS:
             raise Refusal(f"unknown input {key!r}; known: {', '.join(KNOWN_INPUTS)}")
         updates[key] = inputs_value(key, raw)
+    changed = any(k in updates and updates[k] != data.get(k) for k in SCOPE_KEYS)
+    if changed and any(not blank(data.get(k)) for k in SCOPE_KEYS):
+        # The scope key changed: work tied to the old key is stale. Pace history and the other keys stay.
+        for k in SCOPE_DEPENDENT + SCOPE_KEYS:
+            if k not in updates:
+                data.pop(k, None)
     data.update(updates)
     data["saved_on"] = date.today().isoformat()
     path.write_text(json.dumps(data, indent=2) + "\n")

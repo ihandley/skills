@@ -114,6 +114,42 @@ class TestHowBuilt(RenderCase):
         self.assertIn("Not in the dates: 3 points", section)  # LV-10 story in Testing
 
 
+class TestSingleEpicTesting(RenderCase):
+    def test_single_epic_uses_its_own_testing_total(self):
+        # LV-10 has 3 points in Testing; LV-11 has none.
+        f11 = real_forecast(epic="LV-11")
+        self.assertNotIn("Not in the dates", self.ok(forecast=f11))
+        f10 = real_forecast(epic="LV-10")
+        self.assertIn("Not in the dates: 3 points", self.ok(forecast=f10))
+
+    def test_chain_uses_the_aggregate(self):
+        self.assertIn("Not in the dates: 3 points", self.ok())
+
+
+class TestProduction(RenderCase):
+    def test_soak_set_renders_production_dates_apart_from_epic_dates(self):
+        f = real_forecast(soak_weeks=2)
+        out = self.ok(forecast=f)
+        self.assertIn("## Production cutover", out)
+        section = out.split("## Production cutover")[1].split("\n## ")[0]
+        for row in f["chain"]:
+            p = row["production"]
+            self.assertIn(f"| {row['epic']} | {p['likely_date']} | {p['due_date']} |", section)
+        self.assertNotIn("| Epic | Likely date | Due date |", section)
+
+    def test_soak_unset_renders_the_no_soak_note(self):
+        f = real_forecast()
+        out = self.ok(forecast=f)
+        section = out.split("## Production cutover")[1].split("\n## ")[0]
+        self.assertIn(f["production"]["note"], section)
+        self.assertNotIn("| ---", section)
+
+    def test_single_epic_production(self):
+        f = real_forecast(epic="LV-10", soak_weeks=1)
+        out = self.ok(forecast=f)
+        self.assertIn(f"| LV-10 | {f['production']['likely_date']} | {f['production']['due_date']} |", out)
+
+
 class TestLabels(RenderCase):
     def test_due_date_is_the_85_percent_date(self):
         out = self.ok()

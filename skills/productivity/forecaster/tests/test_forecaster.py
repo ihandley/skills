@@ -249,6 +249,46 @@ class TestPaceCounting(PaceCase):
         self.assertEqual(sum(weeks.values()), 3)
 
 
+class TestPaceIntegrity(PaceCase):
+    def test_truncated_changelog_refused_naming_the_ticket(self):
+        t = issue("A-1", 5, [("2026-10-06", "Testing", "Done")])
+        t["changelog"]["total"] = 3  # Jira returned 1 of 3 histories
+        r = self.run_cli(self.pace_inputs([t]))
+        self.assertEqual(r.returncode, 2, r.stderr)
+        self.assertIn("A-1", r.stderr)
+        self.assertIn("changelog", r.stderr)
+
+    def test_complete_changelog_is_accepted(self):
+        t = issue("A-1", 5, [("2026-10-06", "Testing", "Done")])
+        t["changelog"]["total"] = 1
+        weeks, _ = self.pace([t])
+        self.assertEqual(weeks["2026-10-05"], 5)
+
+    def test_queries_guidance_says_to_fetch_remaining_changelog_pages(self):
+        path = self.dir / "q.json"
+        path.write_text(json.dumps({"assignee": "ian", "as_of": PACE_AS_OF}))
+        out = subprocess.run([sys.executable, str(FORECASTER), "queries", "pace", "--inputs", str(path)],
+                             capture_output=True, text=True).stdout
+        self.assertIn("changelog.total", json.loads(out)["operations"][0]["note"])
+
+    def test_pace_query_requests_issuetype(self):
+        path = self.dir / "q.json"
+        path.write_text(json.dumps({"assignee": "ian", "as_of": PACE_AS_OF}))
+        out = json.loads(subprocess.run([sys.executable, str(FORECASTER), "queries", "pace", "--inputs", str(path)],
+                                        capture_output=True, text=True).stdout)
+        self.assertIn("issuetype", out["operations"][0]["payload"]["fields"])
+
+    def test_epics_are_not_counted_in_pace(self):
+        epic = issue("A-9", 8, [("2026-10-06", "In Progress", "Done")])
+        epic["fields"]["issuetype"] = {"name": "Epic"}
+        story = issue("A-1", 5, [("2026-10-06", "In Progress", "Done")])
+        story["fields"]["issuetype"] = {"name": "Story"}
+        weeks, _ = self.pace([epic, story])
+        self.assertEqual(weeks["2026-10-05"], 5)
+        weeks, _ = self.pace([epic, story], unit="items", remaining_items=5)
+        self.assertEqual(weeks["2026-10-05"], 1)
+
+
 class TestPaceWarnings(PaceCase):
     def test_unpointed_listed_and_excluded(self):
         a = issue("A-1", None, [("2026-10-06", "In Progress", "Done")])
@@ -441,7 +481,7 @@ class TestQueriesScope(unittest.TestCase):
 
 class TestScope(ForecastCase):
     def scoped(self, **over):
-        data = inputs(scope_file=str(FIXTURES / "scope_search.json"), initiative="LV-1")
+        data = inputs(scope_file=str(FIXTURES / "scope_search.json"), initiative="LV-1", epic=None)
         del data["remaining_points"]
         data.update(over)
         return self.ok(data)["scope"]
@@ -462,6 +502,14 @@ class TestScope(ForecastCase):
         r = self.run_cli(data)
         self.assertNotEqual(r.returncode, 0)
         self.assertIn("LV-99", r.stderr)
+
+    def test_override_with_repeated_epic_refused(self):
+        data = inputs(scope_file=str(FIXTURES / "scope_search.json"), epic=None, initiative="LV-1",
+                      epic_order=["LV-10", "LV-10", "LV-11"])
+        r = self.run_cli(data)
+        self.assertEqual(r.returncode, 2)
+        self.assertIn("LV-10", r.stderr)
+        self.assertIn("epic_order", r.stderr)
 
     def test_remaining_is_sum_of_open_leaf_points(self):
         # LV-10: story 5 (open leaf); done, canceled, unpointed and testing excluded.
@@ -492,7 +540,7 @@ class TestScope(ForecastCase):
         (self.dir / "scope.json").write_text(raw)
         (self.dir / "raw.json").write_text(json.dumps({"issues": [
             issue("A-1", 7, [("2026-10-06", "In Progress", "Done")], pts_field=other)]}))
-        data = inputs(scope_file="scope.json", initiative="LV-1", points_field=other, as_of=PACE_AS_OF,
+        data = inputs(scope_file="scope.json", initiative="LV-1", epic=None, points_field=other, as_of=PACE_AS_OF,
                       jira_results_file="raw.json")
         del data["remaining_points"], data["history"]
         out = self.ok(data)
@@ -552,7 +600,7 @@ def two_epics(a, b):
 
 class TestChain(ForecastCase):
     def chain(self, *extra, **over):
-        data = inputs(scope_file=str(FIXTURES / "scope_search.json"), initiative="LV-1")
+        data = inputs(scope_file=str(FIXTURES / "scope_search.json"), initiative="LV-1", epic=None)
         del data["remaining_points"]
         data.update(over)
         return self.ok(data, *extra)
@@ -579,7 +627,7 @@ class TestChain(ForecastCase):
         # Worked by hand: one epic's p85 is 3 weeks, the chain's p85 is 8 weeks, summed p85s would be 9.
         hist = [{"week": "2026-09-07", "points": 0}, {"week": "2026-09-14", "points": 10}]
         data = inputs(history=hist, capacity_share=[1, 1], trials=4000, seed=5,
-                      scope_file=str(self.dir / "two.json"), initiative="LV-1")
+                      scope_file=str(self.dir / "two.json"), initiative="LV-1", epic=None)
         del data["remaining_points"]
         (self.dir / "two.json").write_text(json.dumps(three_epics(10, 10, 10)))
         rows = self.ok(data)["chain"]
@@ -598,7 +646,7 @@ class TestChain(ForecastCase):
 
     def test_zero_remaining_epic_matches_epic_before(self):
         (self.dir / "z.json").write_text(json.dumps(two_epics(10, 0)))
-        data = inputs(scope_file=str(self.dir / "z.json"), initiative="LV-1")
+        data = inputs(scope_file=str(self.dir / "z.json"), initiative="LV-1", epic=None)
         del data["remaining_points"]
         rows = self.ok(data)["chain"]
         self.assertEqual(rows[0]["due_date"], rows[1]["due_date"])
@@ -631,6 +679,13 @@ class TestChain(ForecastCase):
 
     def test_chain_is_deterministic(self):
         self.assertEqual(self.chain(seed=9), self.chain(seed=9))
+
+    def test_explicit_epic_absent_from_scope_is_refused_not_chained(self):
+        data = inputs(scope_file=str(FIXTURES / "scope_search.json"), epic="LV-99", seed=3)
+        del data["remaining_points"]
+        r = self.run_cli(data)
+        self.assertEqual(r.returncode, 2)
+        self.assertIn("LV-99", r.stderr)
 
     def test_named_epic_stays_a_single_epic_forecast(self):
         data = inputs(scope_file=str(FIXTURES / "scope_search.json"), epic="LV-10", seed=3)
@@ -751,7 +806,7 @@ class TestCalendar(ForecastCase):
             self.assertIn("soak_weeks", r.stderr)
 
     def test_chain_rows_carry_production_dates(self):
-        data = inputs(scope_file=str(FIXTURES / "scope_search.json"), initiative="LV-1",
+        data = inputs(scope_file=str(FIXTURES / "scope_search.json"), initiative="LV-1", epic=None,
                       history=self.FLAT, capacity_share=[1, 1], soak_weeks=1,
                       freezes=[{"start": "2026-01-01", "end": "2026-01-02"}])
         del data["remaining_points"]
@@ -763,7 +818,7 @@ class TestCalendar(ForecastCase):
 
 class TestUnit(PaceCase):
     def chain_items(self, *extra, **over):
-        data = inputs(scope_file=str(FIXTURES / "scope_search.json"), initiative="LV-1")
+        data = inputs(scope_file=str(FIXTURES / "scope_search.json"), initiative="LV-1", epic=None)
         del data["remaining_points"]
         data.update(over)
         return self.ok(data, "--unit", "items", *extra)
@@ -829,7 +884,7 @@ class TestUnit(PaceCase):
         self.assertEqual(out["inputs"]["remaining_items"], 5)
 
     def test_scope_points_still_default(self):
-        data = inputs(scope_file=str(FIXTURES / "scope_search.json"))
+        data = inputs(scope_file=str(FIXTURES / "scope_search.json"), epic=None)
         del data["remaining_points"]
         out = self.ok(data)
         self.assertEqual({r["epic"]: r["remaining_points"] for r in out["chain"]}, {"LV-12": 2, "LV-10": 5, "LV-11": 5})
