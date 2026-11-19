@@ -15,6 +15,7 @@ import math
 import random
 import re
 import sys
+from collections import Counter
 from datetime import date, timedelta
 from pathlib import Path
 
@@ -293,7 +294,10 @@ def scope(data: dict, base: Path, unit: str = DEFAULT_UNIT) -> dict:
     pairs = [p for k in epics for p in _blocks(issues[k])]
     override = data.get("epic_order")
     if override:
-        repeated = sorted({k for k in override if list(override).count(k) > 1})
+        if not isinstance(override, list) or not all(isinstance(k, str) for k in override):
+            raise Refusal("epic_order must be a list of epic keys")
+        counts = Counter(override)
+        repeated = sorted(k for k, n in counts.items() if n > 1)
         if repeated:
             raise Refusal("epic_order repeats epics: " + ", ".join(repeated))
         unknown = [k for k in override if k not in epics]

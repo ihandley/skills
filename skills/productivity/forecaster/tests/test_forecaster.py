@@ -511,6 +511,15 @@ class TestScope(ForecastCase):
         self.assertIn("LV-10", r.stderr)
         self.assertIn("epic_order", r.stderr)
 
+    def test_override_with_malformed_epic_order_refused(self):
+        for bad in ("LV-10", {"LV-10": 1}, [["LV-10"], "LV-11"], [10, "LV-11"]):
+            with self.subTest(bad=bad):
+                data = inputs(scope_file=str(FIXTURES / "scope_search.json"), epic=None,
+                              initiative="LV-1", epic_order=bad)
+                r = self.run_cli(data)
+                self.assertEqual(r.returncode, 2)
+                self.assertIn("epic_order must be a list", r.stderr)
+
     def test_remaining_is_sum_of_open_leaf_points(self):
         # LV-10: story 5 (open leaf); done, canceled, unpointed and testing excluded.
         # LV-11: parent 13 is not a leaf; its sub-task 2 + story 3.
