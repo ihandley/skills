@@ -13,7 +13,25 @@ jobs:
   release-please:
     runs-on: ubuntu-latest
     steps:
+      # A PAT, not GITHUB_TOKEN: events made with GITHUB_TOKEN do not trigger other
+      # workflows, so the release PR would get no pr-title check and its merge would
+      # not re-run this workflow to tag the release.
       - uses: googleapis/release-please-action@45996ed1f6d02564a971a2fa1b5860e934307cf7 # v5.0.0
         with:
+          token: ${{ secrets.RELEASE_PLEASE_TOKEN }}
           config-file: release-please-config.json
           manifest-file: .release-please-manifest.json
+
+      # Queue the open release PR to merge once its required checks pass.
+      - name: Enable auto-merge on the release PR
+        env:
+          GH_TOKEN: ${{ secrets.RELEASE_PLEASE_TOKEN }}
+        run: |
+          pr=$(gh pr list --repo "$GITHUB_REPOSITORY" --base main \
+                 --label "autorelease: pending" --state open \
+                 --json number --jq '.[0].number // empty')
+          if [ -z "$pr" ]; then
+            echo "No open release PR."
+            exit 0
+          fi
+          gh pr merge "$pr" --repo "$GITHUB_REPOSITORY" --auto --squash
