@@ -396,6 +396,30 @@ def parse_freezes(raw) -> list[tuple[date, date, str | None]]:
     return out
 
 
+def parse_sprints(data: dict, start: date) -> tuple[int, date] | None:
+    """The sprint cadence (length in weeks, first sprint's start), or None when no sprint input is set."""
+    length, first = data.get("sprint_weeks"), data.get("sprint_start")
+    if blank(length) and blank(first):
+        return None
+    if blank(length) or blank(first):
+        raise Refusal("sprint_weeks and sprint_start must be set together")
+    if isinstance(length, bool) or not isinstance(length, int) or length < 1:
+        raise Refusal(f"sprint_weeks must be a whole number of weeks, 1 or more, got {length!r}")
+    if not valid_date(first):
+        raise Refusal(f"sprint_start must be an ISO date (YYYY-MM-DD), got {first!r}")
+    first = date.fromisoformat(first)
+    if first > start:
+        raise Refusal(f"sprint_start {first.isoformat()} is after start_date {start.isoformat()}: start the cadence on or before the work.")
+    return length, first
+
+
+def sprint_of(day: date, sprints: tuple[int, date]) -> dict:
+    length, first = sprints
+    n = (day - first).days // (7 * length)
+    begin = first + timedelta(weeks=n * length)
+    return {"number": n + 1, "start": begin.isoformat(), "end": (begin + timedelta(weeks=length, days=-1)).isoformat()}
+
+
 def clear_of_freezes(day: date, freezes: list[tuple[date, date, str | None]]) -> date:
     moved = True
     while moved:
@@ -480,6 +504,7 @@ def forecast(inputs_path: Path, percentiles: str | None = None, unit: str | None
     seed = int(data.get("seed", 0))
     trials = int(data.get("trials", DEFAULT_TRIALS))
     expiry_days = int(data.get("expiry_days", DEFAULT_EXPIRY_DAYS))
+    sprints = parse_sprints(data, start)
     paces = [float(w["points"]) for w in history]
     if chain_epics:
         cumulative, total = [], 0.0
@@ -498,6 +523,15 @@ def forecast(inputs_path: Path, percentiles: str | None = None, unit: str | None
 
     def dates(weeks: list[int]) -> dict:
         return {str(p): at(weeks, p) for p in levels}
+
+    def sprint_fields(weeks: list[int]) -> dict:
+        if sprints is None:
+            return {}
+        return {
+            "likely_sprint": sprint_of(date.fromisoformat(at(weeks, LIKELY_PERCENTILE)), sprints),
+            "due_sprint": sprint_of(date.fromisoformat(at(weeks, DUE_PERCENTILE)), sprints),
+            "sprints": {str(p): sprint_of(date.fromisoformat(at(weeks, p)), sprints) for p in levels},
+        }
 
     def production(weeks: list[int]) -> dict:
         if soak is None:
@@ -542,6 +576,7 @@ def forecast(inputs_path: Path, percentiles: str | None = None, unit: str | None
         "percentiles": levels,
         "dates": dates(last),
         "production": production(last),
+        **sprint_fields(last),
         "expiry": (as_of_date(data) + timedelta(days=expiry_days)).isoformat(),
         "refresh_trigger": refresh_trigger(unit),
         "assumptions": assumptions,
@@ -557,6 +592,8 @@ def forecast(inputs_path: Path, percentiles: str | None = None, unit: str | None
             "points_field": data.get("points_field", POINTS_FIELD),
         },
     }
+    if sprints:
+        result["sprint_cadence"] = {"length_weeks": sprints[0], "start": sprints[1].isoformat()}
     if chain_epics:
         result["chain"] = [
             {
@@ -568,6 +605,7 @@ def forecast(inputs_path: Path, percentiles: str | None = None, unit: str | None
                 "due_percentile": DUE_PERCENTILE,
                 "dates": dates(w),
                 "production": production(w),
+                **sprint_fields(w),
             }
             for r, w in zip(chain_epics, all_weeks)
         ]
@@ -613,6 +651,18 @@ def production_section(fc: dict, chain: list[dict]) -> list[str]:
     return lines + ["", f"Epic finish plus {top.get('soak_weeks')} soak weeks, moved past any freeze.", ""]
 
 
+def sprint_section(fc: dict, chain: list[dict]) -> list[str]:
+    """Each epic's sprint for its Likely and Due dates. Empty for a forecast that has no sprint cadence."""
+    if "likely_sprint" not in fc:
+        return []
+    label = lambda s: f"Sprint {s['number']} ({s['start']} to {s['end']})"
+    rows = chain if fc.get("chain") else [{"epic": chain[0]["epic"], **{k: fc[k] for k in ("likely_sprint", "due_sprint")}}]
+    cadence = fc.get("sprint_cadence") or {}
+    out = ["## Sprints", "", "| Epic | Likely sprint | Due sprint |", "| --- | --- | --- |"]
+    out += [f"| {r['epic']} | {label(r['likely_sprint'])} | {label(r['due_sprint'])} |" for r in rows]
+    return out + ["", f"Sprints are {cadence.get('length_weeks')} weeks long, counted from {cadence.get('start')}.", ""]
+
+
 def render(forecast_path: Path, prose_path: Path) -> str:
     fc = load_json(forecast_path, "forecast file")
     prose = load_json(prose_path, "prose file")
@@ -645,6 +695,7 @@ def render(forecast_path: Path, prose_path: Path) -> str:
     out += [f"| {r['epic']} | {r['likely_date']} | {r['due_date']} |" for r in chain]
     out += ["", f"Likely date: the date by which {fc.get('likely_percentile', LIKELY_PERCENTILE)}% of runs finish.",
             f"Due date: the date by which {fc.get('due_percentile', DUE_PERCENTILE)}% of runs finish.", ""]
+    out += sprint_section(fc, chain)
     out += production_section(fc, chain)
     for key, heading in PROSE_SECTIONS:
         out += [f"## {heading}", "", blocks[key], ""]
@@ -667,6 +718,7 @@ KNOWN_INPUTS = (
     "epic", "initiative", "remaining_points", "remaining_items", "start_date", "capacity_share", "assignee",
     "as_of", "points_field", "jira_results_file", "history", "history_file", "scope_file", "epic_order",
     "december_factor", "freezes", "soak_weeks", "seed", "trials", "expiry_days", "unit",
+    "sprints", "sprint_weeks", "sprint_start",
 )
 
 
@@ -708,6 +760,11 @@ def inputs_missing(data: dict) -> list[dict]:
     if blank(data.get("history")) and blank(data.get("history_file")) and not blank(data.get("jira_results_file")) \
             and blank(data.get("as_of")):
         ask("as_of", "What date should the 12 week window end on (YYYY-MM-DD)? Use the date the Jira results were saved.")
+    if data.get("sprints") is True or has("sprint_weeks", "sprint_start"):
+        if blank(data.get("sprint_weeks")):
+            ask("sprint_weeks", "How many weeks long is a sprint?")
+        if not valid_date(data.get("sprint_start")):
+            ask("sprint_start", "On what date does a sprint start (YYYY-MM-DD)? Any past sprint's first day works.")
     return missing
 
 
@@ -721,7 +778,7 @@ def inputs_value(key: str, raw: str):
         value = json.loads(raw)
     except json.JSONDecodeError:
         value = raw
-    if key in ("start_date", "as_of") and not valid_date(value):
+    if key in ("start_date", "as_of", "sprint_start") and not valid_date(value):
         raise Refusal(f"{key} must be an ISO date (YYYY-MM-DD), got {raw!r}")
     if key == "history":
         ok = isinstance(value, list) and all(

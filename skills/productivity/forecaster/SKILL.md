@@ -29,6 +29,8 @@ Run `python3 <this-skill>/forecaster.py <cmd>`. `queries pace --inputs <file>` a
 - `december_factor`: number above 0. Multiplies Pace for weeks that start in December only. Assumed, not measured.
 - `freezes`: list of `{"start", "end", "name"?}` ISO dates, inclusive. They constrain the production cutover only, never epic dates. Assumed, not measured.
 - `soak_weeks`: whole weeks between an epic finishing and production cutover. When unset, `production` has no date and its `note` says so; report that.
+- `sprints`: `true` when the plan should show sprints. Makes `inputs check` ask for the two below. Leave unset for no sprint view.
+- `sprint_weeks`, `sprint_start`: sprint length in whole weeks and an ISO date a sprint starts on (any past sprint's first day; not after `start_date`). Set both or neither. With them, `forecast` adds `likely_sprint`, `due_sprint` and `sprints` (per level) to the top level and each chain row, each `{number, start, end}`, and `sprint_cadence`. The calendar dates are unchanged. Without them the output has no sprint keys.
 - `seed`: integer. The same seed and inputs give identical output.
 - `trials`, `expiry_days`: optional. Defaults 10000 and 28. Expiry is the Forecast date plus `expiry_days`.
 
@@ -71,7 +73,7 @@ A ticket counts in the week (Monday start) it first entered Testing or Done, fro
 
 ## Render the plan
 
-`python3 <this-skill>/forecaster.py render --forecast <forecast.json> --prose <prose.json>` prints Confluence-ready markdown: a dates table (Likely date, Due date per epic), a Production cutover section (per epic production dates when `soak_weeks` is set, else the no-soak note; kept apart from epic finish dates), the four prose sections, how the dates were built, assumptions (each "assumed, not measured"), data-quality warnings and the expiry with its refresh trigger. Due date is stated as the date by which 85% of runs finish.
+`python3 <this-skill>/forecaster.py render --forecast <forecast.json> --prose <prose.json>` prints Confluence-ready markdown: a dates table (Likely date, Due date per epic), a Sprints section (each epic's sprint for both dates, only when the forecast has a sprint cadence), a Production cutover section (per epic production dates when `soak_weeks` is set, else the no-soak note; kept apart from epic finish dates), the four prose sections, how the dates were built, assumptions (each "assumed, not measured"), data-quality warnings and the expiry with its refresh trigger. Due date is stated as the date by which 85% of runs finish.
 
 `prose.json` holds `deferred_scope`, `waits_outside_the_plan`, `risks` and `asks_of_manager` (each a string or list of strings) and an optional `title`. Write them from the interview, never invent them. A missing or empty section is refused (exit 2) and named; ask the user for it and rerun. Save the output to a local file for review.
 

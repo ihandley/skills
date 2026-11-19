@@ -918,6 +918,57 @@ class TestUnit(PaceCase):
         self.assertEqual(out["unit"], "points")
 
 
+class TestSprints(ForecastCase):
+    # start_date 2026-11-23 is a Monday; 2-week sprints from 2026-11-09 put it in sprint 2.
+    CADENCE = {"sprint_weeks": 2, "sprint_start": "2026-11-09"}
+
+    def test_no_sprint_inputs_output_unchanged(self):
+        out = self.ok(inputs())
+        for key in ("likely_sprint", "due_sprint", "sprints", "sprint_cadence"):
+            self.assertNotIn(key, out)
+
+    def test_sprints_added_without_moving_dates(self):
+        plain, sprinted = self.ok(inputs()), self.ok(inputs(**self.CADENCE))
+        for key in ("likely_date", "due_date", "dates"):
+            self.assertEqual(plain[key], sprinted[key])
+        due = sprinted["due_sprint"]
+        self.assertLessEqual(due["start"], sprinted["due_date"])
+        self.assertLessEqual(sprinted["due_date"], due["end"])
+        self.assertEqual(sprinted["sprint_cadence"], {"length_weeks": 2, "start": "2026-11-09"})
+
+    def test_sprint_number_and_bounds(self):
+        out = self.ok(inputs(remaining_points=1, capacity_share=1, history=[{"week": "2026-10-05", "points": 100}],
+                             **self.CADENCE))
+        # Finishes in one week: 2026-11-30, sprint 2 runs 2026-11-23 to 2026-12-06.
+        self.assertEqual(out["likely_date"], "2026-11-30")
+        self.assertEqual(out["likely_sprint"], {"number": 2, "start": "2026-11-23", "end": "2026-12-06"})
+
+    def test_chain_rows_carry_sprints(self):
+        out = self.ok({k: v for k, v in inputs().items() if k not in ("epic", "remaining_points")}
+                      | {"scope_file": str(Path(__file__).parent / "fixtures" / "scope_search.json"),
+                         "initiative": "LV-1", **self.CADENCE})
+        self.assertTrue(out["chain"])
+        for row in out["chain"]:
+            self.assertIn("likely_sprint", row)
+            self.assertIn("due_sprint", row)
+            self.assertLessEqual(row["likely_sprint"]["number"], row["due_sprint"]["number"])
+
+    def test_half_a_cadence_refused(self):
+        r = self.run_cli(inputs(sprint_weeks=2))
+        self.assertEqual(r.returncode, 2)
+        self.assertIn("together", r.stderr)
+
+    def test_bad_length_refused(self):
+        for bad in (0, -1, 1.5, "2", True):
+            r = self.run_cli(inputs(sprint_weeks=bad, sprint_start="2026-11-09"))
+            self.assertEqual(r.returncode, 2, bad)
+
+    def test_sprint_start_after_work_refused(self):
+        r = self.run_cli(inputs(sprint_weeks=2, sprint_start="2026-12-01"))
+        self.assertEqual(r.returncode, 2)
+        self.assertIn("after start_date", r.stderr)
+
+
 class TestInvocation(unittest.TestCase):
     root = FORECASTER.parent
 
