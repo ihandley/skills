@@ -27,6 +27,9 @@ The fraction of your Pace one body of work gets, given as a range or one number.
 **How is a chain of epics handled?**
 Every epic runs in order inside each simulated run, so a later epic is never earlier than the one before. Each date is a percentile across whole runs, never a sum of per-epic percentiles. Epic order is proposed from Blocks links, and you confirm or change it.
 
+**Can the plan show sprints?**
+Yes. Save a sprint length in weeks and a date a sprint starts on. Each epic's Likely and Due dates are then also reported as the sprint they fall in, and the plan gains a Sprints section. The calendar dates do not move, and with no sprint inputs the output is the same as before. The agent asks for the cadence when you say you want sprints, and asks for the missing value when only one of the two is saved.
+
 **Does it write to Jira?**
 Only the Due date, and only after you confirm. The agent shows the list of edits first. A confirmation code ties the write to the exact dates you saw, so a stale code is refused.
 
@@ -43,6 +46,7 @@ Yes. It renders Confluence-ready markdown with a dates table, deferred scope, wa
 
 - The agent asks only for inputs your file lacks, and nothing on a complete rerun.
 - Each epic gets a Likely date and a Due date, plus the expiry and refresh trigger.
+- With a sprint cadence saved, each epic also shows the sprint of each date.
 - Every assumed factor is labelled assumed, not measured.
 - Warnings about unpointed tickets or short history are reported, not dropped.
 - With no history, the agent tells you so and gives no date.
