@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.11.0](https://github.com/ihandley/skills/compare/ihandley-skills-v0.10.0...ihandley-skills-v0.11.0) (2026-11-20)
+
+
+### Features
+
+* **forecaster:** show each epic's sprint for its likely and due dates ([#160](https://github.com/ihandley/skills/issues/160)) ([4921707](https://github.com/ihandley/skills/commit/49217074c357d47f4d21b8670ac42f166e233d8a))
+* **hooks:** ship Claude hooks from the plugin for stepper, pair, and alias ([#163](https://github.com/ihandley/skills/issues/163)) ([dbf3c2f](https://github.com/ihandley/skills/commit/dbf3c2fa6c60a80a1e11c6945b8c3f462fb1c7fb)), closes [#162](https://github.com/ihandley/skills/issues/162)
+
 ## [0.10.0](https://github.com/ihandley/skills/compare/ihandley-skills-v0.9.0...ihandley-skills-v0.10.0) (2026-11-19)
 
 
