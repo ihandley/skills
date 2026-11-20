@@ -31,7 +31,7 @@ No self-rating menu, no quiz, no difficulty menu. A test run comes with no predi
 Say "stop pairing". Those exact words are the only way out. They drop the controls for the rest of the task. "I get it", "we're done", and "normal mode" leave this session owning the turn. While it owns the turn, an explanation phrase gets no offer and the stepper reminder stays quiet.
 
 **Do I have to install the hook?**
-No. The hook keeps the latch across later messages, injects the pair order on each prompt and after compaction, and offers once to stay on a subject when you say "I don't understand". From this skill's directory: `python3 turn.py hooks install claude`. There is no Cursor turn hook. A machine that installed the Claude hook from `understand` runs `python3 turn.py hooks uninstall claude` from the `understand` directory before updating, then the install above. Already updated: the install alone replaces the old command. A session that `understand` already owns stays owned under `pair`.
+On Claude Code, no. Enabling the `ihandley-skills` plugin registers it. The hook keeps the latch across later messages, injects the pair order on each prompt and after compaction, and offers once to stay on a subject when you say "I don't understand". There is no Cursor turn hook. `python3 turn.py hooks install claude` only removes an older command from `~/.claude/settings.json`, including one left by `understand`. A session that `understand` already owns stays owned under `pair`.
 
 ## It's working if
 

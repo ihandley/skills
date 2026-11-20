@@ -205,7 +205,12 @@ ADAPTERS = {"cursor": CursorAdapter(), "claude": ClaudeAdapter()}
 
 # ---------------------------------------------------------------- operations
 
-def install(spec: Spec, home: Path, platform: str) -> dict:
+def install_settings(spec: Spec, home: Path, platform: str) -> dict:
+    """Write this caller's command into the platform settings file.
+
+    Cursor still uses this. Claude does not: the plugin's ``hooks/hooks.json``
+    is the only Claude owner, and ``install`` for Claude only removes leftovers.
+    """
     path = settings_path(home, platform)
     data, existed = read_settings(path)
     added_hooks_key = existed and "hooks" not in data
@@ -220,6 +225,75 @@ def install(spec: Spec, home: Path, platform: str) -> dict:
     receipt[platform] = {"path": str(path), "created_file": not existed, "added_hooks_key": added_hooks_key}
     _save_receipt(spec, receipt)
     return {"ok": True, "platform": platform, "path": str(path), "installed": True}
+
+
+def _hook_commands(hooks: dict) -> list[tuple[str, str]]:
+    found = []
+    if not isinstance(hooks, dict):
+        return found
+    for name, groups in hooks.items():
+        if not isinstance(groups, list):
+            continue
+        for group in groups:
+            if not isinstance(group, dict):
+                continue
+            for item in group.get("hooks") or []:
+                command = item.get("command") if isinstance(item, dict) else None
+                if isinstance(command, str):
+                    found.append((name, command))
+    return found
+
+
+def plugin_claim(spec: Spec) -> dict | None:
+    """The plugin hooks file that runs this caller, when this script lives inside one."""
+    script = spec.script.resolve()
+    for parent in script.parents:
+        if not (parent / ".claude-plugin" / "plugin.json").is_file():
+            continue
+        hooks_file = parent / "hooks" / "hooks.json"
+        if not hooks_file.is_file():
+            return None
+        try:
+            rel = script.relative_to(parent).as_posix()
+        except ValueError:
+            return None
+        try:
+            data = json.loads(hooks_file.read_text())
+        except (OSError, json.JSONDecodeError):
+            return None
+        hooks = data.get("hooks") if isinstance(data, dict) else None
+        tag = f"--tag {spec.tag}"
+        events = []
+        for name, command in _hook_commands(hooks or {}):
+            if rel in command and tag in command and "--platform claude" in command:
+                if name not in events:
+                    events.append(name)
+        if not events:
+            return None
+        return {"path": str(hooks_file), "events": events}
+    return None
+
+
+def install_claude(spec: Spec, home: Path) -> dict:
+    """Drop leftover Claude settings entries. The plugin file is the install."""
+    path = settings_path(home, "claude")
+    if path.exists():
+        read_settings(path)
+        uninstall(spec, home, "claude")
+    claim = plugin_claim(spec)
+    return {
+        "ok": True,
+        "platform": "claude",
+        "path": claim["path"] if claim else str(path),
+        "installed": claim is not None,
+        "source": "plugin" if claim else "absent",
+    }
+
+
+def install(spec: Spec, home: Path, platform: str) -> dict:
+    if platform == "claude":
+        return install_claude(spec, home)
+    return install_settings(spec, home, platform)
 
 
 def uninstall(spec: Spec, home: Path, platform: str) -> dict:
@@ -244,17 +318,36 @@ def uninstall(spec: Spec, home: Path, platform: str) -> dict:
     return {"ok": True, "platform": platform, "path": str(path), "installed": False}
 
 
+def _settings_report(spec: Spec, home: Path, platform: str) -> dict:
+    path = settings_path(home, platform)
+    events: list[str] = []
+    if path.exists():
+        try:
+            data, _existed = read_settings(path)
+        except HostError as exc:
+            return {"path": str(path), "error": str(exc)}
+        events = ADAPTERS[platform].installed_events(spec, data.get("hooks") or {})
+    return {"path": str(path), "installed": bool(events), "events": events}
+
+
 def status(spec: Spec, home: Path) -> dict:
     report = {"ok": True}
+    claim = plugin_claim(spec)
     for platform in PLATFORMS:
-        path = settings_path(home, platform)
-        events = []
-        if path.exists():
-            try:
-                data, _existed = read_settings(path)
-            except HostError as exc:
-                report[platform] = {"path": str(path), "error": str(exc)}
-                continue
-            events = ADAPTERS[platform].installed_events(spec, data.get("hooks") or {})
-        report[platform] = {"path": str(path), "installed": bool(events), "events": events}
+        if platform == "claude" and claim:
+            legacy = _settings_report(spec, home, "claude")
+            entry = {
+                "path": claim["path"],
+                "installed": True,
+                "source": "plugin",
+                "events": claim["events"],
+            }
+            if "error" in legacy:
+                entry["error"] = legacy["error"]
+                entry["legacy_settings"] = True
+            else:
+                entry["legacy_settings"] = bool(legacy["events"])
+            report["claude"] = entry
+            continue
+        report[platform] = _settings_report(spec, home, platform)
     return report

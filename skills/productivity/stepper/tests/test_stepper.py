@@ -1761,16 +1761,23 @@ class StepperTests(unittest.TestCase):
         self.assertEqual(code, 1)
         self.assertEqual(broken.read_bytes(), b"{not json")
 
-    def test_hook_install_can_remove_a_file_it_created(self):
-        code, _data = self.cli_home("hooks", "install", "claude")
-        self.assertEqual(code, 0)
+    def test_claude_install_removes_a_legacy_entry_and_reports_the_plugin(self):
         path = self.home / ".claude" / "settings.json"
-        self.assertTrue(path.exists())
-        code, _data = self.cli_home("hooks", "uninstall", "claude")
-        self.assertFalse(path.exists())
+        path.parent.mkdir(parents=True)
+        path.write_text(json.dumps({"hooks": {"Stop": [{"hooks": [
+            {"type": "command", "command": "python3 /old/stepper.py hook --platform claude --tag stepper"},
+        ]}]}}))
+        code, data = self.cli_home("hooks", "install", "claude")
+        self.assertEqual(code, 0)
+        self.assertEqual(data["source"], "plugin")
+        self.assertTrue(data["installed"])
+        self.assertNotIn("--tag stepper", path.read_text())
         code, status = self.cli_home("hooks", "status")
         self.assertFalse(status["cursor"]["installed"])
-        self.assertFalse(status["claude"]["installed"])
+        self.assertTrue(status["claude"]["installed"])
+        self.assertEqual(status["claude"]["source"], "plugin")
+        self.assertFalse(status["claude"]["legacy_settings"])
+        self.assertIn("SessionStart", status["claude"]["events"])
 
     def test_acceptance_criteria_lifecycle(self):
         self.hook(

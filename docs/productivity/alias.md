@@ -13,7 +13,7 @@ Reach for it when the same person or resource would otherwise be looked up again
 ## Common questions
 
 **Do the hooks have to be installed?**
-Yes, once per harness. Without `hooks install`, a lookup is not skipped and a new id is not recorded. `get` and `add` still work. Codex can run those two and has no hook install. After the tool list in config changes, install again for Claude. Cursor reads the tool names from config, so a config edit is enough there.
+Claude Code registers them when the `ihandley-skills` plugin is enabled. They run for every tool, and the script ignores a tool that is not in the config, so a config edit does not need another install. `hooks install claude` only removes an older command from `~/.claude/settings.json`. Cursor still needs `hooks install cursor` once. Cursor reads the tool names from config, so a config edit is enough there too. Without the hooks, a lookup is not skipped and a new id is not recorded. `get` and `add` still work. Codex can run those two and has no hook install.
 
 **Where is the cache?**
 `~/.alias/aliases.yaml`, unless `cache` in the config says otherwise. Copy `config.example.yaml` beside the skill to `~/.config/alias/config.yaml` and replace the tool names with yours.
