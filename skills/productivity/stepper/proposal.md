@@ -325,7 +325,9 @@ Distinguishing tracked work from an unrelated turn uses conservative prompt and 
 
 ## Hook installation
 
-Installing the skill does not register hooks. Hooks are optional and per platform. With no platform argument, `hooks install` changes nothing.
+Claude hooks ship in the plugin's `hooks/hooks.json` and register when the plugin is enabled. `hooks install claude` does not write `~/.claude/settings.json`. It removes a Stepper command a previous install left there. `hooks status` reports Claude as `source: plugin`.
+
+Cursor still has no plugin path. `hooks install cursor` writes `~/.cursor/hooks.json`.
 
 ```text
 stepper hooks install cursor
@@ -335,12 +337,9 @@ stepper hooks uninstall claude
 stepper hooks status
 ```
 
-Defaults:
+Each Cursor command includes `--tag stepper` and `--platform cursor`. Uninstall removes a hook entry only when its command contains that tag and platform. It does not remove neighboring entries. The Claude cleanup uses the same tag match.
 
-- Cursor: `~/.cursor/hooks.json`
-- Claude Code: `~/.claude/settings.json`
-
-Each installed command includes `--tag stepper` and `--platform cursor` or `--platform claude`. Uninstall removes a hook entry only when its command contains that tag and platform. It does not remove neighboring entries.
+Cursor install, and uninstall on either platform, follow the steps below. Claude install refuses a settings file that is not JSON, then follows the uninstall steps. It does not append a command and it does not write a receipt.
 
 Install and uninstall:
 
@@ -358,9 +357,9 @@ Tradeoff: rewriting through a JSON parser preserves unrelated settings semantica
 
 Runtime independence: `--platform claude` exits immediately when `hook_event_name` is a Cursor camelCase event, and `--platform cursor` does the reverse. Installing Claude hooks therefore does not also drive Cursor when Cursor imports `~/.claude/settings.json`. Generation deduplication remains for the case where the same platform reports one event twice.
 
-These hooks are not added to the Claude plugin. Plugin hooks would run for every promoted skill. Skill-frontmatter hooks start too late for a fresh session and are not Cursor's hook source.
+Skill-frontmatter hooks start too late for a fresh session and are not Cursor's hook source. The plugin file is the Claude source. Cursor remains the settings file.
 
-Without the matching platform install, explicit CLI use still works. Proactive offers, lease reminders, and compaction reinjection do not run on that platform.
+Without the plugin on Claude, or without the Cursor install, explicit CLI use still works. Proactive offers, lease reminders, and compaction reinjection do not run on that platform.
 
 ### Claude Code events
 

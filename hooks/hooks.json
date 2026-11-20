@@ -1,0 +1,97 @@
+{
+  "description": "Claude hooks for stepper, pair, and alias. Enabling the plugin registers them.",
+  "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "startup|resume|compact",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}\"/skills/productivity/stepper/stepper.py hook --platform claude --tag stepper"
+          },
+          {
+            "type": "command",
+            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}\"/skills/engineering/pair/turn.py hook --platform claude --tag turn-owner"
+          }
+        ]
+      },
+      {
+        "matcher": "startup|resume|compact|clear|fork",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}\"/skills/productivity/alias/alias.py hook --platform claude --tag alias"
+          }
+        ]
+      }
+    ],
+    "SessionEnd": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}\"/skills/productivity/stepper/stepper.py hook --platform claude --tag stepper"
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}\"/skills/productivity/stepper/stepper.py hook --platform claude --tag stepper"
+          },
+          {
+            "type": "command",
+            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}\"/skills/engineering/pair/turn.py hook --platform claude --tag turn-owner"
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}\"/skills/productivity/alias/alias.py hook --platform claude --tag alias"
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}\"/skills/productivity/stepper/stepper.py hook --platform claude --tag stepper"
+          },
+          {
+            "type": "command",
+            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}\"/skills/productivity/alias/alias.py hook --platform claude --tag alias"
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}\"/skills/productivity/stepper/stepper.py hook --platform claude --tag stepper"
+          }
+        ]
+      }
+    ],
+    "PreCompact": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}\"/skills/productivity/stepper/stepper.py hook --platform claude --tag stepper"
+          }
+        ]
+      }
+    ]
+  }
+}

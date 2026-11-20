@@ -215,51 +215,57 @@ class AliasTests(unittest.TestCase):
         )
         self.assertEqual(data, {})
 
-    def test_hooks_install_is_idempotent_and_uses_tool_matchers(self):
+    def test_claude_install_reports_the_plugin_and_cursor_uses_tool_matchers(self):
         code, data = self.run_cli("hooks", "install", "claude")
         self.assertEqual(code, 0)
+        self.assertEqual(data["platform"], "claude")
+        self.assertFalse(self.settings("claude").exists())
         self.run_cli("hooks", "install", "claude")
-        settings = json.loads((self.home / ".claude" / "settings.json").read_text())
-        pre = settings["hooks"]["PreToolUse"]
+        _, status = self.run_cli("hooks", "status")
+        self.assertEqual(status["claude"]["source"], "plugin")
+        self.assertEqual(sorted(status["claude"]["events"]), ["PostToolUse", "PreToolUse", "SessionStart"])
+        self.assertFalse(status["claude"]["legacy_settings"])
+        self.run_cli("hooks", "install", "cursor")
+        settings = json.loads(self.settings("cursor").read_text())
+        pre = settings["hooks"]["preToolUse"]
         self.assertEqual(len(pre), 1)
-        self.assertEqual(pre[0]["matcher"], "mcp__acme__find_employee")
-        self.assertEqual(len(pre[0]["hooks"]), 1)
-        self.assertIn("--tag alias", pre[0]["hooks"][0]["command"])
-        session = settings["hooks"]["SessionStart"]
-        self.assertEqual(session[0]["matcher"], "startup|resume|compact|clear|fork")
-        _, status = self.run_cli("hooks", "status")
-        self.assertIn("PreToolUse", status["claude"]["events"])
-        self.run_cli("hooks", "uninstall", "claude")
-        _, status = self.run_cli("hooks", "status")
-        self.assertFalse(status["claude"]["installed"])
+        self.assertIn("--tag alias", pre[0]["command"])
 
     def settings(self, platform):
         rel = Path(".claude") / "settings.json" if platform == "claude" else Path(".cursor") / "hooks.json"
         return self.home / rel
 
-    def test_install_registers_the_same_events_as_before(self):
+    def test_install_registers_cursor_events_and_leaves_claude_settings_alone(self):
         self.run_cli("hooks", "install", "claude")
-        claude = json.loads(self.settings("claude").read_text())["hooks"]
-        self.assertEqual(sorted(claude), ["PostToolUse", "PreToolUse", "SessionStart"])
-        self.assertEqual(claude["PostToolUse"][0]["matcher"], "mcp__acme__find_employee")
+        self.assertFalse(self.settings("claude").exists())
         self.run_cli("hooks", "install", "cursor")
         cursor = json.loads(self.settings("cursor").read_text())
         self.assertEqual(cursor["version"], 1)
         self.assertEqual(sorted(cursor["hooks"]), ["postToolUse", "preToolUse", "sessionStart"])
 
-    def test_install_leaves_a_receipt_and_no_temp_file(self):
-        self.run_cli("hooks", "install", "claude")
+    def test_cursor_install_leaves_a_receipt_and_no_temp_file(self):
+        self.run_cli("hooks", "install", "cursor")
         receipt = json.loads((self.home / ".alias" / "hook-install.json").read_text())
-        self.assertTrue(receipt["claude"]["created_file"])
-        self.assertEqual(list(self.settings("claude").parent.glob("*.tmp")), [])
+        self.assertTrue(receipt["cursor"]["created_file"])
+        self.assertEqual(list(self.settings("cursor").parent.glob("*.tmp")), [])
         self.assertEqual(list((self.home / ".alias").glob("*.tmp")), [])
 
     def test_uninstall_removes_a_settings_file_the_install_created(self):
-        for platform in ("claude", "cursor"):
-            self.run_cli("hooks", "install", platform)
-            self.assertTrue(self.settings(platform).exists())
-            self.run_cli("hooks", "uninstall", platform)
-            self.assertFalse(self.settings(platform).exists(), platform)
+        self.run_cli("hooks", "install", "cursor")
+        self.assertTrue(self.settings("cursor").exists())
+        self.run_cli("hooks", "uninstall", "cursor")
+        self.assertFalse(self.settings("cursor").exists())
+        path = self.settings("claude")
+        path.parent.mkdir(parents=True)
+        path.write_text(json.dumps({"hooks": {"PreToolUse": [{"matcher": "t", "hooks": [
+            {"type": "command", "command": "python3 /old/alias.py hook --platform claude --tag alias"},
+        ]}]}}))
+        (self.home / ".alias").mkdir(exist_ok=True)
+        (self.home / ".alias" / "hook-install.json").write_text(json.dumps({
+            "claude": {"path": str(path), "created_file": True, "added_hooks_key": True},
+        }))
+        self.run_cli("hooks", "install", "claude")
+        self.assertFalse(path.exists())
 
     def test_uninstall_keeps_a_settings_file_it_did_not_create(self):
         path = self.settings("claude")

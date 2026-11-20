@@ -1,7 +1,7 @@
 ---
 name: alias
 description: Look up or save a cached name, id, or pronouns before resolving a person or resource. Use when the user says "cache this", "remember this as X", or "what's the alias for Y", when referring to a specific person, or before a repeated lookup for something this cache might already hold.
-compatibility: Requires Python 3.11+. Hooks are installed separately for Claude and Cursor.
+compatibility: Requires Python 3.11+. Claude hooks come with the plugin. Cursor hooks are installed separately.
 metadata:
   author: ian.handley
 ---
@@ -22,15 +22,15 @@ Use the entry's `pronouns` when you refer to that person. If the entry exists an
 
 ## Configured tools
 
-`hooks install` is required. Without it, lookups are not skipped and new ids are not recorded.
+Claude registers the hooks when the plugin is enabled. They run on every tool call. A tool that is not in the config is ignored, so a config edit does not need another Claude install. Without the hooks, lookups are not skipped and new ids are not recorded.
 
 A tool binding names the tool, the query field, the entry type, the `ids` key, and `extract`: a regex with one capture group. When that id is already stored, the pre hook skips the tool call. The post hook writes the id only when the regex matches exactly once. Several matches, or none, stay a `_stub` for later cleanup. An id that is already set is left alone. Correct a wrong id by editing the cache file.
 
-After the tool list in config changes, run `hooks install` again for Claude. Cursor filters tool names in the script, so a config edit is enough there.
+Cursor still needs `hooks install`. It filters tool names in the script, so a config edit is enough there. `hooks install claude` only removes an older command from `~/.claude/settings.json`. Run it when `hooks status` reports `legacy_settings`.
 
 ```bash
-python3 <this-skill>/alias.py hooks install claude
 python3 <this-skill>/alias.py hooks install cursor
+python3 <this-skill>/alias.py hooks install claude
 python3 <this-skill>/alias.py hooks status
 ```
 

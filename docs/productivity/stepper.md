@@ -12,6 +12,9 @@ Reach for it when you want to walk one feature through to the end without losing
 
 ## Common questions
 
+**Do I install the hooks?**
+On Claude Code, no. Enabling the `ihandley-skills` plugin registers them. `hooks install claude` only removes a Stepper command left in `~/.claude/settings.json` by an older install. Cursor still needs `python3 stepper.py hooks install cursor` once. Without the hook there is no `Stepper session:` line, and state changes stop.
+
 **Where does the list live?**
 In `~/.stepper` on this machine, outside any checkout. The `Stepper session:` line names the checkout. Commands pass that path as `--root` so a list about one repo can record that repo's origin. The checkout itself gains no store. The skill directory is refused as a checkout. The repository that contains the skill is a normal checkout.
 

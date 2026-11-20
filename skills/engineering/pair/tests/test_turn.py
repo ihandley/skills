@@ -195,7 +195,10 @@ class TurnTests(unittest.TestCase):
                 {
                     "hooks": {
                         "UserPromptSubmit": [
-                            {"hooks": [{"type": "command", "command": "echo keep"}]}
+                            {"hooks": [
+                                {"type": "command", "command": "echo keep"},
+                                {"type": "command", "command": "python3 /old/turn.py hook --platform claude --tag turn-owner"},
+                            ]}
                         ]
                     }
                 }
@@ -215,22 +218,7 @@ class TurnTests(unittest.TestCase):
             for group in installed["hooks"]["UserPromptSubmit"]
             for item in group["hooks"]
         ]
-        self.assertIn("echo keep", commands)
-        self.assertTrue(any("--tag turn-owner" in command for command in commands))
-        subprocess.run(
-            [sys.executable, str(TURN), "hooks", "uninstall", "claude"],
-            text=True,
-            capture_output=True,
-            env=self.env,
-            check=False,
-        )
-        removed = json.loads(settings.read_text())
-        left = [
-            item["command"]
-            for group in removed["hooks"]["UserPromptSubmit"]
-            for item in group["hooks"]
-        ]
-        self.assertEqual(left, ["echo keep"])
+        self.assertEqual(commands, ["echo keep"])
 
     def settings(self, platform):
         rel = Path(".claude") / "settings.json" if platform == "claude" else Path(".cursor") / "hooks.json"
@@ -242,16 +230,16 @@ class TurnTests(unittest.TestCase):
         )
 
     def test_install_registers_the_claude_events_and_no_cursor_turn_hook(self):
-        self.cli("hooks", "install", "claude")
-        claude = json.loads(self.settings("claude").read_text())["hooks"]
-        self.assertEqual(sorted(claude), ["SessionStart", "UserPromptSubmit"])
-        self.assertEqual(claude["SessionStart"][0]["matcher"], "startup|resume|compact")
-        self.assertNotIn("matcher", claude["UserPromptSubmit"][0])
-        self.assertIn(str(TURN), claude["UserPromptSubmit"][0]["hooks"][0]["command"])
+        proc = self.cli("hooks", "install", "claude")
+        self.assertEqual(proc.returncode, 0)
+        self.assertFalse(self.settings("claude").exists())
+        status = json.loads(self.cli("hooks", "status").stdout)
+        self.assertEqual(status["claude"]["source"], "plugin")
+        self.assertEqual(sorted(status["claude"]["events"]), ["SessionStart", "UserPromptSubmit"])
         proc = self.cli("hooks", "install", "cursor")
         self.assertNotEqual(proc.returncode, 0)
         self.assertFalse(self.settings("cursor").exists())
-        self.assertFalse(json.loads(self.cli("hooks", "status").stdout)["cursor"]["installed"])
+        self.assertFalse(status["cursor"]["installed"])
 
     def test_uninstall_removes_an_old_cursor_turn_hook_and_keeps_the_rest(self):
         path = self.settings("cursor")
@@ -284,25 +272,26 @@ class TurnTests(unittest.TestCase):
         old = "python3 /old/understand/turn.py hook --platform claude --tag turn-owner"
         path.write_text(json.dumps({"hooks": {"UserPromptSubmit": [{"hooks": [{"type": "command", "command": old}]}]}}))
         self.cli("hooks", "install", "claude")
-        commands = [
-            item["command"]
-            for group in json.loads(path.read_text())["hooks"]["UserPromptSubmit"]
-            for item in group["hooks"]
-        ]
-        self.assertEqual(len(commands), 1)
-        self.assertNotIn("/old/understand/", commands[0])
+        self.assertNotIn("turn-owner", path.read_text())
+        self.assertNotIn("/old/understand/", path.read_text())
 
-    def test_install_leaves_a_receipt_and_no_temp_file(self):
+    def test_install_leaves_no_settings_file_and_no_temp_file(self):
         self.cli("hooks", "install", "claude")
-        receipt = json.loads((self.home / ".pair" / "hook-install.json").read_text())
-        self.assertTrue(receipt["claude"]["created_file"])
-        self.assertEqual(list(self.settings("claude").parent.glob("*.tmp")), [])
-
-    def test_uninstall_removes_a_settings_file_the_install_created(self):
-        self.cli("hooks", "install", "claude")
-        self.assertTrue(self.settings("claude").exists())
-        self.cli("hooks", "uninstall", "claude")
+        self.assertFalse((self.home / ".pair" / "hook-install.json").exists())
         self.assertFalse(self.settings("claude").exists())
+
+    def test_uninstall_removes_a_settings_file_a_previous_install_created(self):
+        path = self.settings("claude")
+        path.parent.mkdir(parents=True)
+        path.write_text(json.dumps({"hooks": {"UserPromptSubmit": [{"hooks": [
+            {"type": "command", "command": "python3 /old/turn.py hook --platform claude --tag turn-owner"},
+        ]}]}}))
+        (self.home / ".pair").mkdir()
+        (self.home / ".pair" / "hook-install.json").write_text(json.dumps({
+            "claude": {"path": str(path), "created_file": True, "added_hooks_key": True},
+        }))
+        self.cli("hooks", "install", "claude")
+        self.assertFalse(path.exists())
 
     def test_uninstall_keeps_a_settings_file_it_did_not_create(self):
         path = self.settings("claude")
@@ -330,7 +319,9 @@ class TurnTests(unittest.TestCase):
     def test_host_module_matches_the_other_copies(self):
         here = TURN.parent / "hooks_host.py"
         other = TURN.parents[2] / "productivity" / "alias" / "hooks_host.py"
+        stepper = TURN.parents[2] / "productivity" / "stepper" / "hooks_host.py"
         self.assertEqual(here.read_text(), other.read_text())
+        self.assertEqual(here.read_text(), stepper.read_text())
 
 
 if __name__ == "__main__":

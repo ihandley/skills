@@ -32,7 +32,7 @@ Sub-steps stay under the acceptance criterion they belong to. Ask to track them 
 - Cursor and/or Claude Code
 - A local checkout of the repository you're working in
 - Stepper installed as an agent skill
-- Optional: Stepper hooks for automatic suggestions, reminders, and compaction recovery
+- The Claude plugin, for session reminders. Cursor hooks are a separate install.
 
 ## Install
 
@@ -55,38 +55,26 @@ Select **Stepper** when prompted.
 
 **While Stepper lives only on `feature/stepper`:** the commands above may install from the repository's default branch, which might not contain Stepper yet. For development, check out the feature branch and use the skill files from `skills/productivity/stepper/` in that checkout. Verify that your agent can see the `stepper` skill before proceeding.
 
-### 2. Enable hooks (recommended)
+### 2. Hooks
 
-Installing an Agent Skill **does not automatically install Stepper's hooks**. Hooks enable proactive offers, session reminders, and compaction recovery.
+Claude Code registers Stepper's hooks when the `ihandley-skills` plugin is enabled. They live in the plugin's `hooks/hooks.json`. Enabling the plugin is the install.
 
-From the directory containing the installed `stepper.py`:
+Cursor has no plugin here, so Cursor hooks are still written by hand:
 
 ```bash
-# Enable one or both platforms
 python3 stepper.py hooks install cursor
-python3 stepper.py hooks install claude
-
-# Inspect installation
 python3 stepper.py hooks status
 ```
 
-The installer modifies only the selected platform's user settings:
+`hooks install cursor` edits only `~/.cursor/hooks.json`. It keeps unrelated entries, writes a backup first, and records the absolute path to `stepper.py`, so leave that directory in place. Start a fresh agent session after changing settings.
 
-| Platform | Hook settings file |
-| --- | --- |
-| Cursor | `~/.cursor/hooks.json` |
-| Claude Code | `~/.claude/settings.json` |
-
-Installation preserves unrelated hook entries and creates a backup before modifying an existing settings file. Hooks use the absolute path to the `stepper.py` script, so **keep the installed skill directory in place** after enabling them. Restart or start a fresh agent session as needed for settings changes to take effect.
-
-To remove the hooks without deleting the skill or tracked state:
+`hooks install claude` does not write settings. It removes a Stepper command left in `~/.claude/settings.json` by an older install, so that command does not run beside the plugin. `hooks status` reports Claude as `source: plugin`. `legacy_settings: true` means the old command is still there: run `hooks install claude` once.
 
 ```bash
 python3 stepper.py hooks uninstall cursor
-python3 stepper.py hooks uninstall claude
 ```
 
-Hooks are optional and installed independently for each platform. Without hooks, the CLI still works, but the automatic behavior does not.
+Without the Claude plugin, or without the Cursor install, the CLI still runs, but the session line and the reminders do not.
 
 ## Usage
 
